@@ -38,7 +38,13 @@ Dispatch `$C2:0230`; op table `$C2:04F8 + 2*op`; operand lengths
 `$C2:09D8`), `FE xx` at `$C2:094D`. Ops used by the hack: `24 a24` call,
 `00` return, `45 n` skip n bytes, `26 n` set, `27 n` archive, `2A n` palette,
 `28 n` OBJ archive, `2C n 02` start task, `3A …` create object,
-`42 id group` sound request.
+`42 id group` sound request, `FF 8D arr set layer x y` draw arrangement,
+`FF 91 x y w h layer` clear rectangle, `FF 21 layer x16 y16` BG scroll
+(shadows `$0319+2(l-1)` H, `$031F+2(l-1)` V), `FF 0C x0 y0 x1 y1 2` window
+of the HDMA blink (WH2/WH3). `5D a` / `61 n` / `AE` are arithmetic on the
+script accumulator (`61` = add).
+* The BG3 drawers (`FF 8D`, `FF 91`) add the layer scroll back, so scrolling
+  a layer does **not** move text drawn with them; move the arrangement rows.
 
 ## Title screen
 
@@ -51,6 +57,16 @@ Dispatch `$C2:0230`; op table `$C2:04F8 + 2*op`; operand lengths
 * SB5 extras removed by the hack: palette-cycling tasks `2C 12/13/14 02`
   (`$C6:FCBB`, `$C7:1832`) and the two characters (`$C6:FD7C`, `$C6:FDC9`,
   `$C7:1821`). Details in `tools/sb6/features/title.py`.
+* BG3 text is art, not a font: tiles `$102-$13A` of set 3 archive `$96`
+  (raw 2bpp, VRAM `$5810`). Letters are 8x16 (two tiles): stroke color 2,
+  1-px outline color 1. Set 4 arrangements (table at `$C0:8000+3*4`):
+  #4 `$E2:06B4` PUSH START (row `$10`), #5 `$E2:0706` menu (row `$12`),
+  #6 `$E2:07A2` © HUDSON (row `$19`), #7 `$E2:07F4` menu variant (row `$12`).
+  Header = `w h x y attr`.
+* Menu clear blocks `FF 91 09 12 10 06 03` at `$C7:18B6`, `$C7:19B7`;
+  PUSH START blink window `FF 0C 30 80 D0 90 02` at `$C6:FE63` (intro) and
+  `$C7:181A` (mode 2); © draw `FF 8D 06 04 03 00 00` at `$C6:FE50`,
+  `$C7:1802`. Cursor Y = item*16 + `$A0` (`61 A0` at `$C7:1ABF`).
 
 ## Sound (CPU side)
 
@@ -67,6 +83,13 @@ Dispatch `$C2:0230`; op table `$C2:04F8 + 2*op`; operand lengths
 * Title flow: `0401` (sets), `$C0:1171` song 1, `0002` = play title music.
   Options: `0204` → `1001` → `0401` → song 1 → `0002`.
 * All APU port accesses are in `$C0:0DC0-$C0:1130`.
+
+* Title menu SFX (group 2): `1` cursor move, `4` accept, `3` back (only
+  on Options). Hudson plays them on voice 0, sample `$20` (DIR `$FD`),
+  ADSR `$FF/$E0`, a frame every ~16 ms. Captured with
+  `tools/mesen/sfx_capture.lua` on a base-ROM copy whose title song is
+  silenced (cmd byte of `$80:8655` entry 2 = 0), converted by
+  `tools/capture_sfx.py`. Mesen's `spc.cycle` counts at **2.048 MHz**.
 
 ## Sound driver (Hudson, ARAM)
 

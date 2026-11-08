@@ -24,10 +24,21 @@ from .. import lz
 from ..compose import compose_background, compose_logo, load_layout
 from ..snesgfx import (Layer, PaletteSlot, TileSet, best_palettes, build_layer_map,
                        cgram_block)
+from .title_text import text_tiles
 
 SET = 5                   # new graphics set used by the SB6 title
 VRAM_TILE_LIMIT = 0x3000  # words: BG1/BG2 maps start at VRAM $3000
 TEXT_ENTRIES = (1, 2, 3)  # CGRAM 1-3: BG3 text colors (palette 8 of set 3)
+
+# BG3 text (SB5's menu art) moves up so the menu sits between the logo (ends
+# at y~70) and the characters (start at y~130), as in the SB6 title. Scrolling
+# BG3 does not work: the FF 8D/FF 91 drawers add the layer scroll back.
+TEXT_SHIFT_ROWS = 7       # PUSH START BUTTON rows 16-17 -> 9-10 (y 72-87)
+TEXT_SHIFT = TEXT_SHIFT_ROWS * 8
+VERSION_ROW = 26          # rows 26-27 (y 208-223), where (c) 1997 HUDSON SOFT was (25-26)
+VERSION_TILE = 0x140      # first free BG3 tile after SB5's text ($102-$13A)
+BG3_CHR = 0x5000          # BG3 character base (VRAM word)
+VERSION_ATTR = 0x2000     # priority, palette 0 (like the old copyright line)
 
 # Script VM helpers (see docs/ROM_MAP.md).
 def call(addr):
@@ -89,7 +100,7 @@ def convert(asset_dir, starts):
                 preview=preview, target=target)
 
 
-def apply(rb, asset_dir, out_dir, starts):
+def apply(rb, asset_dir, out_dir, starts, version_text):
     conv = convert(asset_dir, starts)
     tiles = conv["tiles"].data()
     if len(tiles) // 2 > VRAM_TILE_LIMIT:
@@ -104,9 +115,16 @@ def apply(rb, asset_dir, out_dir, starts):
     # ---- data in free space ----------------------------------------------
     tiles_addr = rb.alloc("bulk", tiles, "title: BG1/BG2 4bpp tiles (raw)")
 
-    # Archive table for set 5 (bank $E3): [vram, size, src24, flags]; flag $80 = raw, 2 = BG tiles.
+    # Version string glyphs (BG3, 2bpp) replacing SB5's copyright line.
+    text = version_text if len(version_text) % 2 == 0 else version_text + " "
+    ver_tiles, ver_top, ver_bottom = text_tiles(text, VERSION_TILE, VERSION_ATTR)
+    ver_addr = rb.alloc("bulk", ver_tiles, f"title: BG3 glyphs for '{version_text}' (2bpp)")
+
+    # Archive table for set 5 (bank $E3): [vram, size, src24, flags]; flag $80 = raw,
+    # type 2 = 4bpp BG tiles, type 3 = 2bpp BG tiles (as SB5's BG3 text, archive $96 of set 3).
     arc_entry = rb.le16(0x0000) + rb.le16(len(tiles)) + rb.le24(tiles_addr) + bytes([0x82])
-    arc_table = rb.alloc("e3_tables", arc_entry, "set 5 archive table (entry 1 = title tiles)")
+    arc_entry += rb.le16(BG3_CHR + VERSION_TILE * 8) + rb.le16(len(ver_tiles)) + rb.le24(ver_addr) + bytes([0x83])
+    arc_table = rb.alloc("e3_tables", arc_entry, "set 5 archive table (1 = title tiles, 2 = version glyphs)")
 
     # Palette table for set 5 (bank $81): word pointer -> [dest, count, colors].
     pal_entry = rb.le16(0) + rb.le16(128) + b"".join(rb.le16(c) for c in colors)
@@ -119,15 +137,21 @@ def apply(rb, asset_dir, out_dir, starts):
     w2, tw2, th2 = conv["bg2"]
     arr1 = arrangement(aw1, ah1, ax1, ay1, sub1)
     arr2 = arrangement(tw2, th2, 0, 0, w2)
-    blob = bytearray(4) + arr1 + arr2
-    arr_table = rb.alloc("bulk", bytes(blob), "set 5 arrangement table + title arrangements 1 (logo), 2 (scene)")
-    blob[0:2] = rb.le16((arr_table + 4) & 0xFFFF)
-    blob[2:4] = rb.le16((arr_table + 4 + len(arr1)) & 0xFFFF)
+    arr3 = arrangement(len(text), 2, (32 - len(text)) // 2, VERSION_ROW, ver_top + ver_bottom)
+    arrs = [arr1, arr2, arr3]
+    blob = bytearray(2 * len(arrs)) + b"".join(arrs)
+    arr_table = rb.alloc("bulk", bytes(blob),
+                         "set 5 arrangement table + title arrangements 1 (logo), 2 (scene), 3 (version, BG3)")
+    pos = arr_table + 2 * len(arrs)
+    for i, a in enumerate(arrs):
+        blob[2 * i:2 * i + 2] = rb.le16(pos & 0xFFFF)
+        pos += len(a)
     o = arr_table & 0x3FFFFF
     rb.d[o:o + len(blob)] = blob
 
     # Sub-scripts.
-    loadgfx = bytes([0x26, SET, 0x27, 0x01, 0x2A, 0x01,     # SB6 tiles + colors
+    loadgfx = bytes([0x26, SET, 0x27, 0x01, 0x27, 0x02,     # SB6 tiles, version glyphs
+                     0x2A, 0x01,                             # SB6 colors
                      0x26, 0x03, 0x27, 0x96, 0x2A, 0x08,     # SB5 BG3 font + text colors
                      0x00])
     draw = bytes([0xFF, 0x8D, 0x01, SET, 0x01, 0x00, 0x00,  # logo on BG1
@@ -161,6 +185,26 @@ def apply(rb, asset_dir, out_dir, starts):
              "mode 2: no SB5 characters")
     rb.patch(0xC71832, bytes.fromhex("2C 12 02 2C 13 02 2C 14 02"), skip(7),
              "mode 2: no SB5 logo palette cycling")
+
+    # ---- menu text between logo and characters, version instead of (c) ----
+    # Set 4 arrangements 4 (PUSH START BUTTON), 5 (title menu) and 7 (other
+    # title menu) carry their BG3 row in header byte 3; FF 91 x y w h layer
+    # clears the menu block before a redraw; FF 0C ... is the window (HDMA on
+    # WH2/WH3) that blinks PUSH START BUTTON (x $30-$D0, y $80-$90); the
+    # cursor object's Y is item * 16 + $A0 (script $C7:1AB5, op 61 = add).
+    arr_tab4 = 0xC00000 | rb.rl(0xC08000 + 3 * 4)
+    for n, row in ((4, 0x10), (5, 0x12), (7, 0x12)):
+        hdr = (arr_tab4 & 0xFF0000) | rb.rw(arr_tab4 + 2 * (n - 1))
+        rb.patch(hdr + 3, bytes([row]), bytes([row - TEXT_SHIFT_ROWS]), f"title text: set 4 arrangement {n} row")
+    for a in (0xC718B6, 0xC719B7):
+        rb.patch(a, bytes.fromhex("FF 91 09 12 10 06 03"),
+                 bytes([0xFF, 0x91, 0x09, 0x12 - TEXT_SHIFT_ROWS, 0x10, 0x06, 0x03]), "title menu: clear block row")
+    window = bytes([0xFF, 0x0C, 0x30, 0x80 - TEXT_SHIFT, 0xD0, 0x90 - TEXT_SHIFT, 0x02])
+    version = bytes([0xFF, 0x8D, 0x03, SET, 0x03, 0x00, 0x00])
+    for where, win, cpy in (("intro", 0xC6FE63, 0xC6FE50), ("mode 2", 0xC7181A, 0xC71802)):
+        rb.patch(win, bytes.fromhex("FF 0C 30 80 D0 90 02"), window, f"{where} title: PUSH START blink window moved")
+        rb.patch(cpy, bytes.fromhex("FF 8D 06 04 03 00 00"), version, f"{where} title: version instead of (c) line")
+    rb.patch(0xC71ABF, bytes.fromhex("61 A0"), bytes([0x61, 0xA0 - TEXT_SHIFT]), "title menu cursor Y moved")
 
     os.makedirs(out_dir, exist_ok=True)
     side = Image.new("RGB", (512, 224))

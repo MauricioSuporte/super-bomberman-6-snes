@@ -36,10 +36,21 @@ def _run(asm, image, defines):
             return fh.read(), res.stdout
 
 
+def _syms(stdout):
+    syms = {}
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "SYM":
+            syms[parts[1]] = int(parts[2], 16)
+    return syms
+
+
 def assemble_blob(asm, size, defines):
-    """Assembles position-dependent code (`base`) at file offset 0; returns `size` bytes."""
-    out, _ = _run(asm, bytes(size), defines)
-    return out[:size]
+    """Assembles position-dependent code (`base`) at file offset 0.
+
+    Returns (`size` bytes, {name: value} from `print "SYM name ", hex(v)`)."""
+    out, stdout = _run(asm, bytes(size), defines)
+    return out[:size], _syms(stdout)
 
 
 def assemble_into(rom_bytes, asm, defines):
@@ -57,9 +68,4 @@ def assemble_into(rom_bytes, asm, defines):
             runs[-1][1] = k + 1
         else:
             runs.append([int(k), int(k) + 1])
-    syms = {}
-    for line in stdout.splitlines():
-        parts = line.split()
-        if len(parts) == 3 and parts[0] == "SYM":
-            syms[parts[1]] = int(parts[2], 16)
-    return [(a, out[a:b]) for a, b in runs], syms
+    return [(a, out[a:b]) for a, b in runs], _syms(stdout)

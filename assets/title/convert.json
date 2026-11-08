@@ -1,4 +1,5 @@
 {
   "_note": "Palette quantizer starts (seed, init) tried by the normal build; refresh with tools/build.py --search.",
-  "palette_starts": [[3, "mean"]]
+  "palette_starts": [[3, "mean"]],
+  "version_text": "v0.5.0"
 }

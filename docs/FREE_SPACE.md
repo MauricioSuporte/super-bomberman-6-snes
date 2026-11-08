@@ -23,10 +23,14 @@ sequenced driver).
 
 | Address | Owner |
 |---|---|
-| `$0100-$0106` | title music stream (active, sequence, pointer, bank, loader kick, frame). Bottom of the stack page: in a 12 000-frame run (intro, title, menus, Zone 1) the stack never went below `$01B3`. The recomp's co-op mod also treats this area as free (`$011E`); keep new variables after `$0110`. |
+| `$0100-$0107` | title music stream (active, sequence, pointer, bank, loader kick, frame, SFX toggle `$0107`). Bottom of the stack page: in a 12 000-frame run (intro, title, menus, Zone 1) the stack never went below `$01B3`. The recomp's co-op mod also treats this area as free (`$011E`); keep new variables after `$0110`. |
 
 ## ARAM (sound RAM)
 
-While the title music streams, the stream driver owns `$7000-$CEA7`
-(driver `$7000-$71FF`, ring `$7200-$CEA7`), which is SB5's title-song area;
-everything else (Hudson's code, sets, directories, echo buffer) is untouched.
+While the title music streams, the stream driver owns `$7000-$CF7D`
+(driver + SFX scripts `$7000-$74FF`, ring `$7500-$CF7D`,
+143 chunks; sizes are computed by the build), which is SB5's title-song
+area; everything else (Hudson's code, sets, directories, echo buffer) is
+untouched. The stream uses voice 7 and timer 0; the menu SFX are replayed
+on voice 0 with timer 2 (4 ms ticks, `$FC = 0`). Release restores the DSP
+registers it touched, `$F1` from Hudson's shadow `$1E` and `$FC` from `$21`.

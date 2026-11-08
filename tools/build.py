@@ -43,14 +43,16 @@ def main():
     rb.add_region("e3_tables", 0xE3DD60, 0xE40000, "graphics archive tables (must be in bank $E3)")
     rb.add_region("bank81", 0xC1FA00, 0xC20000, "palette tables/colors (must be in bank $81)")
 
-    info = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts)
+    info = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"])
     print(f"title: {info['tiles']} tiles, palette error {info['error']:.0f} (start {info['start']}), "
           f"arrangements {info['arr_bytes']} bytes")
 
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),
+                              os.path.join(ROOT, "assets", "sound", "title_sfx.json"),
                               os.path.join(args.out, "cache"))
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
-          f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, CPU code {music['code']} B")
+          f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
+          f"CPU code {music['code']} B; menu SFX replayed: {music['sfx']}")
 
     rb.set_title("SUPER BOMBERMAN 6")
     rb.fix_checksum()

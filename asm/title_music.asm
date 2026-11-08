@@ -4,17 +4,20 @@
 ;   $C0:0CED  sound API entry (A = id, B = group). Title music request
 ;             (group 0, id 2) uploads the stream driver instead of starting
 ;             SB5's title song. While streaming, menu SFX (group 2) are
-;             dropped and any other request first gives the APU back to
-;             Hudson's driver, then runs normally.
+;             sent to the stream driver, which replays them (slots from
+;             SFX_SLOTS, a 32-byte id -> slot table; 0 = no replay, dropped),
+;             and any other request first gives the APU back to Hudson's
+;             driver, then runs normally.
 ;   $C0:0B2C  main loop, once per frame before the wait for NMI: feeds the
 ;             stream.
 ;
-; WRAM: $0100-$0106 (bottom of the stack page; the stack never went below
+; WRAM: $0100-$0107 (bottom of the stack page; the stack never went below
 ; $01B3 in a 12000-frame run, see docs/ROM_MAP.md).
 ;
 ; Defines: CODE (address), BLOB/BLOB_SIZE (driver + prefill image),
 ; ENTRY (ARAM entry), START_BANK/START_OFF (first chunk sent by the feeder),
-; LOOP_BANK/LOOP_OFF, END_BANK/END_OFF (address after the last chunk).
+; LOOP_BANK/LOOP_OFF, END_BANK/END_OFF (address after the last chunk),
+; SFX_SLOTS (file).
 
 asar 1.90
 hirom
@@ -26,6 +29,7 @@ org !CODE
 !bank   = $000104
 !kick   = $000105       ; loader's last kick value
 !frame  = $000106       ; NMI frame count at the last feed
+!sfxtog = $000107       ; bit 6 toggles so repeated SFX commands differ
 !NMI_FRAMES = $000068   ; incremented by the NMI handler ($C0:F431)
 !song   = $0003CD       ; Hudson song currently in ARAM ($FF = none)
 
@@ -48,8 +52,18 @@ sound_hook:
     cmp #$02
     bne .not_sfx
     lda.l !active
-    bne .swallow            ; no SFX while streaming (port 0 is ours)
-    bra .original
+    beq .original
+    lda $05,s               ; id
+    cmp #$20
+    bcs .swallow
+    rep #$20
+    and #$001F
+    tax
+    sep #$20
+    lda.l sfx_slots,x
+    beq .swallow            ; not replayable: dropped (port 0 is ours)
+    jsr send_sfx
+    bra .swallow
 .not_sfx:
     cmp #$00
     bne .other
@@ -81,6 +95,24 @@ sound_hook:
     pla
     plp
     rtl
+
+; A = slot (1-31): port 0 = $80 | toggle | slot, then waits for the echo.
+send_sfx:
+    pha
+    lda.l !sfxtog
+    eor #$40
+    and #$40
+    sta.l !sfxtog
+    ora $01,s
+    ora #$80
+    sta.l APUIO0
+-   cmp.l APUIO0
+    bne -
+    pla
+    rts
+
+sfx_slots:
+    incbin "!SFX_SLOTS"
 
 ; ---- $C0:0B2C -------------------------------------------------------------
 loop_hook:

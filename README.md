@@ -14,7 +14,8 @@ ser gravada num cartucho repro e rodar no hardware real.
 | Parte | Situação |
 |---|---|
 | Tela de título: fundo, personagens e logo do SB6 | pronto |
-| Tela de título: música do SB6 (streaming BRR) | pronto; os SFX do menu ficam mudos enquanto ela toca |
+| Tela de título: opções entre logo e personagens, versão no rodapé | pronto (`version_text` em `assets/title/convert.json`) |
+| Tela de título: música do SB6 (streaming BRR) | pronto; SFX do menu (mover/confirmar) tocam junto com ela |
 | Demais telas, fases, inimigos, chefes, músicas | originais do SB5 |
 
 ## Como gerar a ROM

@@ -41,5 +41,8 @@ back restarts it, Normal Game releases it (Hudson PC `$08xx`, stage music).
 
 * Hudson's `$10` loader returns instead of jumping; the stream driver is
   started by patching its `RET` at `$1041` and returns through it.
-* While streaming, every non-SFX request must release first; SFX are dropped.
+* While streaming, every non-SFX request must release first; SFX go to the stream driver (move/accept) or are dropped.
 * `$03CD` (song in ARAM) is set to `$FF` when the ring overwrites song 1.
+* Title SFX: captured once with `tools/capture_sfx.py` into
+  `assets/sound/title_sfx.json`, replayed by the stream driver on voice 0.
+  Mesen `spc.cycle` runs at 2.048 MHz.

@@ -15,6 +15,7 @@ as a recording, so the title streams it instead:
   * Menu SFX are silent while the stream plays (the stream owns port 0).
 """
 import hashlib
+import json
 import os
 import wave
 
@@ -31,8 +32,8 @@ RATE = 16000              # pitch $0800
 CHUNK = 162               # bytes: 18 BRR blocks
 CHUNK_SAMPLES = 18 * 16
 ARAM_BASE = 0x7000        # driver page; ring right after it
-RING_CHUNKS = 148         # ring $7200-$CEA7 (title song area ends at $CFDF)
-DRIVER_SIZE = 0x200
+RING_LIMIT = 0xCFE0       # SB5's title song area ends at $CFDF
+MAX_SRC, MAX_SLOTS = 4, 8 # SFX samples / scripts the driver holds
 PREFILL = 8               # chunks uploaded with the driver (144 ms)
 PEAK = 0.89               # -1 dBFS before BRR
 VOL, MVOL = 0x70, 0x60     # MVOL as Hudson uses on the SB5 title; one voice carries the whole mix
@@ -82,11 +83,69 @@ def chunk_positions(first_bank, count):
     return pos
 
 
+def sfx_tables(sfx_json, cache_dir):
+    """Builds the driver's SFX scripts and the CPU's id -> slot table.
+
+    Script format (asm/spc/stream.asm): pairs (DSP reg, value); $FE n = wait
+    n * 4 ms; $FF = end. Hudson's sample numbers become indexes in the
+    driver's directory; KOF is held until the next KON (the DSP polls KON/KOF
+    every 64 us, faster rewrites could be missed)."""
+    with open(sfx_json) as fh:
+        doc = json.load(fh)
+    ids = sorted(int(k) for k in doc["sfx"])
+    if len(ids) > MAX_SLOTS or max(ids) >= 32:
+        raise ValueError("too many SFX or id >= 32")
+    srcs, scripts = [], []
+    for sid in ids:
+        out, last = bytearray(), {}
+        for frame in doc["sfx"][str(sid)]:
+            for reg, val in frame["writes"]:
+                if reg == 0x5C:
+                    out += bytes([0x5C, 0x01])
+                    continue
+                if reg == 0x4C:
+                    out += bytes([0x5C, 0x00, 0x4C, 0x01])
+                    continue
+                if reg == 0x04:
+                    if val not in srcs:
+                        srcs.append(val)
+                    val = 1 + srcs.index(val)
+                if last.get(reg) != val:
+                    out += bytes([reg, val])
+                    last[reg] = val
+            wait = frame["wait"]
+            while wait:
+                step = min(wait, 0x7F)
+                out += bytes([0xFE, step])
+                wait -= step
+        out.append(0xFF)
+        scripts.append(bytes(out))
+    if len(srcs) > MAX_SRC:
+        raise ValueError("SFX use too many samples")
+    head = bytes([len(srcs)]) + bytes(srcs).ljust(MAX_SRC, b"\x00")
+    offsets, pos = bytearray(), len(head) + 2 * MAX_SLOTS
+    for sc in scripts:
+        offsets += pos.to_bytes(2, "little")
+        pos += len(sc)
+    blob = head + bytes(offsets).ljust(2 * MAX_SLOTS, b"\x00") + b"".join(scripts)
+    slots = bytearray(32)
+    for k, sid in enumerate(ids):
+        slots[sid] = k + 1
+    os.makedirs(cache_dir, exist_ok=True)
+    bin_path = os.path.join(cache_dir, "title_sfx_scripts.bin")
+    slot_path = os.path.join(cache_dir, "title_sfx_slots.bin")
+    with open(bin_path, "wb") as fh:
+        fh.write(blob)
+    with open(slot_path, "wb") as fh:
+        fh.write(bytes(slots))
+    return bin_path, slot_path, ids
+
+
 def _h(v, digits):
     return f"${v:0{digits}X}"
 
 
-def apply(rb, wav, cache_dir, first_bank=0xE5):
+def apply(rb, wav, sfx_json, cache_dir, first_bank=0xE5):
     # Hudson's loader (uploaded at boot) must hold the RET the driver hooks.
     o = off(HUDSON_LOADER)
     if rb.d[o + 3:o + 9] != bytes.fromhex("8F AA F4 8F BB F5") or rb.d[o + 0x51:o + 0x54] != bytes.fromhex("6F CD 01"):
@@ -105,10 +164,17 @@ def apply(rb, wav, cache_dir, first_bank=0xE5):
         addr = rb.alloc(f"audio_{b:02X}", data, f"title music BRR chunks {idx[0]}-{idx[-1]}")
         assert addr == b << 16 | pos[idx[0]][1]
 
-    # Driver image uploaded to ARAM $7000: driver pages + first chunks.
-    spc_defs = dict(BASE=_h(ARAM_BASE, 4), CHUNKS=RING_CHUNKS, PREFILL=PREFILL,
-                    VOL=_h(VOL, 2), MVOL=_h(MVOL, 2))
-    driver = asar.assemble_blob(ASM_SPC, DRIVER_SIZE, spc_defs)
+    # Driver image uploaded to ARAM $7000: driver pages + first chunks. The
+    # driver is sized first (asar pass with a large area), then the ring
+    # takes every whole chunk up to the end of the title song area.
+    sfx_bin, sfx_slots, sfx_ids = sfx_tables(sfx_json, cache_dir)
+    spc_defs = dict(BASE=_h(ARAM_BASE, 4), PREFILL=PREFILL, VOL=_h(VOL, 2), MVOL=_h(MVOL, 2),
+                    SFX_BIN=sfx_bin.replace("\\", "/"))
+    _, syms = asar.assemble_blob(ASM_SPC, 0x2000, dict(spc_defs, DRIVER_SIZE="$1000", CHUNKS=1))
+    driver_size = (syms["end"] - ARAM_BASE + 0xFF) & ~0xFF
+    ring_chunks = (RING_LIMIT - ARAM_BASE - driver_size) // CHUNK
+    driver, _ = asar.assemble_blob(ASM_SPC, driver_size,
+                                   dict(spc_defs, DRIVER_SIZE=_h(driver_size, 4), CHUNKS=ring_chunks))
     blob = driver + stream[:PREFILL * CHUNK]
     blob_addr = rb.alloc("bulk", blob, "title music: SPC stream driver + prefill (ARAM $7000)")
 
@@ -120,7 +186,8 @@ def apply(rb, wav, cache_dir, first_bank=0xE5):
                     BLOB=_h(blob_addr, 6), BLOB_SIZE=_h(len(blob), 4),
                     START_BANK=_h(pos[PREFILL][0], 2), START_OFF=_h(pos[PREFILL][1], 4),
                     LOOP_BANK=_h(pos[0][0], 2), LOOP_OFF=_h(pos[0][1], 4),
-                    END_BANK=_h(pos[n][0], 2), END_OFF=_h(pos[n][1], 4))
+                    END_BANK=_h(pos[n][0], 2), END_OFF=_h(pos[n][1], 4),
+                    SFX_SLOTS=sfx_slots.replace("\\", "/"))
     runs, syms = asar.assemble_into(rb.d, ASM_CPU, cpu_defs)
     lo, hi = off(code_addr), off(syms["end"])
     for o, data in runs:
@@ -140,4 +207,5 @@ def apply(rb, wav, cache_dir, first_bank=0xE5):
     rb.patch(0xC00B2C, bytes.fromhex("AD BF 03 D0 04"), jml(syms["loop_hook"]) + b"\xEA",
              "main loop: title music feeder")
     seconds = n * CHUNK_SAMPLES / RATE
-    return dict(seconds=seconds, bytes=len(stream), banks=banks, code=len(code), driver=len(driver))
+    return dict(seconds=seconds, bytes=len(stream), banks=banks, code=len(code), driver=len(driver),
+                ring=ring_chunks, sfx=sfx_ids)
