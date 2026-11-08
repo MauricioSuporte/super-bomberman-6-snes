@@ -1,0 +1,8 @@
+# ROMs are never committed (the base ROM is copyrighted; the output is built).
+*.sfc
+*.smc
+*.bps
+*.ips
+build/
+__pycache__/
+*.pyc

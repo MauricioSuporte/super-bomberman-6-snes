@@ -1,1 +1,61 @@
 # super-bomberman-6-snes
+
+ROM hack **Super Bomberman 6** para Super Nintendo, construído a partir de
+*Super Bomberman 5 (USA)* com gráficos e músicas do fan game
+[Super-Bomberman-6-Unity](https://github.com/MauricioSuporte/Super-Bomberman-6-Unity)
+(branch `v0.5.0`). O conhecimento sobre o jogo original vem em grande parte da
+[SuperBomberman5SNESRecomp](https://github.com/MauricioSuporte/SuperBomberman5SNESRecomp).
+
+A ROM gerada mantém **exatamente 4 MB, HiROM**, como a original, para poder
+ser gravada num cartucho repro e rodar no hardware real.
+
+## Estado atual
+
+| Parte | Situação |
+|---|---|
+| Tela de título: fundo, personagens e logo do SB6 | pronto |
+| Tela de título: música do SB6 (streaming BRR) | pronto; os SFX do menu ficam mudos enquanto ela toca |
+| Demais telas, fases, inimigos, chefes, músicas | originais do SB5 |
+
+## Como gerar a ROM
+
+Requisitos:
+
+* Python 3.12 com `pip install -r requirements.txt` (numpy, Pillow, scipy)
+* [asar](https://github.com/RPGHacker/asar) 1.91 — caminho em `SB6_ASAR`
+  (padrão `D:\sb6-tools\asar\asar.exe`)
+* `Super Bomberman 5 (USA).sfc` na raiz do repositório
+  (sha1 `417d5ace7e51baafb69d20ce15ff0894d91c70c5`; não é versionada)
+
+```
+python tools/build.py
+```
+
+Saídas em `build/`:
+
+* `Super Bomberman 6.sfc` — a ROM (4 194 304 bytes, checksum corrigido)
+* `sb6.map` — mapa de tudo que foi alocado e de cada byte original alterado
+* `title_preview.png` — alvo (Unity) × resultado convertido da tela de título
+* `cache/` — áudio BRR já codificado (a primeira codificação leva ~1 min)
+
+Para ouvir a conversão da música sem emulador:
+`python tools/brr_preview.py build/cache/title_music_*.brr build/title_music_preview.wav`
+
+## Organização
+
+```
+assets/title/        imagens, layout e música vindos do fan game
+asm/                 código 65816 (asar)
+asm/spc/             código SPC700 (asar)
+tools/build.py       ponto de entrada do build
+tools/sb6/           biblioteca: ROM, compressão, gráficos, BRR, asar
+tools/sb6/features/  uma feature por arquivo (title.py, title_music.py, ...)
+tools/disasm65816.py desmontador 65816      tools/spc700dis.py desmontador SPC700
+docs/ROM_MAP.md      o que se sabe da ROM do SB5 (formatos, rotinas, hooks)
+docs/FREE_SPACE.md   espaço livre na ROM, WRAM e ARAM, e quem usa o quê
+```
+
+Regras do projeto (resumo de [CLAUDE.md](CLAUDE.md)): a ROM sempre sai da
+original + fontes; todo byte original alterado passa por `patch()`, que
+confere o conteúdo antigo; dados novos só entram por `alloc()` em regiões
+livres verificadas; cada descoberta vai para `docs/`.

@@ -1,0 +1,27 @@
+{
+  "_source": "Super-Bomberman-6-Unity v0.5.0: Assets/Scenes/TitleScreen.unity (TitleScreenDropIntro, TitleScreenVerticalPanIntro)",
+  "screen": [256, 224],
+  "background": {
+    "file": "planet_sky.png",
+    "_note": "Vertical pan ends at the top of the 256x334 image (topBottomPixel auto = 110 from the bottom).",
+    "crop_top": 0
+  },
+  "logo": {
+    "file": "SBm6Logo1.png",
+    "_note": "Unity draws it with preserveAspect inside a 233x69 box, top-center, 5 px from the top.",
+    "box": [233, 69],
+    "top": 5
+  },
+  "characters_bottom_margin": 0,
+  "characters": [
+    {"name": "Pink",   "file": "Haneroo_A.png",   "size": [80, 95], "offset": [-9, -12]},
+    {"name": "Blue",   "file": "Keroo_A.png",     "size": [80, 80], "offset": [-7, 3]},
+    {"name": "Yellow", "file": "Gyaroo_A.png",    "size": [80, 80], "offset": [-10, 5]},
+    {"name": "Purple", "file": "Magicaroo_A.png", "size": [80, 80], "offset": [0, 10]},
+    {"name": "Red",    "file": "Naguroo_A.png",   "size": [80, 80], "offset": [9, 4]},
+    {"name": "Black",  "file": "Waroo_A.png",     "size": [80, 80], "offset": [12, -5]},
+    {"name": "Green",  "file": "Maroo_A.png",     "size": [95, 80], "offset": [9, -14]}
+  ],
+  "_draw_order_note": "Back to front, as TitleScreenDropIntro.UpdateCharacterSiblingOrder resolves it.",
+  "draw_order": ["Purple", "Red", "Yellow", "Blue", "Black", "Pink", "Green"]
+}
