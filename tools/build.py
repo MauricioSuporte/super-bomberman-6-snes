@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import boot_logo, coop, title, title_music  # noqa: E402
+from sb6.features import boot_logo, bomberman_sprites, coop, title, title_music  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -63,6 +63,9 @@ def main():
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
           f"CPU code {music['code']} B; menu SFX replayed: {music['sfx']}")
+
+    bomber = bomberman_sprites.apply(rb, os.path.join(ROOT, "assets", "bomberman"))
+    print(f"bomberman: {bomber['tiles']} tiles and {bomber['palettes']} palettes changed")
 
     coop.apply(rb)
     print("co-op: Normal Game for 1-4 players (multitap on port 2)")
