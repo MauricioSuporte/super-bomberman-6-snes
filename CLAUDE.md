@@ -32,9 +32,10 @@ Mesen 2 headless: `Mesen.exe --testrunner ROM script.lua` (portable
 `settings.json` with `AllowIoOsAccess` and SNES controllers on ports 1-2).
 Lua: `emu.read(a, emu.memType.snesDebug | spcRam | spcDspRegisters)`,
 `emu.getState()["spc.pc"]`, write callbacks on WRAM use bank-00 addresses,
-input via `emu.setInput` in the `inputPolled` event. The title appears near
-frame 5650 (intro cannot be skipped earlier); an attract demo starts ~36 s
-later. Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), Options →
+input via `emu.setInput` in the `inputPolled` event. The boot logo (mode 1)
+shows at frames ~56-410, then the hack goes straight to the title (mode 2,
+the intro is skipped); an attract demo starts ~36 s later. Old scripts that
+wait for frame ~5650 still work (the title is already up). Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), Options →
 back restarts it, Normal Game releases it (Hudson PC `$08xx`, stage music).
 
 The testrunner ignores the multitap setting (every port lands on P1), so

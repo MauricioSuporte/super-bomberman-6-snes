@@ -29,7 +29,10 @@ ring). Encoder: `tools/sb6/lz.py`.
 | Arrangements (`FF 8D arr set layer x y`, drawer `$C0:001B`) | long at `$C0:8000 + 3*set` | words in the table's bank → parts `[w, h, x, y, mode]` + LZ low stream (+ high stream if mode 0), until a 0 width byte. Width must be even (`$C0:0135` writes 2 entries per step). |
 
 Set 3 = SB5 title graphics, set 4 = SB5 arrangements. **Set 5 was null in all
-three tables and now belongs to the SB6 title.**
+three tables and now belongs to the hack** (archives 1 title tiles, 2 BG3
+glyphs, 3 boot logo; palettes 1 title, 2 boot logo; arrangements 1 logo,
+2 scene, 3 version, 4 1-4 PLAYER GAME, 5 boot logo). Sets 1 and 2 are also
+null. The archive set table ends at `$C0:1CAF` (13 sets).
 
 ## Script VM
 
@@ -46,6 +49,19 @@ script accumulator (`61` = add).
 * The BG3 drawers (`FF 8D`, `FF 91`) add the layer scroll back, so scrolling
   a layer does **not** move text drawn with them; move the arrangement rows.
 
+## Boot (Hudson logo, intro)
+
+* Mode `$01` shows the Hudson logo: script `$C7:0AC4`
+  (`26 03 27 46 2A 2B` set 3 archive `$46` + palette `$2B` (32 colors at
+  `$81:A34A`), `0D 08`, `FF BB 00`, `FF 8D D3 04 01 00 00` arrangement `$D3`
+  of set 4 on BG1). Mode 1, BG1 only (map `$3000`, chr `$0000`).
+* `$C7:0AF5` `0F A9` switches to mode `$A9` (intro, then the title). Start
+  during the intro goes to mode 2 (title without intro).
+* The hack loads the new logo from set 5 (archive 3, palette 2 with 128
+  colors, arrangement 5) and changes `0F A9` to `0F 02`, so the intro is
+  skipped (`tools/sb6/features/boot_logo.py`, `title.py`).
+* Script pointer of the running script: `[$0A]` (fetch at `$C2:0397`).
+
 ## Title screen
 
 * Mode 1. BG1 logo (map `$3000`), BG2 scene (map `$3800`), BG3 text (map
@@ -54,6 +70,10 @@ script accumulator (`61` = add).
 * Intro path (mode `$A9`) setup script `$C6:FC93`; title without intro (mode
   2) handler list `$C7:1783` (2 = `$C7:17D1` load, 4 = `$C7:17DE` OBJ
   archives, 6 = `$C7:17E3` draw).
+* Menu cursor Y is `$1034`: set to `$A0` when the title appears
+  (`5B A0 60 34 10` at `$C6:FE6F` intro path, `$C7:184C` mode 2) and
+  recomputed as item * 16 + `$A0` on each move (`$C7:1ABF`). The hack moves
+  all three up with the text.
 * SB5 extras removed by the hack: palette-cycling tasks `2C 12/13/14 02`
   (`$C6:FCBB`, `$C7:1832`) and the two characters (`$C6:FD7C`, `$C6:FDC9`,
   `$C7:1821`). Details in `tools/sb6/features/title.py`.
