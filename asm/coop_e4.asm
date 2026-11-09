@@ -228,13 +228,16 @@ reclaim:
     and #$0F
     bne .out
     ldx #$02
+    bra .seat
+.tonext:
+    jmp .next                       ; (branches out of range)
 .seat:
     txa
     cmp.l $7E0000|!roster
     bcs .out
     lda.l $7E17FA,x
     cmp #$60
-    bcs .next
+    bcs .tonext
     tay                             ; Y = object
     phx
     tax
@@ -243,7 +246,7 @@ reclaim:
     cmp #$03
     bcc .borrow
     cmp #$08
-    bcc .next
+    bcc .tonext
 .borrow:
     sta.l $7E0000|!t7               ; old slot
     txa
@@ -254,7 +257,7 @@ reclaim:
     lda.l $7E17FA,x                 ; mount object
     plx
     cmp #$60
-    bcc .next
+    bcc .tonext
     phx
     ldx #$04
 -   cpx #$05
