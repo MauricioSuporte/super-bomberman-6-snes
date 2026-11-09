@@ -33,7 +33,7 @@ hirom
 !mbase    = $012D       ; first mount actor (enemies stop below; $18 = stock)
 !coopst   = $012E       ; 1 = this stage runs the co-op rules
 !spawnchk = $012F       ; settle P3/P4 once the stage map exists
-!bench    = $0130       ; 10 fields x 2 seats (P3/P4 benched in boss stages)
+!bench    = $0130       ; 10 fields x 2 seats (benched seats: P4 in ZONE3 - D)
 !benched  = $0144
 !t0       = $0145       ; scratch (E4 routines, DBR = $7E)
 !t1       = $0146

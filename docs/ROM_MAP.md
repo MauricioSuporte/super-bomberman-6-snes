@@ -166,7 +166,9 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   its 8 colors into entries 8-15 of the rider's slot (`$C4:53EB`). Bomber
   colors: `$C4:37B0`.
 * Co-op palettes: P3/P4 ask for mask `$F0` (slots 4/5 when free, so 6/7 stay
-  for eggs and Louies). When a stage request fails, `c0_palfail` moves P3/P4
+  for eggs and Louies; `$D0` in boss stages, where slot 5 belongs to the
+  rival in seat 4 and its mount: sharing it let the intro blink restore
+  `$C1:0035` paint P4's reclaimed slot black). When a stage request fails, `c0_palfail` moves P3/P4
   off the slots it needs onto P1's slot (they show P1's colors; `$C4:37B0`
   does not repaint it) and searches again; `e4_tick` (main loop `$C0:0B44`)
   gives them a free slot 4-7 back every 16 frames. `$C5:060E` is not a
