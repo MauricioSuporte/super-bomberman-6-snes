@@ -269,7 +269,11 @@ c4_palmask:
     ;   (4/5 are free in most stages; 6/7 stay for eggs, loose Louies and
     ;   large stage objects, mask $C0, as in the 1-2 player game)
     sta $0348
-    pla
+    lda.l $7E0000|!bossst           ; boss stage: slot 5 is the rival's
+    beq +                           ;   (seat 4 asks for mask $20)
+    lda #$D0
+    sta $0348
++   pla
     rts
 .stock:
     pla
@@ -534,7 +538,10 @@ c0_palfail:
     sta.l $7E0000|!pftgt
     lda.l $7E0348
     cmp #$F0
+    beq +
+    cmp #$D0                        ; P3/P4 in a boss stage
     bne .stage
++
     lda.l $7E0000|!pftgt
     tax
     jmp $033D                       ; INC $0349,X / return slot X, C clear

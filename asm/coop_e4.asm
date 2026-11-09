@@ -257,9 +257,13 @@ reclaim:
     bcc .next
     phx
     ldx #$04
--   lda.l $7E2B10,x
+-   cpx #$05
+    bne +
+    lda.l $7E0000|!bossst           ; slot 5 is the boss rival's
+    bne ++
++   lda.l $7E2B10,x
     beq .free
-    inx
+++  inx
     cpx #$08
     bcc -
     plx
