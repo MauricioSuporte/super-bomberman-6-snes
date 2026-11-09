@@ -16,6 +16,7 @@ ser gravada num cartucho repro e rodar no hardware real.
 | Tela de título: fundo, personagens e logo do SB6 | pronto |
 | Tela de título: opções entre logo e personagens, versão no rodapé | pronto (`version_text` em `assets/title/convert.json`) |
 | Tela de título: música do SB6 (streaming BRR) | pronto; SFX do menu (mover/confirmar) tocam junto com ela |
+| Normal Game para 3-4 jogadores (multitap na porta 2) | pronto: escolha em NORMAL GAME → 1-4 PLAYER GAME; P3 vermelho no canto inferior esquerdo, P4 azul no inferior direito; vidas compartilhadas, Start para voltar. P3/P4 ficam de fora das lutas contra chefes |
 | Demais telas, fases, inimigos, chefes, músicas | originais do SB5 |
 
 ## Como gerar a ROM

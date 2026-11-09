@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import title, title_music  # noqa: E402
+from sb6.features import boot_logo, coop, title, title_music  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -42,8 +42,18 @@ def main():
     rb.add_region("bulk", 0xE40000, 0xE50000, "hack code, scripts and small data (E4); streamed audio from $E5")
     rb.add_region("e3_tables", 0xE3DD60, 0xE40000, "graphics archive tables (must be in bank $E3)")
     rb.add_region("bank81", 0xC1FA00, 0xC20000, "palette tables/colors (must be in bank $81)")
+    # $FF padding inside the code banks: code reached by JSR/JMP from the bank's own routines.
+    rb.add_region("c0", 0xC04D70, 0xC05F00, "bank C0 code (co-op)")
+    rb.add_region("c1", 0xC177F0, 0xC17F00, "bank C1 code (co-op)")
+    rb.add_region("c2", 0xC24210, 0xC27F00, "bank C2 code (co-op)")
+    rb.add_region("c3", 0xC37E90, 0xC37FF0, "bank C3 code (co-op)")
+    rb.add_region("c4", 0xC45A40, 0xC47F00, "bank C4 code (co-op)")
+    rb.add_region("c5", 0xC56FA0, 0xC57F00, "bank C5 code (co-op)")
 
-    info = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"])
+    boot = boot_logo.convert(os.path.join(ROOT, "assets", "HU3DSON LOGO.png"))
+    print(f"boot logo: {boot['count']} tiles, palette error {boot['error']:.0f}")
+    boot["preview"].save(os.path.join(args.out, "boot_logo_preview.png"))
+    info = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot)
     print(f"title: {info['tiles']} tiles, palette error {info['error']:.0f} (start {info['start']}), "
           f"arrangements {info['arr_bytes']} bytes")
 
@@ -53,6 +63,9 @@ def main():
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
           f"CPU code {music['code']} B; menu SFX replayed: {music['sfx']}")
+
+    coop.apply(rb)
+    print("co-op: Normal Game for 1-4 players (multitap on port 2)")
 
     rb.set_title("SUPER BOMBERMAN 6")
     rb.fix_checksum()

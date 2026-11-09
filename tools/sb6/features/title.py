@@ -21,6 +21,7 @@ import os
 from PIL import Image
 
 from .. import lz
+from ..romlib import off
 from ..compose import compose_background, compose_logo, load_layout
 from ..snesgfx import (Layer, PaletteSlot, TileSet, best_palettes, build_layer_map,
                        cgram_block)
@@ -39,6 +40,8 @@ VERSION_ROW = 26          # rows 26-27 (y 208-223), where (c) 1997 HUDSON SOFT w
 VERSION_TILE = 0x140      # first free BG3 tile after SB5's text ($102-$13A)
 BG3_CHR = 0x5000          # BG3 character base (VRAM word)
 VERSION_ATTR = 0x2000     # priority, palette 0 (like the old copyright line)
+MENU_ATTR = 0x2100        # tile words of SB5's menu text (tiles $1xx)
+PLAYERS_ARR = 4           # set 5 arrangement: 1-4 PLAYER GAME (see coop.py)
 
 # Script VM helpers (see docs/ROM_MAP.md).
 def call(addr):
@@ -59,6 +62,23 @@ def arrangement(width, height, x, y, words):
     hi = bytes(w >> 8 for w in words)
     # One part; $C0:0064 keeps drawing parts until a zero width byte.
     return bytes([width, height, x, y, 0]) + lz.compress(lo) + lz.compress(hi) + b"\x00"
+
+
+def players_menu(rb, dig_top, dig_bottom):
+    """SB5's "1 PLAYER GAME / 2 PLAYER GAME" (set 4 arrangement 7, 14x4) plus
+    "3 PLAYER GAME" and "4 PLAYER GAME": the "2" rows with the digit cell
+    (column 0) replaced."""
+    tab = 0xC00000 | rb.rl(0xC08000 + 3 * 4)
+    hdr = off((tab & 0xFF0000) | rb.rw(tab + 2 * (7 - 1)))
+    w, h = rb.d[hdr], rb.d[hdr + 1]
+    lo, n = lz.decompress(bytes(rb.d[hdr + 5:hdr + 5 + 512]), w * h)
+    hi, _ = lz.decompress(bytes(rb.d[hdr + 5 + n:hdr + 5 + n + 512]), w * h)
+    rows = [[hi[r * w + c] << 8 | lo[r * w + c] for c in range(w)] for r in range(h)]
+    for k in range(2):
+        top, bottom = list(rows[2]), list(rows[3])
+        top[0], bottom[0] = dig_top[k], dig_bottom[k]
+        rows += [top, bottom]
+    return arrangement(w, len(rows), 0x0B, 0x12 - TEXT_SHIFT_ROWS, [x for r in rows for x in r])
 
 
 def _trim(words, tw, th):
@@ -100,7 +120,8 @@ def convert(asset_dir, starts):
                 preview=preview, target=target)
 
 
-def apply(rb, asset_dir, out_dir, starts, version_text):
+def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
+    """boot = boot_logo.convert() result: set 5 archive 3, palette 2, arrangement 5."""
     conv = convert(asset_dir, starts)
     tiles = conv["tiles"].data()
     if len(tiles) // 2 > VRAM_TILE_LIMIT:
@@ -118,18 +139,33 @@ def apply(rb, asset_dir, out_dir, starts, version_text):
     # Version string glyphs (BG3, 2bpp) replacing SB5's copyright line.
     text = version_text if len(version_text) % 2 == 0 else version_text + " "
     ver_tiles, ver_top, ver_bottom = text_tiles(text, VERSION_TILE, VERSION_ATTR)
-    ver_addr = rb.alloc("bulk", ver_tiles, f"title: BG3 glyphs for '{version_text}' (2bpp)")
+    # Digits 3 and 4 of the player-count menu (1-4 PLAYER GAME), after them.
+    dig_tiles, dig_top, dig_bottom = text_tiles("34", VERSION_TILE + len(ver_tiles) // 16,
+                                                MENU_ATTR, art=True)
+    ver_tiles += dig_tiles
+    ver_addr = rb.alloc("bulk", ver_tiles, f"title: BG3 glyphs for '{version_text}' and 3/4 (2bpp)")
 
     # Archive table for set 5 (bank $E3): [vram, size, src24, flags]; flag $80 = raw,
     # type 2 = 4bpp BG tiles, type 3 = 2bpp BG tiles (as SB5's BG3 text, archive $96 of set 3).
     arc_entry = rb.le16(0x0000) + rb.le16(len(tiles)) + rb.le24(tiles_addr) + bytes([0x82])
     arc_entry += rb.le16(BG3_CHR + VERSION_TILE * 8) + rb.le16(len(ver_tiles)) + rb.le24(ver_addr) + bytes([0x83])
-    arc_table = rb.alloc("e3_tables", arc_entry, "set 5 archive table (1 = title tiles, 2 = version glyphs)")
+    if boot:
+        boot_addr = rb.alloc("bulk", boot["tiles"], "boot logo: BG1 4bpp tiles (raw)")
+        arc_entry += rb.le16(0x0000) + rb.le16(len(boot["tiles"])) + rb.le24(boot_addr) + bytes([0x82])
+    arc_table = rb.alloc("e3_tables", arc_entry,
+                         "set 5 archive table (1 = title tiles, 2 = version glyphs, 3 = boot logo)")
 
     # Palette table for set 5 (bank $81): word pointer -> [dest, count, colors].
-    pal_entry = rb.le16(0) + rb.le16(128) + b"".join(rb.le16(c) for c in colors)
-    pal_table = rb.alloc("bank81", bytes(2) + pal_entry, "set 5 palette table + title palette 1")
-    rb.d[pal_table & 0x3FFFFF:(pal_table & 0x3FFFFF) + 2] = rb.le16((pal_table + 2) & 0xFFFF)
+    pal_entries = [rb.le16(0) + rb.le16(128) + b"".join(rb.le16(c) for c in colors)]
+    if boot:
+        pal_entries.append(rb.le16(0) + rb.le16(128) + b"".join(rb.le16(c) for c in boot["colors"]))
+    pblob = bytearray(2 * len(pal_entries)) + b"".join(pal_entries)
+    pal_table = rb.alloc("bank81", bytes(pblob), "set 5 palette table + palettes 1 (title), 2 (boot logo)")
+    pos = pal_table + 2 * len(pal_entries)
+    for i, e in enumerate(pal_entries):
+        pblob[2 * i:2 * i + 2] = rb.le16(pos & 0xFFFF)
+        pos += len(e)
+    rb.d[pal_table & 0x3FFFFF:(pal_table & 0x3FFFFF) + len(pblob)] = pblob
 
     # Arrangement table for set 5 (any bank; entries are in the table's bank).
     w1, tw1, th1 = conv["bg1"]
@@ -138,10 +174,13 @@ def apply(rb, asset_dir, out_dir, starts, version_text):
     arr1 = arrangement(aw1, ah1, ax1, ay1, sub1)
     arr2 = arrangement(tw2, th2, 0, 0, w2)
     arr3 = arrangement(len(text), 2, (32 - len(text)) // 2, VERSION_ROW, ver_top + ver_bottom)
-    arrs = [arr1, arr2, arr3]
+    arrs = [arr1, arr2, arr3, players_menu(rb, dig_top, dig_bottom)]
+    if boot:
+        arrs.append(arrangement(32, 28, 0, 0, boot["words"]))
     blob = bytearray(2 * len(arrs)) + b"".join(arrs)
     arr_table = rb.alloc("bulk", bytes(blob),
-                         "set 5 arrangement table + title arrangements 1 (logo), 2 (scene), 3 (version, BG3)")
+                         "set 5 arrangement table + title arrangements 1 (logo), 2 (scene), 3 (version, BG3), "
+                         "4 (1-4 PLAYER GAME, BG3)")
     pos = arr_table + 2 * len(arrs)
     for i, a in enumerate(arrs):
         blob[2 * i:2 * i + 2] = rb.le16(pos & 0xFFFF)
@@ -165,6 +204,17 @@ def apply(rb, asset_dir, out_dir, starts, version_text):
     rb.patch(0xC01C96 + 2 * SET, b"\x00\x00", rb.le16(arc_table & 0xFFFF), "archive set 5 -> $E3 table")
     rb.patch(0xC00379 + 2 * SET, b"\x00\x00", rb.le16(pal_table & 0xFFFF), "palette set 5 -> $81 table")
     rb.patch(0xC08000 + 3 * SET, b"\x00\x00\x00", rb.le24(arr_table), "arrangement set 5 -> table")
+
+    # ---- boot logo (mode 1, script $C7:0AC4; see boot_logo.py) -------------
+    if boot:
+        rb.patch(0xC70ACE, bytes.fromhex("26 03 27 46 2A 2B"), bytes([0x26, SET, 0x27, 0x03, 0x2A, 0x02]),
+                 "boot logo: set 5 archive 3 + palette 2")
+        rb.patch(0xC70AD9, bytes.fromhex("FF 8D D3 04 01 00 00"), bytes([0xFF, 0x8D, 0x05, SET, 0x01, 0x00, 0x00]),
+                 "boot logo: set 5 arrangement 5 on BG1")
+
+    # The boot logo script ends with 0F A9 (intro); go to mode 2 (title
+    # without intro, where Start during the intro leads) until SB6 has its own.
+    rb.patch(0xC70AF5, bytes.fromhex("0F A9"), bytes.fromhex("0F 02"), "boot: skip the intro, straight to the title")
 
     # ---- intro path (mode $A9) --------------------------------------------
     rb.patch(0xC6FC93,
@@ -205,6 +255,10 @@ def apply(rb, asset_dir, out_dir, starts, version_text):
         rb.patch(win, bytes.fromhex("FF 0C 30 80 D0 90 02"), window, f"{where} title: PUSH START blink window moved")
         rb.patch(cpy, bytes.fromhex("FF 8D 06 04 03 00 00"), version, f"{where} title: version instead of (c) line")
     rb.patch(0xC71ABF, bytes.fromhex("61 A0"), bytes([0x61, 0xA0 - TEXT_SHIFT]), "title menu cursor Y moved")
+    # initial cursor Y ($1034) when the title appears (intro path / mode 2)
+    for a in (0xC6FE6F, 0xC7184C):
+        rb.patch(a, bytes.fromhex("5B A0 60 34 10"), bytes([0x5B, 0xA0 - TEXT_SHIFT, 0x60, 0x34, 0x10]),
+                 "title menu cursor initial Y moved")
 
     os.makedirs(out_dir, exist_ok=True)
     side = Image.new("RGB", (512, 224))

@@ -36,9 +36,23 @@ GLYPHS = {
     " ": ["........"] * 10,
 }
 
+# Hand-drawn cells (rows 0-15, '1' outline, '2' stroke) for the player-count
+# digits, matching SB5's own "1"/"2" of "1 PLAYER GAME" (rounded top
+# outline, square bottom corners); the version string keeps GLYPHS.
+ART = {
+    "3": ["........", "........", "........", "..1111..", ".122221.", "12211221",
+          "11111221", "..122221", "..122211", "..111221", "....1221", "12211221",
+          "12211221", ".122221.", "..1111..", "........"],
+    "4": ["........", "........", "........", "....1111", "...11221", "...12221",
+          "..122221", ".1221221", "12211221", "12222221", "12222221", "11111221",
+          "....1221", "....1221", "....1111", "........"],
+}
 
-def glyph_pixels(ch):
+
+def glyph_pixels(ch, art=False):
     """16x8 grid of color indices (0 transparent, 1 outline, 2 stroke)."""
+    if art and ch in ART:
+        return [[".12".index(c) for c in row] for row in ART[ch]]
     mask = GLYPHS[ch]
     px = [[0] * 8 for _ in range(16)]
     for r, line in enumerate(mask):
@@ -65,11 +79,11 @@ def encode_2bpp(rows8):
     return bytes(out)
 
 
-def text_tiles(text, first_tile, attr):
+def text_tiles(text, first_tile, attr, art=False):
     """-> (2bpp tile data, top-row words, bottom-row words). Identical tiles are shared."""
     tiles, index, top, bottom = [], {}, [], []
     for ch in text:
-        px = glyph_pixels(ch)
+        px = glyph_pixels(ch, art)
         for half, row_words in ((px[:8], top), (px[8:], bottom)):
             data = encode_2bpp(half)
             if data not in index:

@@ -37,6 +37,10 @@ frame 5650 (intro cannot be skipped earlier); an attract demo starts ~36 s
 later. Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), Options →
 back restarts it, Normal Game releases it (Hudson PC `$08xx`, stage music).
 
+The testrunner ignores the multitap setting (every port lands on P1), so
+P3/P4 input is injected by Lua with `emu.write` to `$2C/$31/$36+seat` from an
+exec callback at `$C0:0AF9` (end of the pad reader).
+
 ## Sound gotchas
 
 * Hudson's `$10` loader returns instead of jumping; the stream driver is

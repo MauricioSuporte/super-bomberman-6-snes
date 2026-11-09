@@ -112,5 +112,35 @@ script accumulator (`61` = add).
 | `$C0:0CED` | `85 9F EB C9 10` | title music stream (`asm/title_music.asm`) |
 | `$C0:0B2C` | `AD BF 03 D0 04` | stream feeder, once per main-loop pass |
 | title scripts | see `tools/sb6/features/title.py` | SB6 title graphics |
+| co-op | see `tools/sb6/features/coop.py` | 3/4-player Normal Game (below) |
+
+## Normal Game co-op (3-4 players)
+
+Ported from the recomp's `normal_coop_mod.c` / `coop_corner_spawns_mod.c`
+(`docs/NORMAL_COOP.md` there). With 1-2 players every hook takes the stock
+path (roster 2, actor base `$18`, mount offset from `$1CBF`).
+
+* Pads: `$C0:0A56` already reads 5 seats (multitap BIOS `$C0:F1D7`, raw
+  `$19-$27`). Per seat: held actions `$2C+s`, held dirs `$31+s`, new actions
+  `$36+s`, new dirs `$3B+s`; bits A `$80` X `$40` L `$20` R `$10` B `$08`
+  Y `$04` Select `$02` Start `$01`.
+* Title players menu: `$1036` menu (1 = players), `$1032` cursor, `$1037`
+  limit, confirm script at `$C7:18ED` (patched at `$C7:18F4`).
+* Stage: `$1031` mode/stage (bosses `$67-$6E`), `$1D1A` bit 0 Battle,
+  `$1D25` participant mask, `$1D24` 1/3, `$1D23` shared lives, `$1CBF`
+  bomber slots + mount offset. Per seat: `$17FA` object (`$FF` none),
+  `$15A2` status (`$80` dead), `$16AA` cell, `$4E8D/$4EA5` spawn tile,
+  `$16C2/$16DA` character/palette id (`$C0:BB4E`: 1 white 2 black 3 red
+  4 blue). Collision `$1052` static, `$1152` dynamic (16 columns).
+* Stock rejoin `$C5:060E-$065C` (Start held, `JSR $065D`, `JSL $C42A69`
+  spawn, `JSL $C428CF`, `DEC $1D23`); replaced by `e4_frame` in co-op.
+* Seat loops bounded by 2 (22 sites) jump through stubs comparing with the
+  roster; 28 mount-offset operands read `$0128`; the 6 distance arrays at
+  `$C3` were moved to `$0110`.
+* P3/P4 spawn in the lower corners (moved to the nearest safe floor after
+  the map copy, `$C5:3D5B`), use red/blue, and rejoin with Start at the
+  nearest safe cell for one shared life. Boss stages `$67-$6E`: P3/P4 sit
+  out (their fields are saved and restored for the next zone).
+
 
 The full list with sizes is generated in `build/sb6.map`.
