@@ -15,7 +15,7 @@
 ; $1CBF = 5 bomber slots.
 ;
 ; Hooks and generated loop stubs: tools/sb6/features/coop.py.
-; WRAM: $0110-$0147 (docs/FREE_SPACE.md); zeroed by the reset routine,
+; WRAM: $0110-$0154 (docs/FREE_SPACE.md); zeroed by the reset routine,
 ; initialised by `coop_boot` ($80:F393).
 
 asar 1.90
@@ -41,6 +41,12 @@ hirom
 !t7       = $014C
 !t8       = $014D
 !t9       = $014E
+!pfneed   = $014F       ; OBJ palette arbitration (c0_palfail), own scratch:
+!pfrun    = $0150       ;   it can run inside revive/spawn, which use !t0-!t9
+!pftgt    = $0151
+!pfslot   = $0152
+!objmax   = $0153       ; highest OBJ page (0-15) written by static stage graphics
+!xtimer   = $0154       ; frames since the co-op stage started (extra pages)
 
 ; Bomber fields kept for benched seats (recomp seat_fields).
 macro bench_fields()
@@ -144,6 +150,9 @@ c4_stage_slots:
     stz !roster+1
     lda #$01
     sta !coopst
+    lda #$04
+    sta !objmax
+    stz !xtimer
     rts
 
 ; $C4:2A60 (Battle: LDA #5 / STA $1CBF).
@@ -208,14 +217,10 @@ c4_palmask:
     beq .stock
     lda $04,s                       ; seat (PHX before the mask loop)
     cmp #$02
-    beq .p3
-    cmp #$03
-    bne .stock
-    lda #$40
-    bra .set
-.p3:
-    lda #$80
-.set:
+    bcc .stock
+    lda #$F0                        ; P3/P4: any of slots 4-7, lowest first
+    ;   (4/5 are free in most stages; 6/7 stay for eggs, loose Louies and
+    ;   large stage objects, mask $C0, as in the 1-2 player game)
     sta $0348
     pla
     rts
@@ -246,6 +251,36 @@ c4_mountslot:
     lda $16DA,x
     inc a
     rts
+
+; $C4:37B0 (PHA / STZ $0AE7: write a bomber's colors into its slot): a
+; P3/P4 bomber sharing P1's/P2's slot (c0_palfail) must not paint it, and a
+; failed slot ($FF) is never written.
+c4_seatcolor:
+    pha
+    lda.l $7E0000|!coopst
+    beq .go
+    lda $06DF,y
+    cmp #$08
+    bcs .skip
+    cmp #$03
+    bcs .go
+    cpx #$02
+    bcc .go
+    txa
+    cmp.l $7E0000|!roster
+    bcs .go
+.skip:
+    pla
+    stz $0AE7
+    rts
+.go:
+    stz $0AE7
+    jmp $37B4
+
+; From E4 (reclaim): colors of seat X's object Y, palette id A.
+c4_colors:
+    jsr $37B0
+    rtl
 
 ; $C4:2260 (actor allocator: CPX #$18 / BCC / BRA): enemies stop below
 ; the co-op mounts.
@@ -423,6 +458,210 @@ c0_damage:
     jmp $3751
 +   jmp $3778
 
+; $C0:0303 (no OBJ palette slot: LDA #$FF / SEC / BRA $0342). Port of the
+; recomp's palette_full: the stage wins. A P3/P4 request (mask $F0) shares
+; P1's slot (P2's if P1 has none) and shows P1's colors; any other request
+; that would fit if P3/P4 left their slots moves them to that shared slot
+; and searches again. e4_frame gives them a slot of their own back.
+c0_palfail:
+    lda.l $7E0000|!coopst
+    beq .fail
+    jsr pf_target
+    beq .fail
+    sta.l $7E0000|!pftgt
+    lda.l $7E0348
+    cmp #$F0
+    bne .stage
+    lda.l $7E0000|!pftgt
+    tax
+    jmp $033D                       ; INC $0349,X / return slot X, C clear
+.stage:
+    lda.l $7E0347
+    sta.l $7E0000|!pfneed
+    lda #$00
+    sta.l $7E0000|!pfrun
+    ldx #$00
+.scan:
+    lda.l $7E0348
+    and.l pf_bits,x
+    beq .reset
+    lda.l $7E2B10,x
+    beq .use
+    jsr pf_seat_owned
+    bcc .reset
+.use:
+    lda.l $7E0000|!pfrun
+    inc a
+    sta.l $7E0000|!pfrun
+    cmp.l $7E0000|!pfneed
+    bcs .found
+    bra .next
+.reset:
+    lda #$00
+    sta.l $7E0000|!pfrun
+.next:
+    inx
+    cpx #$08
+    bcc .scan
+.fail:
+    lda #$FF
+    sec
+    jmp $0342
+.found:
+    txa
+    sec
+    sbc.l $7E0000|!pfneed
+    inc a
+    tax                             ; first slot of the run
+    lda.l $7E0000|!pfneed
+    tay
+.move:
+    lda.l $7E2B10,x
+    beq +
+    jsr pf_share
++   inx
+    dey
+    bne .move
+    jmp $02E2                       ; search again
+
+; A/Z = slot the seats can share (1 = P1, else 2), 0 = none.
+pf_target:
+    lda.l $7E2B11
+    beq +
+    lda.l $7E034A
+    beq +
+    lda #$01
+    rts
++   lda.l $7E2B12
+    beq +
+    lda.l $7E034B
+    beq +
+    lda #$02
+    rts
++   lda #$00
+    rts
+
+; C = slot X (3-7, in use) belongs to the bomber of seat 2/3. Keeps X.
+pf_seat_owned:
+    cpx #$03
+    bcc .no
+    lda.l $7E0349,x
+    beq .no
+    txa
+    sta.l $7E0000|!pfslot
+    ldy #$02
+-   tya
+    cmp.l $7E0000|!roster
+    bcs .no
+    phx
+    tyx
+    lda.l $7E17FA,x
+    cmp #$60
+    bcs +
+    tax
+    lda.l $7E06DF,x
+    plx
+    cmp.l $7E0000|!pfslot
+    beq .yes
+    bra ++
++   plx
+++  iny
+    bra -
+.yes:
+    sec
+    rts
+.no:
+    clc
+    rts
+
+; Objects on slot X (the seat's bomber and mount) move to !pftgt, which
+; takes over their references; slot X is freed. Keeps X and Y.
+pf_share:
+    phy
+    txa
+    sta.l $7E0000|!pfslot
+    ldx #$00
+-   lda.l $7E06DF,x
+    cmp.l $7E0000|!pfslot
+    bne +
+    lda.l $7E0000|!pftgt
+    sta.l $7E06DF,x
++   inx
+    inx
+    cpx #$60
+    bcc -
+    lda.l $7E0000|!pftgt
+    tax
+    lda.l $7E0000|!pfslot
+    tay
+    lda.l $7E0349,x
+    phx
+    tyx
+    clc
+    adc.l $7E0349,x
+    plx
+    sta.l $7E0349,x
+    tyx
+    lda #$00
+    sta.l $7E0349,x
+    sta.l $7E2B10,x
+    sta.l $7E2B18,x
+    sta.l $7E2B20,x
+    ply
+    rts
+
+; $C0:0573 (VRAM DMA queue: LDA $0361 / STA $2116, M = 16): in co-op stages,
+; note the highest OBJ page that receives static stage graphics (page owner
+; $7E), so e4_tick can lend the pages above it to eggs and Louies.
+c0_vmadd:
+    lda $0361
+    sta $2116
+    pha
+    php
+    sep #$20
+    lda.l $7E0000|!coopst
+    beq .out
+    rep #$20
+    lda $02,s                       ; VRAM word address
+    cmp #$6A00
+    bcc .out
+    cmp #$8000
+    bcs .out
+    lda $035F                       ; bytes
+    lsr a
+    beq .out
+    dec a
+    clc
+    adc $02,s                       ; last word written
+    cmp #$8000
+    bcc +
+    lda #$7FFF
++   sec
+    sbc #$6000
+    and #$1E00
+    xba
+    lsr a                           ; A = last page (B = 0)
+    rep #$10
+    phx
+    tax
+    sep #$20
+    lda.l $7E1D00,x
+    cmp #$7E
+    bne +
+    txa
+    cmp.l $7E0000|!objmax
+    bcc +
+    sta.l $7E0000|!objmax
++   rep #$10
+    plx
+.out:
+    plp
+    pla
+    rts
+
+pf_bits:
+    db $01,$02,$04,$08,$10,$20,$40,$80
+
 print "SYM end_c0 ", hex(pc())
 
 ; ===========================================================================
@@ -513,12 +752,17 @@ print "SYM c4_boss_slots ", hex(c4_boss_slots)
 print "SYM c4_death ", hex(c4_death)
 print "SYM c4_palmask ", hex(c4_palmask)
 print "SYM c4_mountslot ", hex(c4_mountslot)
+print "SYM c4_seatcolor ", hex(c4_seatcolor)
+print "SYM c4_colors ", hex(c4_colors)
+print "SYM c0_palfail ", hex(c0_palfail)
+print "SYM c0_vmadd ", hex(c0_vmadd)
 print "SYM c4_cap ", hex(c4_cap)
 print "SYM c5_charge ", hex(c5_charge)
 print "SYM c5_settle ", hex(c5_settle)
 print "SYM c5_service ", hex(c5_service)
 print "SYM c5_clock ", hex(c5_clock)
 print "SYM e4_frame ", hex(e4_frame)
+print "SYM e4_tick ", hex(e4_tick)
 print "SYM c2_spawn ", hex(c2_spawn)
 print "SYM c2_story ", hex(c2_story)
 print "SYM c3_fill ", hex(c3_fill)

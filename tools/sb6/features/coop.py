@@ -196,7 +196,7 @@ def apply(rb):
              "co-op: boss stages (P3/P4 benched)")
     rb.patch(0xC43794, bytes.fromhex("AD 1A 1D"), _jmp(s("c4_death")), "co-op: death leaves the participants")
     for a in (0xC42AD8, 0xC42B8D):
-        rb.patch(a, bytes.fromhex("8D 48 03"), _jsr(s("c4_palmask")), "co-op: P3/P4 OBJ palette slots 7/6")
+        rb.patch(a, bytes.fromhex("8D 48 03"), _jsr(s("c4_palmask")), "co-op: P3/P4 OBJ palette slots 4-7")
     rb.patch(0xC453F0, bytes.fromhex("BD DA 16 1A"), _jsr(s("c4_mountslot")) + b"\xEA",
              "co-op: mount uses its rider's palette slot")
     rb.patch(0xC42260, bytes.fromhex("E0 18 90 F6 80 30"), _jmp(s("c4_cap")) + b"\xEA" * 3,
@@ -217,6 +217,13 @@ def apply(rb):
     rb.patch(0xC34393, bytes.fromhex("AD 25 1D"), _jsr(s("c3_record")), "co-op: campaign record mask")
     rb.patch(0xC0374D, bytes.fromhex("E0 05 90 27"), _jmp(s("c0_damage")) + b"\xEA",
              "co-op: point damage skips mounts")
+    rb.patch(0xC00B44, bytes.fromhex("22 F0 22 C0"), _jsl(syms["e4_tick"]), "co-op: per-frame upkeep (palette slots)")
+    rb.patch(0xC00573, bytes.fromhex("AD 61 03 8D 16 21"), _jsr(s("c0_vmadd")) + b"\xEA\xEA\xEA",
+             "co-op: track static OBJ pages (VRAM DMA queue)")
+    rb.patch(0xC00303, bytes.fromhex("A9 FF 38 80 3A"), _jmp(s("c0_palfail")) + b"\xEA\xEA",
+             "co-op: OBJ palette slots full -> P3/P4 share P1's")
+    rb.patch(0xC437B0, bytes.fromhex("48 9C E7 0A"), _jmp(s("c4_seatcolor")) + b"\xEA",
+             "co-op: a bomber sharing P1's slot keeps P1's colors")
     for a in (0xC1002A, 0xC1004A):
         rb.patch(a, b"\x20", b"\x1F", "palette blink save/restore: 32 bytes (was 33, overran palette 15)")
 

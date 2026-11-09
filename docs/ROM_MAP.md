@@ -157,6 +157,32 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
 * Seat loops bounded by 2 (22 sites) jump through stubs comparing with the
   roster; 28 mount-offset operands read `$0128`; the 6 distance arrays at
   `$C3` were moved to `$0110`.
+* OBJ palette slots (`$C0:0295`: `$0346` palette id, `$0347` slots
+  needed, `$0348` mask; per slot `$2B10` id, `$2B18` set, `$2B20` run,
+  `$0349` references; object slot `$06DF+obj`; release `$C0:0345`; failure
+  `$C0:0303`). Stock use: 0 stage, 1/2 P1/P2, 3-5 enemies (`$38`), 6-7
+  eggs, loose Louies (`$C4:4C4E`, `$C4:4DAD`, `$C4:582B`, set 4 palettes
+  `$30`/`$38`/table) and large stage objects (`$C0`). A ridden Louie writes
+  its 8 colors into entries 8-15 of the rider's slot (`$C4:53EB`). Bomber
+  colors: `$C4:37B0`.
+* Co-op palettes: P3/P4 ask for mask `$F0` (slots 4/5 when free, so 6/7 stay
+  for eggs and Louies). When a stage request fails, `c0_palfail` moves P3/P4
+  off the slots it needs onto P1's slot (they show P1's colors; `$C4:37B0`
+  does not repaint it) and searches again; `e4_tick` (main loop `$C0:0B44`)
+  gives them a free slot 4-7 back every 16 frames. `$C5:060E` is not a
+  per-frame hook: that task only runs while a player is dead.
+* OBJ tile pages: `$1D00-$1D0F` owner of each 1 KB page at VRAM
+  `$6000+$200*i` (object id, `$FF` free, `$7F` pending free, `$7E`
+  static); `$1D10` pool size (init `$C5:6A14`: 5 in stages via `$C5:69DF`,
+  8 via `$C5:6A00`), allocator `$C5:6AF5`, release loop `$C5:6B08` (from
+  index `$1D10` down). Stage static sprites (bombs, items, enemies) are
+  queued at pages 5+ and DMA'd by `$C0:0540` (`$0361` VRAM, `$035F` bytes)
+  ~130 frames after the stage hook; how many pages they take depends on the
+  stage (5 to all 11: stages `$41`,`$42`,`$44-$46`,`$60-$62` use all 16).
+* Co-op pages: four bombers take four of the five pool pages, so eggs and
+  Louies were drawn with a bomber's tiles. `c0_vmadd` (`$C0:0573`) records
+  the highest static page written; 240 frames into the stage `e4_tick`
+  frees every `$7E` page above it and sets `$1D10` = 15.
 * P3/P4 spawn in the lower corners (moved to the nearest safe floor after
   the map copy, `$C5:3D5B`), use red/blue, and rejoin with Start at the
   nearest safe cell for one shared life. Boss stages `$67-$6E`: P3/P4 sit
