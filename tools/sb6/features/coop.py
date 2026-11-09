@@ -58,6 +58,16 @@ MOUNT_OFFSET_OPERANDS = [
 ]
 
 DIST = 0x0110
+
+# Boss start $C4:3C60 (Y = boss index; recomp boss_rider_sites): equipment of
+# rival slot 2 (LDA #$02 / JSR $2906; slot 3 for the two-rival boss stays),
+# the mounted rival's riding bit (LDX #$02 / STA $1782,X) and its mount
+# (LDA #$02 / CLC / ADC $1CBF).
+BOSS_RIDER_SITES = [0xC43C83, 0xC43C98, 0xC43C9F]
+# $C4:3D30/$C4:3D69: P1/P2 mounts saved/restored around the boss start by
+# literal actor (stock mounts 2/3 -> co-op 19/20, recomp mount_backups +17).
+MOUNT_BACKUPS = [0xC43D3D, 0xC43D43, 0xC43D54, 0xC43D5A, 0xC43D71, 0xC43D77, 0xC43D89, 0xC43D8F]
+RIVAL = 4  # bomber slot of the boss rival (P5)
 BRANCHES = (0x10, 0x30, 0x90, 0xB0, 0xD0, 0xF0)
 
 
@@ -130,6 +140,40 @@ def _distances(rb):
     rb.patch(0xC34766, b"\x0C", b"\x18", "co-op: clear 6 x 4 distance bytes")
 
 
+def _boss_rival(rb, syms):
+    """Boss rival in bomber slot 4 (P5) instead of 2 (P3): port of the
+    recomp's boss move with a fixed slot (ZONE3 - D's second rival keeps 3)."""
+    for a in (0xC216B8, 0xC216EE):
+        rb.patch(a, bytes.fromhex("A7 0D 3A AA"), _jsr(syms["c2_bslot"] & 0xFFFF) + b"\xEA",
+                 "boss: scripted rival bomber slot 2 -> 4")
+    for a in BOSS_RIDER_SITES:
+        rb.patch(a, b"\x02", bytes([RIVAL]), f"boss: start ${a - 1:06X} rival slot 2 -> 4")
+    for a in MOUNT_BACKUPS:
+        o = off(a)
+        if rb.d[o] not in (0xAD, 0x8D, 0xBD, 0x9D) or rb.d[o + 2] != 0x16 or rb.d[o + 1] not in (0xC4, 0xC5, 0xDC, 0xDD):
+            raise RuntimeError(f"boss mount backup ${a:06X}: unexpected {rb.d[o:o + 3].hex(' ')}")
+        rb.patch(a + 1, rb.d[o + 1:o + 2], bytes([rb.d[o + 1] + 17]), f"boss: mount backup ${a:06X} actor +17")
+    # Boss choreography $C5:2600-$C5:39FF (recomp find_boss_sites): LDX #2
+    # before $C4:3C24/$C4:3BDE, LDA #2 before $C4:2B3A/$C4:3BA3, LDA $17FC.
+    n = {"ldx": 0, "lda": 0, "obj": 0}
+    for pc in range(0xC52600, 0xC53A00):
+        o = off(pc)
+        b = rb.d[o:o + 12]
+        if b[0] == 0xA2 and b[1] == 2 and b[2] == 0xA9:
+            c = b[6:] if b[4] == 0xA0 else b[4:]
+            if c[0] == 0x22 and c[3] == 0xC4 and (c[1], c[2]) in ((0x24, 0x3C), (0xDE, 0x3B)):
+                rb.patch(pc + 1, b"\x02", bytes([RIVAL]), f"boss: choreography ${pc:06X} LDX rival")
+                n["ldx"] += 1
+        elif b[0] == 0xA9 and b[1] == 2 and b[2] == 0x22 and b[5] == 0xC4 and (b[3], b[4]) in ((0x3A, 0x2B), (0xA3, 0x3B)):
+            rb.patch(pc + 1, b"\x02", bytes([RIVAL]), f"boss: choreography ${pc:06X} LDA rival")
+            n["lda"] += 1
+        elif b[0] == 0xAD and b[1] == 0xFC and b[2] == 0x17:
+            rb.patch(pc + 1, b"\xFC", bytes([0xFA + RIVAL]), f"boss: choreography ${pc:06X} rival object")
+            n["obj"] += 1
+    if n != {"ldx": 57, "lda": 23, "obj": 18}:
+        raise RuntimeError(f"boss choreography: unexpected rival operands {n}")
+
+
 def _title_menu(rb):
     """1-4 PLAYER GAME on the title (script VM, see docs/ROM_MAP.md)."""
     # Players menu: arrangement 4 of the SB6 title set (8 rows), clear blocks
@@ -193,7 +237,7 @@ def apply(rb):
     rb.patch(0xC42A60, bytes.fromhex("A9 05 8D BF 1C"), _jsr(s("c4_battle_slots")) + b"\xEA\xEA",
              "co-op: Battle keeps stock slots")
     rb.patch(0xC43C75, bytes.fromhex("B9 AE B9 8D BF 1C"), _jsr(s("c4_boss_slots")) + b"\xEA" * 3,
-             "co-op: boss stages (P3/P4 benched)")
+             "co-op: boss stages keep five bomber slots (rival in slot 4)")
     rb.patch(0xC43794, bytes.fromhex("AD 1A 1D"), _jmp(s("c4_death")), "co-op: death leaves the participants")
     for a in (0xC42AD8, 0xC42B8D):
         rb.patch(a, bytes.fromhex("8D 48 03"), _jsr(s("c4_palmask")), "co-op: P3/P4 OBJ palette slots 4-7")
@@ -232,5 +276,6 @@ def apply(rb):
     for a in MOUNT_OFFSET_OPERANDS:
         rb.patch(a, b"\xBF\x1C", bytes([MOFS & 0xFF, MOFS >> 8]), f"co-op: mount offset operand ${a:06X}")
     _distances(rb)
+    _boss_rival(rb, syms)
     _title_menu(rb)
     return dict(code=sum(1 for _ in syms))

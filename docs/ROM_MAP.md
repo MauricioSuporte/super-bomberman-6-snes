@@ -166,7 +166,9 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   its 8 colors into entries 8-15 of the rider's slot (`$C4:53EB`). Bomber
   colors: `$C4:37B0`.
 * Co-op palettes: P3/P4 ask for mask `$F0` (slots 4/5 when free, so 6/7 stay
-  for eggs and Louies). When a stage request fails, `c0_palfail` moves P3/P4
+  for eggs and Louies; `$D0` in boss stages, where slot 5 belongs to the
+  rival in seat 4 and its mount: sharing it let the intro blink restore
+  `$C1:0035` paint P4's reclaimed slot black). When a stage request fails, `c0_palfail` moves P3/P4
   off the slots it needs onto P1's slot (they show P1's colors; `$C4:37B0`
   does not repaint it) and searches again; `e4_tick` (main loop `$C0:0B44`)
   gives them a free slot 4-7 back every 16 frames. `$C5:060E` is not a
@@ -185,8 +187,23 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   frees every `$7E` page above it and sets `$1D10` = 15.
 * P3/P4 spawn in the lower corners (moved to the nearest safe floor after
   the map copy, `$C5:3D5B`), use red/blue, and rejoin with Start at the
-  nearest safe cell for one shared life. Boss stages `$67-$6E`: P3/P4 sit
-  out (their fields are saved and restored for the next zone).
+  nearest safe cell for one shared life.
+* Boss stages `$67-$6E` (`!bossst`): script ops `$C2:16B8/$C2:16EE`
+  (`LDA [$0D] / DEC A / TAX`, 1-based bomber slot) create the rival; boss
+  start `$C2:16E6` → `$C4:3C60` (A = boss index 0-8, tables `$C0:B9A5`
+  graphics, `$B9AE` `$1CBF` = 3, or 4 for index 4 = two rivals, `$B9B7`
+  rival mount type, `$FF` none): `$C4:3C7F JSR $3D30` saves P1/P2 mounts
+  (literal actors `$16C4/$16C5`, `$16DC/$16DD`), `$C4:3C82` equips slot 2
+  (`$3C8B` slot 3 when Y = 4), `$C4:3C97` seats the mounted rival (slot 2,
+  mount `2 + $1CBF`). Choreography `$C5:2600-$C5:39FF` names the rival by
+  literal: 57 `LDX #2` before `JSL $C4:3C24/$C4:3BDE`, 23 `LDA #2` before
+  `JSL $C4:2B3A/$C4:3BA3`, 18 `LDA $17FC` (slot 3: 6 + 3 + 3 operands).
+  The hack moves the slot-2 rival to slot 4 (P5) in every one of them, boss
+  stages always use the five-slot layout (`$1CBF` = 5, mounts rider + 19,
+  rival mount 23, mount backups +17) and P3/P4 fight (spawn two tiles left
+  of P1 / right of P2, then the nearest safe floor). `$6A` (two rivals,
+  slots 3/4): P4 sits out with its fields saved for the next stage.
+  Rival flags `$101F+seat` of seats 2-4 are cleared at the player reset.
 
 
 The full list with sizes is generated in `build/sb6.map`.

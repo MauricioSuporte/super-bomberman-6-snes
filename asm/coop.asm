@@ -5,9 +5,13 @@
 ; $C0:0A56 already fills the per-seat arrays $2C/$31/$36+seat for five pads).
 ; With one or two players every hook below takes the cartridge's own path:
 ; `!coopst` (this stage is a co-op stage) is set only by c4_stage_slots when
-; `!count` >= 3, the mode is a campaign stage and the stage is not a boss
-; stage ($67-$6E: P1/P2 fight the rival bombers alone, as in the original;
-; P3/P4 sit out and get their bomber fields back at the next stage).
+; `!count` >= 3 and the mode is a campaign stage.
+;
+; Boss stages ($67-$6E, `!bossst`): the rival bomber is created in bomber
+; slot 4 (P5) instead of slot 2 (P3), so up to four players fight it.
+; ZONE3 - D ($6A) has two rivals (slots 3/4): three players fight, P4 sits
+; out with its bomber fields saved for the next stage. Boss stages always
+; use the five-slot layout below, also with one or two players.
 ;
 ; Actor layout in a co-op stage (as in the recomp mod): seats 0-3 = actors
 ; 0-3, enemies 5-18 (`!mbase` caps the allocator), mounts rider + 19
@@ -29,7 +33,7 @@ hirom
 !mbase    = $012D       ; first mount actor (enemies stop below; $18 = stock)
 !coopst   = $012E       ; 1 = this stage runs the co-op rules
 !spawnchk = $012F       ; settle P3/P4 once the stage map exists
-!bench    = $0130       ; 10 fields x 2 seats (P3/P4 benched in boss stages)
+!bench    = $0130       ; 10 fields x 2 seats (benched seats: P4 in ZONE3 - D)
 !benched  = $0144
 !t0       = $0145       ; scratch (E4 routines, DBR = $7E)
 !t1       = $0146
@@ -47,6 +51,10 @@ hirom
 !pfslot   = $0152
 !objmax   = $0153       ; highest OBJ page (0-15) written by static stage graphics
 !xtimer   = $0154       ; frames since the co-op stage started (extra pages)
+!bossst   = $0155       ; word: 1 = boss stage (rival in slot 4, five-slot layout)
+!bseat    = $0157       ; word: seat being benched / restored (E4 scratch)
+!anchx    = $0159       ; 2 bytes: spawn anchor x of P3/P4 (corner or beside P1/P2)
+!anchy    = $015B       ; 2 bytes: spawn anchor y of P3/P4
 
 ; Bomber fields kept for benched seats (recomp seat_fields).
 macro bench_fields()
@@ -79,6 +87,9 @@ c4_reset:
 ; $C4:28B4 (tail of the player reset, ends with RTL): forced one-player
 ; sessions as in the original; co-op lives = players + 2, P3 red, P4 blue.
 c4_tail:
+    stz $1021                       ; rival flags ($101F) of seats 2-4: the
+    stz $1022                       ;   last boss start set them (ZONE3 - D
+    stz $1023                       ;   uses P4's seat)
     lda #$06
     jsl $C20372
     bcs .forced
@@ -128,6 +139,9 @@ c4_tail:
 
 ; $C4:29CE (stage init, stock LDA #2 / STA $1CBF).
 c4_stage_slots:
+    jsl e4_boss_check
+    bcs .boss
+    stz !bossst
     jsl e4_coop_check
     bcs .coop
     lda #$02
@@ -154,6 +168,41 @@ c4_stage_slots:
     sta !objmax
     stz !xtimer
     rts
+; Boss stage: five bomber slots (players 0-3, rival 4; ZONE3 - D: 3/4),
+; mounts at rider + 19, enemies 5-18, for every player count.
+.boss:
+    lda #$01
+    sta !bossst
+    stz !bossst+1
+    lda #$05
+    sta $1CBF
+    lda #19
+    sta !mofs
+    sta !mbase
+    lda #$02
+    sta !roster
+    stz !roster+1
+    stz !coopst
+    lda !count
+    cmp #$03
+    bcc .rts
+    lda $1031
+    cmp #$6A
+    bne +
+    lda !count
+    cmp #$04
+    bcc +
+    lda #$03                        ; two rivals: P1-P3 fight
+    bra ++
++   lda !count
+++  sta !roster
+    lda #$01
+    sta !coopst
+    lda #$04
+    sta !objmax
+    stz !xtimer
+.rts:
+    rts
 
 ; $C4:2A60 (Battle: LDA #5 / STA $1CBF).
 c4_battle_slots:
@@ -166,31 +215,24 @@ c4_battle_slots:
     lda #$18
     sta !mbase
     stz !coopst
+    stz !bossst
     rts
 
-; $C4:3C75 (boss start: LDA $B9AE,Y / STA $1CBF). P1/P2 fight; P3/P4 are
-; benched with their fields saved (the rivals take slots 2/3).
+; $C4:3C75 (boss start, Y = boss index: LDA $B9AE,Y / STA $1CBF, 3 or 4 =
+; rivals in slots 2/3). The rivals now take slots 4 (and 3), so the stage
+; keeps its five-slot layout; co-op seats the boss cannot hold (P4 in
+; ZONE3 - D) are benched with their fields saved before the rival takes
+; them.
 c4_boss_slots:
-    stz !coopst
-    lda #$02
-    sta !roster
-    stz !roster+1
-    lda #$18
-    sta !mbase
-    lda !count
-    cmp #$03
-    bcc .done
-    lda #$03
-    sta $1D25
-    sta $1D24
-    lda !benched
-    bne .done
-    jsl e4_bench_save
-.done:
-    lda $B9AE,y
+    lda #$05
     sta $1CBF
+    lda #19
     sta !mofs
-    rts
+    sta !mbase
+    lda !coopst
+    beq +
+    jsl e4_bench_save
++   rts
 
 ; $C4:3794 (a player died): co-op keeps the last participant for the
 ; stock retry, every other dead seat leaves until it rejoins with Start.
@@ -201,6 +243,9 @@ c4_death:
     jmp $3797
 .coop:
     ldx $8D
+    txa
+    cmp.l $7E0000|!roster           ; a rival: no participant leaves
+    bcs +
     lda.l seat_bits,x
     eor #$FF
     and !pmask
@@ -218,11 +263,17 @@ c4_palmask:
     lda $04,s                       ; seat (PHX before the mask loop)
     cmp #$02
     bcc .stock
+    cmp.l $7E0000|!roster           ; a boss rival in slot 3/4: stock mask
+    bcs .stock
     lda #$F0                        ; P3/P4: any of slots 4-7, lowest first
     ;   (4/5 are free in most stages; 6/7 stay for eggs, loose Louies and
     ;   large stage objects, mask $C0, as in the 1-2 player game)
     sta $0348
-    pla
+    lda.l $7E0000|!bossst           ; boss stage: slot 5 is the rival's
+    beq +                           ;   (seat 4 asks for mask $20)
+    lda #$D0
+    sta $0348
++   pla
     rts
 .stock:
     pla
@@ -409,6 +460,22 @@ c2_story:
 +   lda $1D25
     rts
 
+; $C2:16B8 / $C2:16EE (script ops that create a bomber: LDA [$0D] / DEC A
+; / TAX, 1-based slot). In boss stages the rival scripted into slot 2 (P3)
+; goes to slot 4 (P5); ZONE3 - D's second rival keeps slot 3.
+c2_bslot:
+    lda [$0D]
+    dec a
+    cmp #$02
+    bne +
+    lda.l $7E0000|!bossst
+    beq ++
+    lda #$04
+    bra +
+++  lda #$02
++   tax
+    rts
+
 print "SYM end_c2 ", hex(pc())
 
 ; ===========================================================================
@@ -471,7 +538,10 @@ c0_palfail:
     sta.l $7E0000|!pftgt
     lda.l $7E0348
     cmp #$F0
+    beq +
+    cmp #$D0                        ; P3/P4 in a boss stage
     bne .stage
++
     lda.l $7E0000|!pftgt
     tax
     jmp $033D                       ; INC $0349,X / return slot X, C clear
@@ -675,6 +745,28 @@ corner_x:
     db 1,13
 corner_y:
     db 11,11
+roster_bits:
+    db $00,$01,$03,$07,$0F,$1F
+
+; C = 1 when the stage being set up is a campaign boss stage ($67-$6E).
+e4_boss_check:
+    php
+    sep #$20
+    lda.l $7E1D1A
+    lsr a
+    bcs .no                         ; Battle
+    lda.l $7E1031
+    cmp #$67
+    bcc .no
+    cmp #$6F
+    bcs .no
+    plp
+    sec
+    rtl
+.no:
+    plp
+    clc
+    rtl
 
 ; $80:F393 (after the WRAM clear): stock values.
 coop_boot:
@@ -719,10 +811,13 @@ e4_coop_check:
 
 ; $1D25 = co-op participants, $1D24 = 3 with two or more of them.
 e4_set_masks:
+    phx
     php
-    sep #$20
+    sep #$30
+    lda.l $7E0000|!roster
+    tax
     lda.l $7E0000|!pmask
-    and #$0F
+    and.l roster_bits,x
     bne +
     lda #$01
 +   sta.l $7E1D25
@@ -736,6 +831,7 @@ e4_set_masks:
 +   lda #$01
 ++  sta.l $7E1D24
     plp
+    plx
     rtl
 
 
@@ -765,6 +861,7 @@ print "SYM e4_frame ", hex(e4_frame)
 print "SYM e4_tick ", hex(e4_tick)
 print "SYM c2_spawn ", hex(c2_spawn)
 print "SYM c2_story ", hex(c2_story)
+print "SYM c2_bslot ", hex(c2_bslot)
 print "SYM c3_fill ", hex(c3_fill)
 print "SYM c3_record ", hex(c3_record)
 print "SYM c0_damage ", hex(c0_damage)
