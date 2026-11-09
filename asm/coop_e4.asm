@@ -1,5 +1,8 @@
 ; Bank $E4 part of asm/coop.asm (included at its end, still under org !E4).
 
+; Benched seats: a co-op seat >= !roster (P4 in ZONE3 - D) keeps its
+; bomber fields in !bench (field-major, index field * 2 + seat - 2) and
+; !benched bit (1 << seat) until a stage that seats it again.
 e4_bench_save:
     php
     phb
@@ -8,26 +11,24 @@ e4_bench_save:
     pea $7E7E
     plb
     plb
-    ldx #$0000
-    ldy #$0000
--   phx
-    rep #$20
-    lda.l bench_table,x
-    tax
-    sep #$20
-    lda $0002,x                     ; seat 2
-    sta !bench,y
-    iny
-    lda $0003,x                     ; seat 3
-    sta !bench,y
-    iny
-    plx
-    inx
-    inx
-    cpx #$0014
-    bcc -
-    lda #$01
+    ldx #$0002
+.seat:
+    txa
+    cmp !roster
+    bcc .next                       ; fights this stage
+    cmp !count
+    bcs .next                       ; nobody in this seat
+    lda.l seat_bits,x
+    and !benched
+    bne .next                       ; already saved
+    lda.l seat_bits,x
+    ora !benched
     sta !benched
+    jsr bench_out
+.next:
+    inx
+    cpx #$0004
+    bcc .seat
     plb
     plp
     rtl
@@ -40,28 +41,81 @@ e4_bench_restore:
     pea $7E7E
     plb
     plb
-    ldx #$0000
-    ldy #$0000
--   phx
-    rep #$20
-    lda.l bench_table,x
-    tax
-    sep #$20
-    lda !bench,y
-    sta $0002,x
-    iny
-    lda !bench,y
-    sta $0003,x
-    iny
-    plx
+    ldx #$0002
+.seat:
+    txa
+    cmp !roster
+    bcs .next                       ; still sitting out
+    lda.l seat_bits,x
+    and !benched
+    beq .next
+    lda.l seat_bits,x
+    eor #$FF
+    and !benched
+    sta !benched
+    jsr bench_in
+.next:
     inx
-    inx
-    cpx #$0014
-    bcc -
-    stz !benched
+    cpx #$0004
+    bcc .seat
     plb
     plp
     rtl
+
+; X = seat (16-bit index, M = 8, DBR = $7E). Keeps X.
+bench_out:
+    phx
+    stx !bseat
+    ldy #$0000
+-   rep #$20
+    lda.l bench_table,y
+    clc
+    adc !bseat
+    tax                             ; field of this seat
+    tya
+    clc
+    adc !bseat
+    sec
+    sbc #$0002
+    phy
+    tay                             ; bench slot
+    sep #$20
+    lda $0000,x
+    sta !bench,y
+    ply
+    iny
+    iny
+    cpy #$0014
+    bcc -
+    plx
+    rts
+
+bench_in:
+    phx
+    stx !bseat
+    ldy #$0000
+-   rep #$20
+    lda.l bench_table,y
+    clc
+    adc !bseat
+    tax
+    tya
+    clc
+    adc !bseat
+    sec
+    sbc #$0002
+    phy
+    tay
+    sep #$20
+    lda !bench,y
+    sta $0000,x
+    ply
+    iny
+    iny
+    cpy #$0014
+    bcc -
+    plx
+    rts
 
 bench_table:
     %bench_fields()
@@ -292,10 +346,12 @@ revive:
 e4_spawn_all:
     php
     sep #$30
+    jsl e4_bench_save               ; seats this stage cannot hold (Continue)
     lda.l $7E0000|!benched
     beq +
     jsl e4_bench_restore
-+   ldx #$00
++   jsr anchors
+    ldx #$00
 .seat:
     txa
     cmp.l $7E0000|!roster
@@ -310,11 +366,11 @@ e4_spawn_all:
     lda.l $7E4EA5,x
     sta.l $7E1D2A
     bra .spawn
-.extra:                             ; corner spawns: P3 lower left, P4 lower right
-    lda.l corner_x-2,x
+.extra:                             ; P3/P4 spawn at their anchors (see anchors)
+    lda.l $7E0000|!anchx-2,x
     sta.l $7E1D28
     sta.l $7E4E8D,x
-    lda.l corner_y-2,x
+    lda.l $7E0000|!anchy-2,x
     sta.l $7E1D2A
     sta.l $7E4EA5,x
     lda #$01
@@ -330,6 +386,42 @@ e4_spawn_all:
     sta.l $7E0000|!spawnchk
     plp
     rtl
+
+; Spawn anchors of P3/P4 (M = X = 8). Regular stages: lower corners. Boss
+; stages (recomp spawn_tile): P3 two tiles left of P1's spawn, P4 two tiles
+; right of P2's, on P1's row; e4_settle moves them to the nearest safe
+; floor once the arena exists.
+anchors:
+    lda.l $7E0000|!bossst
+    bne .boss
+    lda.l corner_x
+    sta.l $7E0000|!anchx
+    lda.l corner_x+1
+    sta.l $7E0000|!anchx+1
+    lda.l corner_y
+    sta.l $7E0000|!anchy
+    lda.l corner_y+1
+    sta.l $7E0000|!anchy+1
+    rts
+.boss:
+    lda.l $7E4E8D                   ; P1 x - 2 (at least column 1)
+    cmp #$03
+    bcs +
+    lda #$03
++   sec
+    sbc #$02
+    sta.l $7E0000|!anchx
+    lda.l $7E4E8E                   ; P2 x + 2 (at most column 13)
+    cmp #$0C
+    bcc +
+    lda #$0B
++   clc
+    adc #$02
+    sta.l $7E0000|!anchx+1
+    lda.l $7E4EA5
+    sta.l $7E0000|!anchy
+    sta.l $7E0000|!anchy+1
+    rts
 
 ; ---- after the stage map is copied ($C5:3D5B): P3/P4 off walls -----------
 e4_settle:
@@ -369,9 +461,9 @@ e4_settle:
     bcs .keep
     lda.l $7E0000|!t6
     tax
-    lda.l corner_x-2,x
+    lda.l $7E0000|!anchx-2,x
     sta.l $7E0000|!t0
-    lda.l corner_y-2,x
+    lda.l $7E0000|!anchy-2,x
     sta.l $7E0000|!t1
     jsr nearest
     cmp #$FF
