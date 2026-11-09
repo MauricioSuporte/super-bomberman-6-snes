@@ -68,7 +68,8 @@ bench_out:
     stx !bseat
     ldy #$0000
 -   rep #$20
-    lda.l bench_table,y
+    tyx
+    lda.l bench_table,x
     clc
     adc !bseat
     tax                             ; field of this seat
@@ -95,7 +96,8 @@ bench_in:
     stx !bseat
     ldy #$0000
 -   rep #$20
-    lda.l bench_table,y
+    tyx
+    lda.l bench_table,x
     clc
     adc !bseat
     tax
