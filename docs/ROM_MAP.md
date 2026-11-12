@@ -257,3 +257,15 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   a ridden Louie (`$C4:53EB`).
 
 The full list with sizes is generated in `build/sb6.map`.
+
+## Bomberman sprites (`tools/sb6/features/bomberman_sprites.py`)
+
+* Archive table `$85:E22D + (n-1)*8`: VRAM word, size, src24, flags (`$85`
+  raw OBJ for `$01-$22`, compressed from `$23`). Bomberman's art is raw
+  archives `$01` (`$C7:4000`, `$2000`) and `$02` (`$C7:6000`, `$1800`); bomber
+  pages hold (archive, half) per animation (`$1CCC/$1CEA`, upload `$C5:6B77`).
+  Louies `$15-$22` (table `$C0:C415`). Frame pieces: count + 7 bytes
+  (dx, dy, tile, attr; attr bit 0 = 16x16, `$40/$80` flips); sets `$C0:16CC`,
+  animations `$C0:171D` (bomber object set `$10`).
+* Bomber palettes: set 0 (`$81:8000`), id = `$C0:BB4E[char] + color`;
+  Bomberman ids 1-7, `[dest $80, count 9, colors]`.

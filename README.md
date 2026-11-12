@@ -170,3 +170,20 @@ Regras do projeto (resumo de [CLAUDE.md](CLAUDE.md)): a ROM sempre sai da
 original + fontes; todo byte original alterado passa por `patch()`, que
 confere o conteúdo antigo; dados novos só entram por `alloc()` em regiões
 livres verificadas; cada descoberta vai para `docs/`.
+
+## Sprites e paletas do Bomberman
+
+Arquivos em `assets/bomberman/` (extraídos da ROM com
+`python tools/extract_bomberman.py ROM.sfc`):
+
+* `sheet.png` — PNG indexado 128x224, as duas folhas de tiles do Bomberman
+  (arquivos `$01` em cima, `$02` embaixo da linha vermelha do guia). Edite
+  pixel por pixel mantendo o modo indexado; índice 0 = transparente. Use os
+  índices 1-7 (o 8 é trocado pela cor do Louie quando ele está montado).
+  Cada quadro é montado a partir de blocos 8x8/16x16 nessas posições: mude
+  o desenho, não a posição.
+* `palettes.png` — 7 linhas (as 7 cores do Bomberman: branco, preto,
+  vermelho, azul, verde...) x 9 quadrados 16x16 (índices 0-8). Troque as cores.
+* `guide.png` — só referência (ampliado, grade 16x16 e número do tile).
+
+O `build.py` reconverte os PNGs e só altera os bytes que mudaram.
