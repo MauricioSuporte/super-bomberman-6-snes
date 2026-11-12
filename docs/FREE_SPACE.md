@@ -13,7 +13,10 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$C0:4D70-$C0:5EFF`, `$C1:77F0-$C1:7EFF`, `$C2:4210-$C2:7EFF`, `$C3:7E90-$C3:7FEF`, `$C4:5A40-$C4:7EFF`, `$C5:6FA0-$C5:7EFF` | | `c0`..`c5`: co-op code that must sit in the bank of the routine it hooks (`JSR`/`JMP` targets, seat-loop stubs). |
 | `$E4:0000-$E4:FFFF` | 64 KB | `bulk`: hack code (65816), scripts, arrangements, title tiles. |
 | `$E5:0000-$EB:176A` | 390 KB | streamed BRR (title music), 404 chunks of 162 bytes per bank. |
-| `$EB:176A-$FF:FFFF` | ~1.3 MB | unassigned. |
+| `$EB:176A-$EF:FFFF` | ~320 KB | unassigned. |
+| `$F0:0000-$F2:FFFF` | 192 KB | `obj_f0`..`obj_f2`: OBJ sheets (raw 4bpp, 1 KB strips aligned to `$400`) and the relocated OBJ sheet table. |
+| `$F3:8000-$F3:FFFF` | 32 KB | `objmap`: sprite mappings and bomber animation scripts, addressed as bank `$B3` (the OAM builder needs WRAM in the data bank). |
+| `$F3:0000-$F3:7FFF`, `$F4:0000-$FF:FFFF` | ~800 KB | unassigned. |
 
 Budget note: streamed audio costs ~9 KB per second (16 kHz mono). The whole
 free ROM holds only ~2.5 minutes of it, so streaming is for the title only;

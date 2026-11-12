@@ -205,5 +205,55 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   slots 3/4): P4 sits out with its fields saved for the next stage.
   Rival flags `$101F+seat` of seats 2-4 are cleared at the player reset.
 
+## Object sprites (bombers)
+
+* Per object type `T` (`$04FF+obj`; every bomber is `$10`): animation table
+  `$C0:171D + 3T` (long) -> word per animation id (`$079F+obj`, 1-based) ->
+  script of `[mapping, frames]` pairs, a zero frame count restarts it
+  (`$C0:11F8` loads the pair at offset `$07FF+obj` into `$049F`/`$07A0` and
+  makes the table's bank the data bank, so scripts also need a `$80-$BF`
+  bank; step `$C0:1254`: timer `$07A0` counts down, `$FF` = hold forever, so
+  `[0, $FF]` ends an animation with nothing drawn, e.g. death `$16`; the
+  game itself waits 60 frames after a death starts); mapping table `$C0:16CC + 3T` (long) -> word
+  per mapping id (`$049F+obj`) -> `[count]` + count x `[x16, y16, tile16,
+  attr]` (`$C0:1289` stores the pointer in `$7E:2EEA+obj`, bank `$7E:2F4A`).
+  attr: bit 0 = 16x16 (OBSEL 8x8/16x16), `$40`/`$80` flips, `$20` in every
+  stock piece. A count of 0 loops 256 times.
+* OAM builder `$C0:152E`: sets DBR to the mapping's bank and keeps using
+  absolute WRAM addresses, so **mappings must sit in `$80-$BF`** (upper half
+  of a ROM bank), never in `$C0-$FF`. Tile = mapping tile + `$073F+obj`.
+* Bomber tiles are dynamic: `$C4:3A27` (A = animation, X = seat) reads
+  `[sheet, row]` at `($80:BB66 + 2*char) + 2*(anim - $1692+seat)` and queues
+  it (`$C5:6A6B`: `$1CCC` sheet, `$1CEA` row, `$1CD6` object, `$1CE0`
+  animation). `$C5:6B77` DMAs **1 KB (32 tiles = 2 rows of 16)** from
+  `sheet source + row*$200` to the object's page; `$C5:6B36` sets
+  `$073F = (page*2 - row) * 16`, so mapping tiles are numbered from the top
+  of the sheet. All poses of one animation share those 32 tiles.
+* OBJ sheet table `$85:E22D`, 8 bytes per sheet (1-based): `[0, 0, size16,
+  source24, $85]`. White bomber = character 0 = sheets 1/2 (`$C7:4000`
+  `$2000` bytes, `$C7:6000` `$1800`, raw 4bpp); characters 1-9 use sheets
+  3-20. Louies: `$C4:5442`, table `$80:C415`.
+* Bomber type `$10`: animations 1-`$4D`, mappings 1-`$A3` (none shared
+  between animations), groups of four animations = right, down, left, up.
+  Art uses colors 1-8 only (9-15 of the slot are the ridden Louie's).
+* Hack (`tools/sb6/features/bombers.py`): the sheet table is copied to
+  `$F0` with new sheets from id 97 (`$C5:6B86`, `$C5:6B8C`), `$80:BB7A` is
+  rewritten, and `bomber_map` (hook at `$C0:12A4`) gives seat bombers of
+  character 0 a new mapping table in `$B3:8000+`.
+* Hack, `assets/bombers/bomber_anims.txt` (optional): the same bombers get
+  their own script table, also in `objmap` (`bomber_anim`, replaces
+  `LDA $C0171F,X` at `$C0:120E`), with new mapping ids from `$F1` for poses
+  the cartridge does not have. `bomber_loop` (`$C0:126A`) makes the first
+  byte of a type `$10` terminator the offset to restart at (every stock
+  type `$10` script ends in `00 00`; other types have junk there and keep
+  restarting at 0).
+* Bomber colors `$C4:37B0` (A = palette id of set 0, Y = object): copies
+  **9** colors (`LDA #$09 / STA $AB` at `$C4:37C1`) of the entry
+  `[dest16, count16, colors]` at `($81:8000 + 2*(id-1))` to CGRAM
+  `$80 + slot*16`. Ids 1-4 = white, black, red, blue (`$81:80B2`, 22 bytes
+  each). With `assets/bombers/bomber_sb6.png` + `BombermanPallete.png` the
+  hack repoints ids 1-4 to 16-color entries in `bank81` and `bomber_palcount`
+  loads 16 colors for them. Colors 8-15 of the slot are still overwritten by
+  a ridden Louie (`$C4:53EB`).
 
 The full list with sizes is generated in `build/sb6.map`.

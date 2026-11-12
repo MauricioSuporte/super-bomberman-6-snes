@@ -90,6 +90,39 @@ muda a pasta de saída; `--search` testa várias quantizações de paleta do
 título e mostra a melhor (lento; o resultado vai em
 `assets/title/convert.json`).
 
+### Sprites do Bomberman (folha de poses)
+
+`assets/bombers/bomber.png` é a folha editável do jogador: cada célula de
+64x64 é uma pose já montada, cada linha é uma animação (o rótulo traz o número,
+a direção e a ordem em que as poses tocam). Esquerda e direita são células
+separadas, então não precisam ser espelhadas. Regras: não mude o tamanho da
+imagem, pinte só dentro das células, fundo transparente (ou magenta `FF00FF`),
+use as 8 cores mostradas no topo. A grade é a mesma do `Bomberman.png` do
+projeto Unity (64x64, personagem no mesmo lugar da célula: centro em x=32, sola
+na linha 43), então dá para copiar quadro a quadro; a 1ª coluna de cada bloco
+é só rótulo. Linhas marcadas `+8px abaixo` têm o personagem 8 px mais baixo
+na célula (poses que sobem acima dela). Todas as poses de uma mesma linha dividem 32
+tiles de 8x8 (peças iguais ou espelhadas contam uma vez).
+
+Arte do SB6: se existirem `assets/bombers/bomber_sb6.png` (a mesma folha,
+pintada com as cores da 1ª coluna de `BombermanPallete.png`) e
+`BombermanPallete.png` (1 pixel por cor; colunas 2-5 = branco, preto, vermelho,
+azul), o build usa essa folha e troca as paletas dos quatro Bombermans. O
+limite do SNES é de 15 cores por sprite; células ainda iguais às do SB5 são
+repintadas com as cores mais próximas.
+
+A ordem das poses de cada animação fica em `assets/bombers/bomber_anims.txt`
+(uma linha por animação: número, quadros por pose, sequência de células; `[`
+marca onde o loop recomeça e `fim` faz o personagem sumir no final). O que
+não estiver lá toca como no SB5. Uma animação pode usar até 7 células; as
+células que a sequência não usa são ignoradas.
+
+```
+python tools/bomber_sheet.py export --edit   # recria bomber_sb5.png (referência) e bomber.png se não existir
+python tools/bomber_sheet.py check           # confere a folha sem gerar a ROM
+python tools/build.py                        # insere a folha no jogo
+```
+
 ### 7. Jogue
 
 Abra `build/Super Bomberman 6.sfc` num emulador (Mesen 2, bsnes, snes9x) ou
@@ -120,6 +153,7 @@ Para ouvir a conversão da música sem emulador:
 
 ```
 assets/title/        imagens, layout e música vindos do fan game
+assets/bombers/      folha de poses do Bomberman (bomber.png) e a referência do SB5
 assets/              logo de abertura (HU3DSON LOGO.png), SFX capturados (sound/)
 asm/                 código 65816 (asar)
 asm/spc/             código SPC700 (asar)
