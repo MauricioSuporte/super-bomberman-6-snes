@@ -280,29 +280,6 @@ c4_palmask:
     sta $0348
     rts
 
-; $C4:53F0 (LDA $16DA,X / INC A: mount palette slot = rider seat + 1):
-; a co-op mount uses its rider object's slot.
-c4_mountslot:
-    lda !coopst
-    beq .stock
-    phx
-    lda $16DA,x
-    tax
-    lda $17FA,x
-    bmi .none
-    tax
-    lda $06DF,x
-    cmp #$08
-    bcs .none
-    plx
-    rts
-.none:
-    plx
-.stock:
-    lda $16DA,x
-    inc a
-    rts
-
 ; $C4:37B0 (PHA / STZ $0AE7: write a bomber's colors into its slot): a
 ; P3/P4 bomber sharing P1's/P2's slot (c0_palfail) must not paint it, and a
 ; failed slot ($FF) is never written.
@@ -847,7 +824,6 @@ print "SYM c4_battle_slots ", hex(c4_battle_slots)
 print "SYM c4_boss_slots ", hex(c4_boss_slots)
 print "SYM c4_death ", hex(c4_death)
 print "SYM c4_palmask ", hex(c4_palmask)
-print "SYM c4_mountslot ", hex(c4_mountslot)
 print "SYM c4_seatcolor ", hex(c4_seatcolor)
 print "SYM c4_colors ", hex(c4_colors)
 print "SYM c0_palfail ", hex(c0_palfail)

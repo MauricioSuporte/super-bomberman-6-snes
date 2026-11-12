@@ -160,13 +160,13 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
 * OBJ palette slots (`$C0:0295`: `$0346` palette id, `$0347` slots
   needed, `$0348` mask; per slot `$2B10` id, `$2B18` set, `$2B20` run,
   `$0349` references; object slot `$06DF+obj`; release `$C0:0345`; failure
-  `$C0:0303`). Stock use: 0 stage, 1/2 P1/P2, 3-5 enemies (`$38`), 6-7
-  eggs, loose Louies (`$C4:4C4E`, `$C4:4DAD`, `$C4:582B`, set 4 palettes
-  `$30`/`$38`/table) and large stage objects (`$C0`). A ridden Louie writes
-  its 8 colors into entries 8-15 of the rider's slot (`$C4:53EB`). Bomber
-  colors: `$C4:37B0`.
+  `$C0:0303`). Stock use: 0 stage (bombs, items: set 0 id `$58`), 1/2 P1/P2,
+  3-5 enemies (`$38`), 6-7 (`$C0`) player effects `$C4:4C23`/`$C4:4D82`
+  (set 4 palettes `$30`, `$38` = 32 colors, two slots) and large stage
+  objects (`$C4:57C5`, table `$80:C21C` by stage). Bomber colors:
+  `$C4:37B0`. Mounts and eggs: "Mounts (Louies) and eggs" below.
 * Co-op palettes: P3/P4 ask for mask `$F0` (slots 4/5 when free, so 6/7 stay
-  for eggs and Louies; `$D0` in boss stages, where slot 5 belongs to the
+  for the Louie palettes; `$D0` in boss stages, where slot 5 belongs to the
   rival in seat 4 and its mount: sharing it let the intro blink restore
   `$C1:0035` paint P4's reclaimed slot black). When a stage request fails, `c0_palfail` moves P3/P4
   off the slots it needs onto P1's slot (they show P1's colors; `$C4:37B0`
@@ -236,8 +236,9 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
 * Bomber type `$10`: animations 1-`$4D`, mappings 1-`$A3` (none shared
   between animations), groups of four animations = right, down, left, up.
   Art uses colors 1-8 only (9-15 of the slot are the ridden Louie's).
-* Hack (`tools/sb6/features/bombers.py`): the sheet table is copied to
-  `$F0` with new sheets from id 97 (`$C5:6B86`, `$C5:6B8C`), `$80:BB7A` is
+* Hack (`tools/sb6/objsheets.py`, `features/bombers.py`): the sheet table
+  is copied to `$F0` with new sheets from id 97 (`$C5:6B86`, `$C5:6B8C`;
+  Louie copies first, then the bomber's), `$80:BB7A` is
   rewritten, and `bomber_map` (hook at `$C0:12A4`) gives seat bombers of
   character 0 a new mapping table in `$B3:8000+`.
 * Hack, `assets/bombers/bomber_anims.txt` (optional): the same bombers get
@@ -253,8 +254,58 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   `$80 + slot*16`. Ids 1-4 = white, black, red, blue (`$81:80B2`, 22 bytes
   each). With `assets/bombers/bomber_sb6.png` + `BombermanPallete.png` the
   hack repoints ids 1-4 to 16-color entries in `bank81` and `bomber_palcount`
-  loads 16 colors for them. Colors 8-15 of the slot are still overwritten by
-  a ridden Louie (`$C4:53EB`).
+  loads 16 colors for them (mounts no longer write there, see below).
+* Death `$C4:3690`: when the cell has a flame (`$1052` bit 2 and bits 0-1,
+  not bit 7) the bomber is repainted with palette id `$C0:BB4E[char] + 6`
+  (burnt colors, `JSR $37B0` at `$C4:36B7`), then animation `$15` for 60
+  frames. The hack removes the repaint.
+* Invincibility blink `$C4:2E90` (every 8 frames): `$C1:0059` fills colors
+  0-7 of the bomber's palette with black (`LDA #$07` at `$C4:2EB7`, the
+  hack makes it `$0F`), `$C4:2EC3` copies the palette back from the backup
+  `$7E:2CEA + 32*n` (`$C1:0035`; saved by `$C1:0015`, A = 8 + slot).
+
+## Mounts (Louies) and eggs
+
+* Actors: a mount is actor rider + `$1CBF`; an egg on the map is a mount
+  actor too (character 9, `$C4:500A`, X = cell; any free actor of
+  `[$1CBF, 2*$1CBF)`). `$1D38` counts eggs + mounts; the cartridge lets an
+  egg appear only while it is < 2. Per mount character (`$16C2+actor`, 0-9):
+  `$80:C3ED` first animation, `$C3F7` object flags, `$C401` object type,
+  `$C40B` palette id of set 0 (`$50`-`$56`, 8 colors each, the first one is
+  the same dark outline `$1466` in all of them; egg = `$52`, the pink
+  Louie), `$C415` word -> `[sheet, row]` per animation (sheets `$15-$22`;
+  egg: sheet `$1A` row 2). The tiles only use pixels 0 and 8-15.
+* Egg item = `$15` in the item map `$145A+cell` (`$1152+cell` bit 7 = item
+  on the cell, copied to `$1CCB` for the player's cell). Hidden in soft
+  blocks (`$C5:40D1` places two); when the block burns `$C5:457D` calls
+  `$C4:500A` and removes the item if it fails. Pickup `$C4:2DD1` ->
+  `$C4:50A6` (egg actor removed) -> task `$C4:5148`: `JSL $C01DEB` with
+  A = 5 (random 0-5, inclusive) = Louie character, cry `$28 + n`,
+  `$C4:4F25` creates the mount (A = character, X = rider). Not picked up
+  while riding (`$C5:4111`).
+* `$C4:4F25` first moves whatever sits in the rider's mount actor (an egg)
+  to another free actor (`$C4:50DB`). A rider that is hit loses the mount
+  (`$C4:51AB` -> `$C4:4FC3`: 48 frames, palette `$2E` when the cell burns).
+  A mount is kept for the next stage (`$C4:2BF2`: `$1782+seat` bit 7).
+* Colors, stock: `$C4:53EB` (A = palette id, X = actor, Y = object, four
+  callers) copies 8 colors to entries 8-15 of OBJ slot `$16DA+actor` + 1
+  (the rider's, or a player's for an egg) and gives the object that slot.
+* Colors, hack (`asm/louies.asm`, `tools/sb6/features/louies.py`): the
+  bombers use all 15 colors, so `$C4:53EB` now hands out halves of a Louie
+  palette: an OBJ slot taken from the top (7 down to 3, marked with palette
+  id `$FF` / set `$FF` in `$2B10`/`$2B18`) with entries 8-15 for one palette
+  id (stock tiles) and entries 1-7 (+ the shared outline in 8) for another,
+  drawn with copies of sheets `$15-$22` whose pixels 9-15 became 1-7 (sheet
+  id + delta, chosen at `$C4:5458`). Actors with the same palette id share a
+  half. An egg needs a half with `$52` (or a free one, or a second "spare"
+  palette if a slot is free), otherwise it does not appear (`$C4:500C`; the
+  count limit stays only in Battle). At `$C4:5148` a Louie whose colors are
+  not loaded and finds no free half becomes one of the two Louies of the
+  palette. Halves are released when their actor loses its object
+  (`louie_tick`, once per frame from `e4_tick`), the slot when both are
+  free; the burn palette `$2E` is ignored. Not handled yet: stages that
+  need the top slots for something else (bosses, zone 5): whoever asks last
+  gets no slot.
 
 The full list with sizes is generated in `build/sb6.map`.
 

@@ -2,9 +2,8 @@
 
 The sheet (tools/bomber_sheet.py) is cut into pieces by sb6.bomber.convert:
 
-* tiles: 1 KB strips in the `obj` banks, reached through a relocated copy of
-  the OBJ sheet table (`$85:E22D`, read only by `$C5:6B77`) with new sheets
-  from id `FIRST_SHEET`;
+* tiles: 1 KB strips in the `obj` banks, as new sheets of the relocated OBJ
+  sheet table (sb6.objsheets);
 * `$80:BB7A`: `[sheet, row]` of each animation (patched in place);
 * mappings: a new table for type $10 (region `objmap`, bank $B3), selected by `bomber_map`
   (asm/bombers.asm) for seat bombers of character 0;
@@ -19,19 +18,15 @@ from ..rombuild import BuildError
 from ..romlib import off
 
 ASM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "asm", "bombers.asm")
-SHEET_TABLE = 0x85E22D
-COPIED_SHEETS = 96           # stock ids kept (bombers use 1-20, Louies above)
-FIRST_SHEET = COPIED_SHEETS + 1
 STRIPS_PER_SHEET = 32        # 32 KB per sheet; row = 2 * strip (byte, doubled by $C5:6BAD)
-OBJ = ["obj_f0", "obj_f1", "obj_f2"]
 
 
 PAL_TABLE = 0x818000         # set 0 palette pointers; ids 1-4 = white, black, red, blue
 PAL_IDS = 4
 
 
-def apply(rb, base_rom, sheet_path, palette_path=None, scripts_path=None):
-    """sheet_path alone: SB5 colors. With palette_path (one pixel per color,
+def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None):
+    """`sheets`: sb6.objsheets.ObjSheets. sheet_path alone: SB5 colors. With palette_path (one pixel per color,
     column 0 = colors painted in the sheet, columns 1-4 = white, black, red,
     blue) the bomber palettes 1-4 are replaced by 15-color ones."""
     if not os.path.exists(sheet_path):
@@ -49,16 +44,11 @@ def apply(rb, base_rom, sheet_path, palette_path=None, scripts_path=None):
     except ValueError as e:
         raise BuildError(f"{os.path.basename(sheet_path)}: {e}")
 
-    # tiles + sheet table
-    entries = bytearray(rb.d[off(SHEET_TABLE):off(SHEET_TABLE) + 8 * COPIED_SHEETS])
+    # tiles
+    first_sheet = sheets.next_id
     for i in range(0, len(strips), STRIPS_PER_SHEET):
         blob = b"".join(strips[i:i + STRIPS_PER_SHEET])
-        addr = rb.alloc(OBJ, blob, f"bomber: tiles, sheet {FIRST_SHEET + i // STRIPS_PER_SHEET}", align=0x400)
-        entries += bytes([0, 0, len(blob) & 0xFF, len(blob) >> 8, addr & 0xFF, addr >> 8 & 0xFF, addr >> 16, 0x85])
-    table = rb.alloc(OBJ, bytes(entries), "bomber: OBJ sheet table (copy of $85:E22D + new sheets)")
-    rb.patch(0xC56B86, bytes.fromhex("A9 85"), bytes([0xA9, table >> 16]), "bomber: OBJ sheet table bank")
-    rb.patch(0xC56B8C, bytes.fromhex("A9 2D E2"), bytes([0xA9, table & 0xFF, table >> 8 & 0xFF]),
-             "bomber: OBJ sheet table address")
+        sheets.add(blob, f"bomber: tiles, sheet {first_sheet + i // STRIPS_PER_SHEET}")
 
     # [sheet, row] per animation of character 0
     ct = br.char_table(0)
@@ -66,7 +56,7 @@ def apply(rb, base_rom, sheet_path, palette_path=None, scripts_path=None):
     new = bytearray()
     for a in range(1, bomber.ANIMS + 1):
         s = anim_strip[a]
-        new += bytes([FIRST_SHEET + s // STRIPS_PER_SHEET, 2 * (s % STRIPS_PER_SHEET)])
+        new += bytes([first_sheet + s // STRIPS_PER_SHEET, 2 * (s % STRIPS_PER_SHEET)])
     rb.patch(ct, old, bytes(new), "bomber: sheet/row of each animation (character 0)")
 
     # mappings: word table + data in one bank; ids without a pose keep the stock data

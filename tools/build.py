@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, title, title_music  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, louies, title, title_music  # noqa: E402
+from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -71,16 +72,21 @@ def main():
     bomber = bomberman_sprites.apply(rb, os.path.join(ROOT, "assets", "bomberman"))
     print(f"bomberman: {bomber['tiles']} tiles and {bomber['palettes']} palettes changed")
 
-    coop.apply(rb)
+    sheets = ObjSheets(rb)
+    louie = louies.apply(rb, base_rom, sheets)
+    print(f"louies: palette halves, {louies.LAST - louies.FIRST + 1} sheets recolored for the low half")
+
+    coop.apply(rb, louie["louie_tick"])
     print("co-op: Normal Game for 1-4 players (multitap on port 2)")
 
     # bomber_sb6.png + BombermanPallete.png (SB6 art, own palettes) wins over bomber.png (SB5 colors)
     bdir = os.path.join(ROOT, "assets", "bombers")
     sb6_sheet, sb6_pal = os.path.join(bdir, "bomber_sb6.png"), os.path.join(bdir, "BombermanPallete.png")
     if os.path.exists(sb6_sheet) and os.path.exists(sb6_pal):
-        info = bombers.apply(rb, base_rom, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"))
+        info = bombers.apply(rb, base_rom, sheets, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"))
     else:
-        info = bombers.apply(rb, base_rom, os.path.join(bdir, "bomber.png"))
+        info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"))
+    sheets.finish()
     if info:
         n = info["notes"]
         print(f"bomber: {info['poses']} poses in {info['strips']} KB of tiles, up to {info['max_pieces']} sprites per pose"

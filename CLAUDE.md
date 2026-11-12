@@ -30,6 +30,9 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   pieces/strips at build time. Sprite mappings and animation scripts
   (`assets/bombers/bomber_anims.txt`: pose order, frames, loop point) go in
   `objmap` (bank `$B3`), never in a `$C0-$FF` bank.
+* OBJ palettes: a bomber owns all 16 colors of its slot. Louies and eggs
+  live in halves of a Louie palette (`asm/louies.asm`, at most two Louie
+  colors at once); new OBJ sheets are registered in `objsheets.ObjSheets`.
 
 ## Testing
 

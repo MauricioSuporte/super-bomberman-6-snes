@@ -180,9 +180,11 @@ e4_frame:
     lda #$00
     rtl
 
-; $C0:0B44 (main loop, JSL $C022F0 once per frame): co-op upkeep.
+; $C0:0B44 (main loop, JSL $C022F0 once per frame): Louie palettes
+; (asm/louies.asm) and co-op upkeep.
 e4_tick:
     jsl $C022F0
+    jsl !LOUIE_TICK
     php
     sep #$30
     lda.l $7E0000|!coopst
@@ -221,8 +223,8 @@ lend_pages:
     rts
 
 ; Every 16 frames, a P3/P4 bomber sharing P1's/P2's palette slot (or left
-; without one) takes a free slot 4-7 back and gets its colors (not while
-; riding: the Louie's colors live in the same palette).
+; without one) takes a free slot 4-7 back and gets its colors (mounts have
+; their own palette: asm/louies.asm).
 reclaim:
     lda.l $7E0068
     and #$0F
@@ -249,15 +251,6 @@ reclaim:
     bcc .tonext
 .borrow:
     sta.l $7E0000|!t7               ; old slot
-    txa
-    clc
-    adc.l $7E0000|!mofs
-    phx
-    tax
-    lda.l $7E17FA,x                 ; mount object
-    plx
-    cmp #$60
-    bcc .tonext
     phx
     ldx #$04
 -   cpx #$05

@@ -87,8 +87,9 @@ def _jsl(a):
     return bytes([0x22, a & 0xFF, a >> 8 & 0xFF, a >> 16])
 
 
-def _assemble(rb):
+def _assemble(rb, louie_tick):
     defines = {name.upper(): _h(rb.regions[reg].cursor, 6) for name, reg in SECTIONS.items()}
+    defines["LOUIE_TICK"] = _h(louie_tick, 6)
     runs, syms = asar.assemble_into(rb.d, ASM, defines)
     blocks = {}
     for name, reg in SECTIONS.items():
@@ -221,8 +222,9 @@ def _title_menu(rb):
              "title: players menu confirm -> 1-4 players script")
 
 
-def apply(rb):
-    syms = _assemble(rb)
+def apply(rb, louie_tick):
+    """`louie_tick`: per-frame routine of features/louies.py (called by e4_tick)."""
+    syms = _assemble(rb, louie_tick)
     s = lambda name: syms[name] & 0xFFFF
 
     rb.patch(0xC0F393, bytes.fromhex("E2 30 A9 00 48 AB"), _jsl(syms["coop_boot"]) + b"\xEA\xEA",
@@ -241,8 +243,6 @@ def apply(rb):
     rb.patch(0xC43794, bytes.fromhex("AD 1A 1D"), _jmp(s("c4_death")), "co-op: death leaves the participants")
     for a in (0xC42AD8, 0xC42B8D):
         rb.patch(a, bytes.fromhex("8D 48 03"), _jsr(s("c4_palmask")), "co-op: P3/P4 OBJ palette slots 4-7")
-    rb.patch(0xC453F0, bytes.fromhex("BD DA 16 1A"), _jsr(s("c4_mountslot")) + b"\xEA",
-             "co-op: mount uses its rider's palette slot")
     rb.patch(0xC42260, bytes.fromhex("E0 18 90 F6 80 30"), _jmp(s("c4_cap")) + b"\xEA" * 3,
              "co-op: enemies stop below the mounts")
     # Bank C5

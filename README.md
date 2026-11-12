@@ -18,6 +18,7 @@ ser gravada num cartucho repro e rodar no hardware real.
 | Tela de título: opções entre logo e personagens, versão no rodapé | pronto (`version_text` em `assets/title/convert.json`) |
 | Tela de título: música do SB6 (streaming BRR) | pronto; SFX do menu (mover/confirmar) tocam junto com ela |
 | Normal Game para 3-4 jogadores (multitap na porta 2) | pronto: escolha em NORMAL GAME → 1-4 PLAYER GAME; P3 vermelho no canto inferior esquerdo, P4 azul no inferior direito; vidas compartilhadas, Start para voltar; ovos e Louies usam páginas de sprite livres da fase (nas 8 fases sem espaço sobrando ainda podem aparecer embaralhados) e mantêm as cores (se faltar paleta, P3/P4 usam as cores do P1 por alguns instantes). Nas lutas contra chefes o rival fica no slot do P5 e os 4 jogadores lutam (P3 nasce à esquerda do P1, P4 à direita do P2); só na ZONE3-D (dois rivais) o P4 fica de fora e volta na fase seguinte com seus itens |
+| Paletas dos sprites: jogadores com 15 cores, Louies e ovos em paleta própria | pronto: uma paleta de sprite guarda até 2 cores de Louie (8 cores cada, o contorno é comum) e todos os Louies da mesma cor a dividem; o ovo usa as cores do Louie rosa, então só aparece se houver uma metade livre (ou já com o rosa) ou uma paleta livre só para ele; com as 2 metades ocupadas, o Louie que nasce vira um dos 2 que já existem; morrer não troca mais as cores do jogador. Falta tratar chefes e fases que usam mais paletas (zona 5) |
 | Demais telas, fases, inimigos, chefes, músicas | originais do SB5 |
 
 ## Como gerar a ROM (passo a passo)
@@ -179,7 +180,8 @@ Arquivos em `assets/bomberman/` (extraídos da ROM com
 * `sheet.png` — PNG indexado 128x224, as duas folhas de tiles do Bomberman
   (arquivos `$01` em cima, `$02` embaixo da linha vermelha do guia). Edite
   pixel por pixel mantendo o modo indexado; índice 0 = transparente. Use os
-  índices 1-7 (o 8 é trocado pela cor do Louie quando ele está montado).
+  índices 1-7 (no SB5 o 8 era trocado pela cor do Louie montado; hoje o
+  Louie tem paleta própria).
   Cada quadro é montado a partir de blocos 8x8/16x16 nessas posições: mude
   o desenho, não a posição.
 * `palettes.png` — 7 linhas (as 7 cores do Bomberman: branco, preto,
