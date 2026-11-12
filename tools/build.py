@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import boot_logo, coop, title, title_music  # noqa: E402
+from sb6.features import bombers, boot_logo, coop, title, title_music  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -36,12 +36,16 @@ def main():
         starts = [(seed, init) for init in ("mean", "hist") for seed in range(1, 17)]
 
     with open(args.base, "rb") as fh:
-        rb = RomBuild(fh.read())
+        base_rom = fh.read()
+    rb = RomBuild(base_rom)
 
     # Free space (verified to be unused $FF in the base ROM).
     rb.add_region("bulk", 0xE40000, 0xE50000, "hack code, scripts and small data (E4); streamed audio from $E5")
     rb.add_region("e3_tables", 0xE3DD60, 0xE40000, "graphics archive tables (must be in bank $E3)")
     rb.add_region("bank81", 0xC1FA00, 0xC20000, "palette tables/colors (must be in bank $81)")
+    for bank in range(0xF0, 0xF3):
+        rb.add_region(f"obj_f{bank & 15}", bank << 16, (bank + 1) << 16, "OBJ sheets: raw 4bpp strips (bombers)")
+    rb.add_region("objmap", 0xF38000, 0xF40000, "sprite mappings, used through bank $B3 (the drawer needs WRAM in DBR)")
     # $FF padding inside the code banks: code reached by JSR/JMP from the bank's own routines.
     rb.add_region("c0", 0xC04D70, 0xC05F00, "bank C0 code (co-op)")
     rb.add_region("c1", 0xC177F0, 0xC17F00, "bank C1 code (co-op)")
@@ -66,6 +70,21 @@ def main():
 
     coop.apply(rb)
     print("co-op: Normal Game for 1-4 players (multitap on port 2)")
+
+    # bomber_sb6.png + BombermanPallete.png (SB6 art, own palettes) wins over bomber.png (SB5 colors)
+    bdir = os.path.join(ROOT, "assets", "bombers")
+    sb6_sheet, sb6_pal = os.path.join(bdir, "bomber_sb6.png"), os.path.join(bdir, "BombermanPallete.png")
+    if os.path.exists(sb6_sheet) and os.path.exists(sb6_pal):
+        info = bombers.apply(rb, base_rom, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"))
+    else:
+        info = bombers.apply(rb, base_rom, os.path.join(bdir, "bomber.png"))
+    if info:
+        n = info["notes"]
+        print(f"bomber: {info['poses']} poses in {info['strips']} KB of tiles, up to {info['max_pieces']} sprites per pose"
+              + (f"; {n['edited']} poses from bomber_sb6.png ({n['colors']} colors), {n['legacy']} still SB5 art" if n else "")
+              + (f"; {info['inexact']} pixels off-palette (nearest color used)" if info["inexact"] else ""))
+    else:
+        print("bomber: no sheet in assets/bombers, SB5 sprites kept (tools/bomber_sheet.py export --edit)")
 
     rb.set_title("SUPER BOMBERMAN 6")
     rb.fix_checksum()

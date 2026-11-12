@@ -25,6 +25,11 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 * Shared: `rombuild.py` (patch/alloc/map), `lz.py` (SB5 compression),
   `snesgfx.py` (4bpp + palettes), `compose.py` (Unity title layout),
   `brr.py` (BRR codec), `romlib.py`.
+* Player bomber: `assets/bombers/bomber.png` is a pose sheet (one 64x64 cell
+  per pose, `tools/bomber_sheet.py export|check`); `bomber.py` cuts it into
+  pieces/strips at build time. Sprite mappings and animation scripts
+  (`assets/bombers/bomber_anims.txt`: pose order, frames, loop point) go in
+  `objmap` (bank `$B3`), never in a `$C0-$FF` bank.
 
 ## Testing
 
