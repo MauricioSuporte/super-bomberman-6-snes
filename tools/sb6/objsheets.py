@@ -9,7 +9,7 @@ from .romlib import off
 
 SHEET_TABLE = 0x85E22D
 COPIED_SHEETS = 96           # stock ids kept (bombers use 1-20, Louies $15-$22)
-OBJ = ["obj_f0", "obj_f1", "obj_f2"]
+OBJ = ["obj_f0", "obj_f1", "obj_f2", "obj_f6", "obj_f7", "obj_f8", "obj_f9"]
 
 
 class ObjSheets:

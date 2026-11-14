@@ -185,6 +185,7 @@ e4_frame:
 e4_tick:
     jsl $C022F0
     jsl !LOUIE_TICK
+    jsl !PICK_TICK
     php
     sep #$30
     lda.l $7E0000|!coopst

@@ -18,6 +18,7 @@ ser gravada num cartucho repro e rodar no hardware real.
 | Tela de título: opções entre logo e personagens, versão no rodapé | pronto (`version_text` em `assets/title/convert.json`) |
 | Tela de título: música do SB6 (streaming BRR) | pronto; SFX do menu (mover/confirmar) tocam junto com ela |
 | Normal Game para 3-4 jogadores (multitap na porta 2) | pronto: escolha em NORMAL GAME → 1-4 PLAYER GAME; P3 vermelho no canto inferior esquerdo, P4 azul no inferior direito; vidas compartilhadas, Start para voltar; ovos e Louies usam páginas de sprite livres da fase (nas 8 fases sem espaço sobrando ainda podem aparecer embaralhados) e mantêm as cores (se faltar paleta, P3/P4 usam as cores do P1 por alguns instantes). Nas lutas contra chefes o rival fica no slot do P5 e os 4 jogadores lutam (P3 nasce à esquerda do P1, P4 à direita do P2); só na ZONE3-D (dois rivais) o P4 fica de fora e volta na fase seguinte com seus itens |
+| Seleção de personagem e cor no Normal Game | pronto: depois de escolher o arquivo (New Game ou Continue) abre a tela CHARACTER SELECT da Batalha com um cursor por jogador; **R** avança e **L** volta a cor (os outros personagens: branco, preto, vermelho, azul, verde, amarelo; o Bomberman: todas as colunas de `assets/bombers/BombermanPallete.png` menos a primeira, que é o modelo, na ordem da imagem); o Bomberman da grade é desenhado com a arte do SB6 (pose de frente da folha); o cursor mostra **L + R** em cima e o número do jogador embaixo; **A** confirma, **B** volta para a lista de arquivos. A escolha vale para a campanha toda |
 | Paletas dos sprites: jogadores com 15 cores, Louies e ovos em paleta própria | pronto: uma paleta de sprite guarda até 2 cores de Louie (8 cores cada, o contorno é comum) e todos os Louies da mesma cor a dividem; o ovo usa as cores do Louie rosa, então só aparece se houver uma metade livre (ou já com o rosa) ou uma paleta livre só para ele; com as 2 metades ocupadas, o Louie que nasce vira um dos 2 que já existem; morrer não troca mais as cores do jogador. Falta tratar chefes e fases que usam mais paletas (zona 5) |
 | Demais telas, fases, inimigos, chefes, músicas | originais do SB5 |
 
@@ -118,10 +119,38 @@ marca onde o loop recomeça e `fim` faz o personagem sumir no final). O que
 não estiver lá toca como no SB5. Uma animação pode usar até 7 células; as
 células que a sequência não usa são ignoradas.
 
+Os outros nove personagens da seleção têm cada um três arquivos em
+`assets/bombers` (o número é a posição na grade do CHARACTER SELECT, contando
+a partir do vizinho do Bomberman):
+
+* `charN_sb6.png`: a folha para editar. Tem o mesmo layout do
+  `bomber_sb6.png` (mesmas animações, mesmas poses, mesmas sequências, como o
+  andar 12321454) e começa como uma cópia dele;
+* `charN_sb5.png`: a arte do SB5 desse personagem, só de referência (o build
+  não lê);
+* `charN_pallete.png`: no mesmo formato do `BombermanPallete.png` (começa como
+  uma cópia dele). A 1ª coluna são as cores-chave do Bomberman, e as outras
+  colunas são as cores que o L / R escolhe (todas, não só seis). Pinte a
+  folha com as cores do `bomber_sb6.png`.
+
+O build só insere o personagem quando alguma coisa ficou diferente do
+Bomberman (folha, paleta ou sequência). Enquanto a folha for igual à do
+Bomberman, o jogo continua com a arte do SB5. As animações que você não mexer
+usam os tiles do Bomberman (não gastam ROM), e só as editadas ganham tiles
+novos. `charN_anims.txt` (opcional) troca só as sequências que forem
+diferentes das do `bomber_anims.txt`. Quando as poses de uma animação passam
+de 32 tiles 8x8 juntas (personagem mais alto ou mais largo que o Bomberman),
+o build manda cada pose separada para a VRAM na hora em que ela aparece; aí o
+limite passa a ser por pose: 16 tiles (até 32x32 px). O `check` lista essas
+animações. O retrato grande da
+seleção continua com as cores do cartucho, porque a arte dele é a do SB5.
+
 ```
-python tools/bomber_sheet.py export --edit   # recria bomber_sb5.png (referência) e bomber.png se não existir
-python tools/bomber_sheet.py check           # confere a folha sem gerar a ROM
-python tools/build.py                        # insere a folha no jogo
+python tools/bomber_sheet.py export --edit   # recria as referências *_sb5.png e os editáveis que não existirem
+python tools/bomber_sheet.py template 3 --force   # volta o personagem 3 para a cópia do Bomberman
+python tools/bomber_sheet.py labels         # reescreve a coluna de rótulos com as sequências atuais
+python tools/bomber_sheet.py check           # confere as folhas sem gerar a ROM
+python tools/build.py                        # insere as folhas no jogo
 ```
 
 ### 7. Jogue

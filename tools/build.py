@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, louies, title, title_music  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, louies, picker, title, title_music  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,7 +46,13 @@ def main():
     rb.add_region("bank81", 0xC1FA00, 0xC20000, "palette tables/colors (must be in bank $81)")
     for bank in range(0xF0, 0xF3):
         rb.add_region(f"obj_f{bank & 15}", bank << 16, (bank + 1) << 16, "OBJ sheets: raw 4bpp strips (bombers)")
+    for bank in range(0xEC, 0xF0):
+        rb.add_region(f"stream_{bank:02x}", bank << 16, (bank + 1) << 16, "bomber poses streamed one by one (DMA source)")
     rb.add_region("objmap", 0xF38000, 0xF40000, "sprite mappings, used through bank $B3 (the drawer needs WRAM in DBR)")
+    rb.add_region("objmap2", 0xF48000, 0xF50000, "sprite mappings of more characters (bank $B4)")
+    rb.add_region("objmap3", 0xF58000, 0xF60000, "sprite mappings of more characters (bank $B5)")
+    for bank in range(0xF6, 0xFA):
+        rb.add_region(f"obj_f{bank & 15}", bank << 16, (bank + 1) << 16, "OBJ sheets: raw 4bpp strips (other characters)")
     # $FF padding inside the code banks: code reached by JSR/JMP from the bank's own routines.
     rb.add_region("c0", 0xC04D70, 0xC05F00, "bank C0 code (co-op)")
     rb.add_region("c1", 0xC177F0, 0xC17F00, "bank C1 code (co-op)")
@@ -76,18 +82,29 @@ def main():
     louie = louies.apply(rb, base_rom, sheets)
     print(f"louies: palette halves, {louies.LAST - louies.FIRST + 1} sheets recolored for the low half")
 
-    coop.apply(rb, louie["louie_tick"])
-    print("co-op: Normal Game for 1-4 players (multitap on port 2)")
-
     # bomber_sb6.png + BombermanPallete.png (SB6 art, own palettes) wins over bomber.png (SB5 colors)
     bdir = os.path.join(ROOT, "assets", "bombers")
     sb6_sheet, sb6_pal = os.path.join(bdir, "bomber_sb6.png"), os.path.join(bdir, "BombermanPallete.png")
-    if os.path.exists(sb6_sheet) and os.path.exists(sb6_pal):
-        info = bombers.apply(rb, base_rom, sheets, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"))
+    own_palettes = os.path.exists(sb6_sheet) and os.path.exists(sb6_pal)
+
+    if own_palettes:
+        info = bombers.apply(rb, base_rom, sheets, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"), bdir)
     else:
-        info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"))
+        info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir)
     sheets.finish()
-    if info:
+
+    pick = picker.apply(rb, base_rom, info)
+    print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")
+
+    coop.apply(rb, louie["louie_tick"], pick)
+    print("co-op: Normal Game for 1-4 players (multitap on port 2)")
+    for ch in info["chars"] if info else []:
+        n = ch["notes"]
+        print(f"char{ch['char']}: Bomberman's layout, {n['edited']} animations redrawn in {ch['strips']} KB of tiles, "
+              f"the others his; {ch['colors']} colors" + (" (his palettes)" if ch["shared"] else " (own palettes)")
+              + (f", {ch['scripts']} own sequences" if ch["scripts"] else "")
+              + (f"; {n['snapped']} pixels off-palette (nearest color used)" if n["snapped"] else ""))
+    if info and info["sheet"]:
         n = info["notes"]
         print(f"bomber: {info['poses']} poses in {info['strips']} KB of tiles, up to {info['max_pieces']} sprites per pose"
               + (f"; {n['edited']} poses from bomber_sb6.png ({n['colors']} colors), {n['legacy']} still SB5 art" if n else "")

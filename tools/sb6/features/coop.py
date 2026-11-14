@@ -87,9 +87,11 @@ def _jsl(a):
     return bytes([0x22, a & 0xFF, a >> 8 & 0xFF, a >> 16])
 
 
-def _assemble(rb, louie_tick):
+def _assemble(rb, louie_tick, pick):
     defines = {name.upper(): _h(rb.regions[reg].cursor, 6) for name, reg in SECTIONS.items()}
     defines["LOUIE_TICK"] = _h(louie_tick, 6)
+    for name in ("pick_tick", "pick_apply", "pick_spawn"):
+        defines[name.upper()] = _h(pick[name], 6)
     runs, syms = asar.assemble_into(rb.d, ASM, defines)
     blocks = {}
     for name, reg in SECTIONS.items():
@@ -222,9 +224,11 @@ def _title_menu(rb):
              "title: players menu confirm -> 1-4 players script")
 
 
-def apply(rb, louie_tick):
-    """`louie_tick`: per-frame routine of features/louies.py (called by e4_tick)."""
-    syms = _assemble(rb, louie_tick)
+def apply(rb, louie_tick, pick):
+    """`louie_tick`: per-frame routine of features/louies.py (called by e4_tick).
+    `pick`: symbols of features/picker.py (per-frame routine, choices applied
+    after the player reset and at the stage spawn)."""
+    syms = _assemble(rb, louie_tick, pick)
     s = lambda name: syms[name] & 0xFFFF
 
     rb.patch(0xC0F393, bytes.fromhex("E2 30 A9 00 48 AB"), _jsl(syms["coop_boot"]) + b"\xEA\xEA",

@@ -21,6 +21,8 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 ## Layout
 
 * `tools/sb6/features/<feature>.py` — one feature per module, `apply(rb, …)`.
+* Native code called from a script: op `FF 1A nn` with nn >= `$F0`
+  (`pick_op` in `asm/picker.asm`); add new values there.
 * `asm/*.asm` 65816, `asm/spc/*.asm` SPC700 (asar 1.91, `asar 1.90` mode).
 * Shared: `rombuild.py` (patch/alloc/map), `lz.py` (SB5 compression),
   `snesgfx.py` (4bpp + palettes), `compose.py` (Unity title layout),
@@ -30,11 +32,26 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   pieces/strips at build time. Sprite mappings and animation scripts
   (`assets/bombers/bomber_anims.txt`: pose order, frames, loop point) go in
   `objmap` (bank `$B3`), never in a `$C0-$FF` bank.
+* Characters 1-9 (object type `$10 + n`, own mapping/script tables) are laid
+  out like Bomberman: `char<n>_sb6.png` = bomber_sb6.png's layout, colors and
+  sequences (`bomber_sheet.py template`), `char<n>_pallete.png` =
+  BombermanPallete.png's format, `char<n>_anims.txt` overrides
+  bomber_anims.txt per animation. Inserted only when something differs from
+  Bomberman's; animations equal to his reuse his `[sheet, row]` and pieces,
+  edited ones get new tiles. Palettes equal to his share his ids `$80 + n`.
+  Animations over 32 tiles are streamed pose by pose (<= 16 tiles each,
+  double-buffered page, `bomber_stream` / `stream_nmi` in asm/bombers.asm).
+* Bomber colors: every column of `BombermanPallete.png` after the first is
+  palette id `$80 + n` of set 0 (`pal_lookup`); columns 1-6 also replace the
+  stock ids 1-6.
 * OBJ palettes: a bomber owns all 16 colors of its slot. Louies and eggs
   live in halves of a Louie palette (`asm/louies.asm`, at most two Louie
   colors at once); new OBJ sheets are registered in `objsheets.ObjSheets`.
 
 ## Testing
+
+New/edited characters: follow `.claude/skills/sb6-character/SKILL.md`
+(walk test: `tools/mesen/walk_capture.lua` + `tools/walk_check.py`).
 
 Mesen 2 headless: `Mesen.exe --testrunner ROM script.lua` (portable
 `settings.json` with `AllowIoOsAccess` and SNES controllers on ports 1-2).

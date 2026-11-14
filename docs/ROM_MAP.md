@@ -17,6 +17,10 @@ file offset = address & `$3FFFFF`). See also the recomp's `AGENTS.md`.
 Control byte = mode (bits 5-7) + count-1 (bits 0-4). Modes: 0 literal,
 1 previous+1, 2 previous, 3-7 copy from 2/4/16/32/64 bytes back (256-byte
 ring). Encoder: `tools/sb6/lz.py`.
+* Seen in Mesen: the first archive sent after Battle's character picker
+  (`29 22 F0 08` from a new script) reaches VRAM wrong, the same archive
+  sent again after others is right (the Normal menu always sends `$0C`
+  first). Cause not traced; `asm/picker.asm` sends `$22` twice.
 
 ## Graphics sets
 
@@ -133,6 +137,106 @@ script accumulator (`61` = add).
 | `$C0:0B2C` | `AD BF 03 D0 04` | stream feeder, once per main-loop pass |
 | title scripts | see `tools/sb6/features/title.py` | SB6 title graphics |
 | co-op | see `tools/sb6/features/coop.py` | 3/4-player Normal Game (below) |
+| `$C7:10E2`, `$C7:0E27` | `24 4C 12 C7` | file confirm -> character selection (`asm/picker.asm`, below) |
+| `$C2:069B` | `7C 46 C1` | script op `FF 1A nn`: nn >= `$F0` runs `pick_op` |
+| `$C0:F421` | `22 E0 04 C0` | NMI: cursor glyph tiles of the picker (`pick_nmi`) |
+| `$C0:01FA` | `A9 81 85 AA C2 30` | palette lookup: ids `$80+` of set 0 = bomber palettes (`pal_lookup`, `asm/bombers.asm`) |
+
+## Script VM details, pads, OAM (found for the character selection)
+
+* Fetch `$C2:038F`: the operand pointer is `[$0D]`, `$0A-$0C` already
+  points at the next op when the handler runs (and is saved per task in
+  `$0C87/$0CAF/$0CD7 + task`, so task 9 reads `$0C90/$0CB8/$0CE0`). Plain
+  ops are `JSR`-called (word table), `FF` ops are entered with
+  `JML [$00BD]` (3-byte pointers at `$C2:0650 + 3*(n-1)`, all 255 used),
+  X = task (`$73`), Y = 1, M/X 8-bit, return `RTL`.
+* Call `24 a24` (`$C2:1714`) pushes the 3-byte return address on the script
+  stack `$7E:2000 + $10` and increments `$0CFF + task`; `00` pops it
+  (`$C2:02FE`). A script whose bank is below `$C6` is dropped
+  (`$C2:0254`).
+* Tests set a flag (`$0373/$0374`, `$C1:74D1`): `86 v` acc == v, `8A v`
+  acc != v, `96 v` acc < v; `49 n` skips n bytes when false, `47 n` when
+  true, `45 n` always; `44/48/46 rel16` the same with a word. `30 n` selects
+  the pad (`$1042`, `$FF` = any), `31 mask` tests new actions (`$36+pad`),
+  `34 mask` directions.
+* Pad reader `$C0:0A56` (raw words at `$19 + 2*pad`): `$2C+pad` held actions
+  = A `$80`, X `$40`, L `$20`, R `$10`, B `$08`, Y `$04`, Select `$02`,
+  Start `$01`; `$31+pad` directions (up 8, down 4, left 2, right 1);
+  `$36+pad` new actions, `$3B+pad` new directions, `$40+pad` repeats.
+* Main loop: `$C0:0B41` pad reader, `$C0:0B44` `JSL $C022F0` runs every
+  task (scripts, objects, the OAM builder `$C0:1459`). OAM shadow `$08BF`
+  (x, y, tile, attributes x 128), high bits `$0ABF`; the builder fills from
+  sprite 0 and hides only the sprites it used the frame before (`$03D5` =
+  sprites left free), y = `$E0`.
+* NMI `$C0:F3BE`: forced blank, the frame's transfers, `JSL $C004E0` (VRAM
+  queue) last, then the screen is turned back on.
+
+## Character selection (Battle's picker, used by the Normal Game)
+
+* Script `$C6:89CF`, ends with `00` after its fade-out, so it can be called
+  with `24`. Inputs: `$6269+seat` (1 = human, 0 = not playing: an X in the
+  portrait row; the recomp uses 2 = CPU), `$1038` = 0. Outputs:
+  `$625F+seat` choice (1-9), `$6264+seat` color, `$1040` = `$FF` when it was
+  left with B (any pad). It counts the seats in `$1039` and ends by itself
+  when `$1038` (confirmed) reaches it. Mode `$1031` must be 4.
+* State while it runs: `$62AB+pad` seat of the pad's cursor, `$62B5+seat`
+  0 pending / 1 choosing / `$FF` confirmed, `$62BF+seat` portrait object,
+  `$62C9+cell` character of the 10 grid cells, `$62D3+cell` its color.
+  Main loop at `$C6:8E68` (the pc of task 9 while it waits); the main part
+  is `$C6:8B48-$C6:8EE3`.
+* Colors: portrait = palette id `$80:BB4E[char] + color` (set 0) in the OBJ
+  palette slot of the portrait object; grid cell = 8-color BG strip, id
+  `$C2:130B + 7*char + color`, CGRAM index `$C2:1301 + cell` (an index with
+  bit 3 set shares its first entry with the strip below: skip it).
+* Screen: OBJ tiles at `$6000`; the cursor sheet uses tiles `$01-$23` of the
+  first page, portraits take pages from tile `$100`. Cursor label: tiles
+  `6+2n` (digit) and `7+2n` ("P"), attributes `$3C`, the "P" one sprite
+  before the digit; ink colors 15, 3, 9, 11 (P1-P4), outline 1.
+* It replaces the Normal menu's VRAM `$08F0-$15EF` and BG2 map; the menu's
+  loader script is `$C7:0B47` (mode 3 init steps: `$C7:0B24`, `$C7:0B47`,
+  `$C7:0B6E`, `$C7:0B71`).
+* Normal menu: state machine `$C7:0BB9` on `$1037`, each state a called
+  script (`$C7:100E` New Game file list, `$C7:0D59` Continue file list).
+  File confirm: `42 04 02 / 24 4C 12 C7` (`$C7:124C` = 64-frame fade) at
+  `$C7:10DF` and `$C7:0E24`; what follows uses `$1032` (file).
+* Hack (`asm/picker.asm`, `tools/sb6/features/picker.py`): the confirm calls
+  a script that fades, saves `$1032-$104F` and `$1D20-$1D3F`, runs the
+  picker for the game's seats and restores; confirmed choices go to
+  `$16C2+seat` / `$16DA+seat` and are applied again after the player reset
+  (`$C4:28B4`, co-op `c4_tail`) and at the stage spawn (`$C2:1697`, not in
+  boss stages). B reloads the menu graphics, drops the call and jumps to
+  the file list. L / R (per frame, `pick_tick` from `e4_tick`): color of
+  the seat under the pad's cursor, portrait slot = seat (shared slots are
+  split first), grid strip. The label "L + R" uses 12 tiles at `$F0`
+  (generated by the build, sent by the NMI hook when the picker's loop
+  starts) in the last 12 OAM sprites; the stock digit and "P" move 40
+  lines down. Colors per character: tables `chpal` (palette id of color 0,
+  `$80 + n` = own palettes, 0 = the cartridge's `$80:BB4E[char] + color`)
+  and `chcol` (count; 6 for the stock characters). The portrait keeps the
+  cartridge's id (color mod 6): its art is SB5's. Tested in Mesen: New
+  Game with 1, 2 and 4 players, B and back in. Not tested: Continue (needs
+  a save), Game Over -> Continue, boss stages.
+* Palette lookup `$C0:01DE` (A = id, set `$0AE7`): `[$A8]` = `$81:` word of
+  the set's table (`$C0:0379 + 2*set`) at `2*(id-1)`; every loader goes
+  through it (`$C0:01AC`, `$C0:01C8`, the slot allocator `$C0:0295`, which
+  takes 16 colors when the palette's count says so). Hack: with
+  `BombermanPallete.png`, ids `$80 + n` of set 0 are the picture's columns
+  (n = 0 is column 1; table and data in `$E4`, the hook also sets the bank
+  in `$AA`); ids 1-6 are replaced in place by columns 1-6, so Battle and
+  the co-op defaults keep working. A Bomberman chosen in the picker uses
+  `$16DA` = `$80 + color`.
+* Grid figures of the picker: BG1 (map `$3000`), 2x3 tiles mirrored
+  (`2C91 6C91 / 2CA1 6CA1 / 2CA0 6CA0` for the first cell at tiles 5-6 x
+  16-18; empty tile `$211C`), 8 colors each. Hack, only in the Normal Game:
+  the first cell (Bomberman) is emptied and drawn as two 16x16 sprites with
+  the SB6 pose facing the screen (`bombers.STAND`; tiles `$C0-$C3` and
+  `$D0-$D3`, OBJ palette 5, which no object of the screen uses with up to
+  four seats; OAM sprites 114/115).
+  The first redrawn character of the first row (1-4, with `stand` and own
+  palettes; today character 1) gets the same treatment in its cell (BG
+  tiles x = 5 + 5*char): tiles `$C4-$C7` / `$D4-$D7`, OBJ palette 7 (CGRAM
+  `$F0`, refs 0 with four seats), OAM sprites 112/113, colors = its own
+  palette (`$80 + paltab index`, `XPAL` + color).
 
 ## Normal Game co-op (3-4 players)
 
@@ -229,6 +333,20 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   `sheet source + row*$200` to the object's page; `$C5:6B36` sets
   `$073F = (page*2 - row) * 16`, so mapping tiles are numbered from the top
   of the sheet. All poses of one animation share those 32 tiles.
+  While a bomber walks the stock code queues its animation again every
+  frame: each NMI loads the strip into a newly allocated page (they rotate,
+  e.g. 0-1-2) and `$C0:11DD` re-runs the current step, so the OAM shown in
+  a frame uses the page allocated one NMI before.
+* Hack, streamed poses (`asm/bombers.asm`): an animation whose poses do not
+  fit 32 tiles together gets one block per pose (<= 16 tiles, 8 columns x 2
+  rows, region `stream_ec`+). The page is a double buffer: `bomber_stream`
+  (from `bomber_map`, each mapping resolve) moves `$073F` to the other half
+  and queues the pose; `stream_nmi` (replaces `JSL $C56AAF` at `$C0:F41D`,
+  right after the OAM DMA of the same vblank) DMAs both rows. Pending DMAs
+  are per half: after the stock reload of the page in the NMI, the half
+  still shown needs its pose again in the same NMI as the next pose.
+  Checked in Mesen frame by frame (OAM + VRAM rebuilt): character 1 walking
+  in all four directions, every frame a complete pose.
 * OBJ sheet table `$85:E22D`, 8 bytes per sheet (1-based): `[0, 0, size16,
   source24, $85]`. White bomber = character 0 = sheets 1/2 (`$C7:4000`
   `$2000` bytes, `$C7:6000` `$1800`, raw 4bpp); characters 1-9 use sheets
@@ -236,6 +354,22 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
 * Bomber type `$10`: animations 1-`$4D`, mappings 1-`$A3` (none shared
   between animations), groups of four animations = right, down, left, up.
   Art uses colors 1-8 only (9-15 of the slot are the ridden Louie's).
+* Character n (0-9) is object type `$80:BB44[n]` = `$10 + n`, each with its
+  own mapping and script tables (same animation numbers 1-`$4D`, 161-195
+  mappings, up to 12 poses in one animation). In every type the mapping word
+  table is followed directly by the animation word table (that is how its
+  length is known) and every script ends in `00 00`. Palette ids
+  `$80:BB4E[n] + color` (colors 0-5; +6 burnt, +7 one more variant).
+  The cartridge overlaps pieces and even the tiles of 16x16 pieces, so some
+  animations use all 32 tiles: the converter edits those on the cartridge's
+  own tiles (`bomber._stock_anim`) instead of cutting them again.
+* Hack, characters 1-9 (`char<n>_sb6.png`): `bomber_map` / `bomber_anim`
+  read one long per character (`0` = stock) for seat bombers whose type
+  matches the seat's character; `bomber_loop` covers types `$10-$19`.
+  Edited palettes are 16-color entries after Bomberman's in the `pal_lookup`
+  table; a byte per stock id 1-`$50` (0 = stock) redirects the id, and
+  `bomber_palcount` loads 16 colors for redirected ids. Tested in Mesen:
+  characters 1, 2 and 5 with recolored art / changed palettes, 1 player.
 * Hack (`tools/sb6/objsheets.py`, `features/bombers.py`): the sheet table
   is copied to `$F0` with new sheets from id 97 (`$C5:6B86`, `$C5:6B8C`;
   Louie copies first, then the bomber's), `$80:BB7A` is
@@ -275,6 +409,11 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   the same dark outline `$1466` in all of them; egg = `$52`, the pink
   Louie), `$C415` word -> `[sheet, row]` per animation (sheets `$15-$22`;
   egg: sheet `$1A` row 2). The tiles only use pixels 0 and 8-15.
+* Stage items: list per campaign stage at `$C4:E5C7` (`[item, count, count
+  with two players]`, 0 ends a stage), spread by `$C5:404C`; `$C5:40DE` (A =
+  item) hides one item in a random soft block. Ids:
+  `$0C` power glove, `$11` boxing glove, `$15` egg. Test items:
+  `TEST_ITEMS` in tools/sb6/features/louies.py.
 * Egg item = `$15` in the item map `$145A+cell` (`$1152+cell` bit 7 = item
   on the cell, copied to `$1CCB` for the player's cell). Hidden in soft
   blocks (`$C5:40D1` places two); when the block burns `$C5:457D` calls

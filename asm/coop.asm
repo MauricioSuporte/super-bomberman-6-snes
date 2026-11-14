@@ -101,7 +101,7 @@ c4_tail:
     sta $1D25
     sta $1D24
     sta !count
-    rtl
+    jml !PICK_APPLY
 .normal:
     lda $1D25
     and #$03
@@ -109,13 +109,13 @@ c4_tail:
     beq +
     lda #$01
     sta !count
-    rtl
+    jml !PICK_APPLY
 +   lda !count
     cmp #$03
     bcs .coop
     lda #$02
     sta !count
-    rtl
+    jml !PICK_APPLY
 .coop:
     clc
     adc #$02
@@ -135,7 +135,7 @@ c4_tail:
     lda #$0F
 +   sta !pmask
     stz !benched
-    rtl
+    jml !PICK_APPLY
 
 ; $C4:29CE (stage init, stock LDA #2 / STA $1CBF).
 c4_stage_slots:
@@ -420,6 +420,7 @@ org !C2
 
 ; $C2:1697 (stage spawn of P1/P2).
 c2_spawn:
+    jsl !PICK_SPAWN
     lda !coopst
     bne +
     lda $1D24

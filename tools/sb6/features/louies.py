@@ -22,9 +22,10 @@ FIRST, LAST = 0x15, 0x22     # Louie sheets
 ANIM_TABLES = 0x80C415       # word per mount character -> [sheet, row] per animation
 ANIMS = 34
 EGG = 9                      # character of an egg: one [sheet, row] pair
-# Test aid: extra eggs hidden in the soft blocks of a campaign stage
-# ($1031: $0D = ZONE1 - 1). Empty the dict to get the cartridge's items back.
-TEST_EGGS = {0x0D: 5}
+# Test aid: extra items hidden in the soft blocks of a campaign stage
+# ($1031: $0D = ZONE1 - 1), as (item, count): $15 egg, $0C power glove.
+# Empty the dict to get the cartridge's items back.
+TEST_ITEMS = {0x0D: [(0x15, 5), (0x0C, 5)]}
 
 
 def _rows(rom):
@@ -95,22 +96,21 @@ def apply(rb, base_rom, sheets):
 
 def _test_eggs(rb):
     """End of the stage item distribution ($C5:404C, after the stage's list at
-    `$E5C7,X` = [item, count, count with two players]): `$C5:40DE` (A = item)
+    `$C4:E5C7` = [item, count, count with two players]): `$C5:40DE` (A = item)
     hides one more item in a random soft block without one."""
-    if not TEST_EGGS:
+    if not TEST_ITEMS:
         return
     code = bytearray.fromhex("E2 10 AD 1A 1D 89 01 D0")   # SEP #$10 / LDA $1D1A / BIT #$01 / BNE out
-    body = bytearray.fromhex("AD 31 10")                   # LDA $1031
-    for stage, count in TEST_EGGS.items():
-        # CMP #stage / BNE +10 / LDY #count / - LDA #$15 / JSR $40DE / DEY / BNE - / BRA out (patched)
-        body += bytes([0xC9, stage, 0xD0, 0x0C, 0xA0, count, 0xA9, 0x15, 0x20, 0xDE, 0x40, 0x88, 0xD0, 0xF8, 0x80, 0x00])
-    # every BRA goes to `out`
-    for i in range(3, len(body), 16):
-        body[i + 15] = len(body) - (i + 16)
+    body = bytearray()
+    for stage, items in TEST_ITEMS.items():
+        for item, count in items:
+            # LDA $1031 / CMP #stage / BNE next / LDY #count / - LDA #item / JSR $40DE / DEY / BNE -
+            body += bytes([0xAD, 0x31, 0x10, 0xC9, stage, 0xD0, 0x0A, 0xA0, count,
+                           0xA9, item, 0x20, 0xDE, 0x40, 0x88, 0xD0, 0xF8])
     code += bytes([len(body)]) + body
     addr = rb.regions["c5"].cursor
     code += bytes([0xA9, 0x01, 0x4C, 0x50, 0x40])          # out: LDA #$01 / JMP $4050
-    if rb.alloc("c5", bytes(code), "test: extra eggs in a stage's soft blocks") != addr:
-        raise BuildError("test eggs moved")
+    if rb.alloc("c5", bytes(code), "test: extra items in a stage's soft blocks") != addr:
+        raise BuildError("test items moved")
     rb.patch(0xC5404C, bytes.fromhex("E2 10 A9 01"), bytes([0x4C, addr & 0xFF, addr >> 8 & 0xFF, 0xEA]),
-             "test: extra eggs after the stage's items")
+             "test: extra items after the stage's items")
