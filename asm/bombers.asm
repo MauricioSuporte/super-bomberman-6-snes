@@ -44,6 +44,8 @@ hirom
 !SVT     = !SB+$52
 !SLEN    = !SB+$54
 !SH      = !SB+$56
+!SSTK    = !SB+$58      ; 5 words: the stock $073F before our first streamed pose
+!SLANIM  = !SB+$62      ; 5: animation of the pose in SLAST
 
 org !E4
 ; Carry set and X = 3 * character when object Y is a seat's bomber whose
@@ -100,7 +102,9 @@ bomber_map:
 ; a streamed pose goes to the other half of the page. M/X 8-bit; keeps Y.
 bomber_stream:
     LDA.l !CHARSTREAM+2,X
-    BEQ .rts
+    BNE +
+    RTS
++
     STA.l !SCNT
     LDA.l !CHARSTREAM,X
     STA.l !SOFF
@@ -122,14 +126,47 @@ bomber_stream:
     STA.l !SENTRY
     TAX
     SEP #$20
-    LDA.l $E40003,X                 ; columns
+    LDA.l $E40003,X
+    AND #$0F                        ; columns
+    BEQ .nostr
+    LDA.l $E40002,X                 ; its animation
     SEP #$10
-    BNE .str
-.forget
+    TYX
+    CMP.l $7E079F,X
+    BEQ .str
+    RTS                             ; another animation's pose: an id the script loop
+.nostr                              ; resolves for one call ($C0:1289), ignored
+    SEP #$10
+.forget                             ; not a streamed pose: undo ours
     LDA.l !SSEAT
     TAX
+    LDA.l !SLAST,X
+    BEQ .rts
+    PHX
+    TYX
+    LDA.l $7E079F,X
+    PLX
+    CMP.l !SLANIM,X
+    BEQ .rts                        ; same streamed animation: a one-call id of its loop
     LDA #$00
     STA.l !SLAST,X
+    TXA
+    ASL A
+    TAX                             ; seat * 2: its two slots / its words
+    LDA #$00
+    STA.l !SPEND,X                  ; no DMA into the stock strip
+    STA.l !SPEND+1,X
+    REP #$20
+    PHX
+    TYX
+    LDA.l $7E073F,X
+    PLX
+    CMP.l !SEXP,X
+    BNE +                           ; the stock code reloaded the page since
+    LDA.l !SSTK,X
+    TYX
+    STA.l $7E073F,X                 ; its tile base back
++   SEP #$20
 .rts
     RTS
 .str
@@ -167,7 +204,7 @@ bomber_stream:
     REP #$20
     LDA.l !SCUR
     CMP.l !SEXP,X
-    BNE .b                          ; the stock code reloaded the page
+    BNE .fresh                      ; the stock code reloaded the page
     SEP #$20
     LDA.l !SSEAT
     TAX
@@ -184,6 +221,9 @@ bomber_stream:
     SBC.l !SPT
     CMP #$0008
     BEQ .a                          ; B shown: next in A
+.fresh
+    LDA.l !SCUR
+    STA.l !SSTK,X                   ; its value, for .forget
 .b
     LDA #$0008
     BRA .set
@@ -231,6 +271,11 @@ bomber_stream:
     TAX
     LDA.l !SM
     STA.l !SLAST,X
+    PHX
+    TYX
+    LDA.l $7E079F,X
+    PLX
+    STA.l !SLANIM,X
     RTS
 ; NMI, replaces `JSL $C56AAF` at $C0:F41D: the pending poses to VRAM.
 stream_nmi:
@@ -277,7 +322,8 @@ stream_one:
     LDA.l !SENT,X
     TAX
     SEP #$20
-    LDA.l $E40003,X                 ; columns
+    LDA.l $E40003,X
+    AND #$0F                        ; columns
     BEQ .skip
     CMP #$09
     BCS .skip
@@ -295,7 +341,13 @@ stream_one:
     LDA.l !SVT
     STA $2116
     SEP #$20
-    LDA.l $E40002,X
+    LDA.l $E40003,X
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CLC
+    ADC #$EC                        ; source bank $EC-$EF
     STA $4304
     LDA #$80
     STA $2115

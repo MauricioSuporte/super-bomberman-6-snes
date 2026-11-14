@@ -153,6 +153,12 @@ python tools/bomber_sheet.py check           # confere as folhas sem gerar a ROM
 python tools/build.py                        # insere as folhas no jogo
 ```
 
+Para conferir um personagem novo no Mesen (andar nas 4 direções e a
+animação 21, de quando ele fica encurralado por uma bomba), use
+`tools/mesen/walk_capture.lua` (`TEST=walk` ou `TEST=trap`) e
+`tools/walk_check.py`; o passo a passo está na skill
+`.claude/skills/sb6-character/SKILL.md` (peça ao Claude "vamos fazer o char2").
+
 ### 7. Jogue
 
 Abra `build/Super Bomberman 6.sfc` num emulador (Mesen 2, bsnes, snes9x) ou

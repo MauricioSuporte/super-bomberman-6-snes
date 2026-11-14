@@ -409,6 +409,11 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   the same dark outline `$1466` in all of them; egg = `$52`, the pink
   Louie), `$C415` word -> `[sheet, row]` per animation (sheets `$15-$22`;
   egg: sheet `$1A` row 2). The tiles only use pixels 0 and 8-15.
+* Bomber animations seen: `$15` idle, `$47` stage start, `$21` cornered
+  (a bomb and no way out; set by `JSL $C0:11EC` with A = `$21`, e.g.
+  `$C0:3013`, `$C1:1099`, `$C3:1485`), `$16` death. At a script loop point the
+  mapping resolver `$C0:1289` runs once with a stray id before the real pose
+  (same frame): hooks on it must not act on that first call.
 * Stage items: list per campaign stage at `$C4:E5C7` (`[item, count, count
   with two players]`, 0 ends a stage), spread by `$C5:404C`; `$C5:40DE` (A =
   item) hides one item in a random soft block. Ids:

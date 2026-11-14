@@ -2,6 +2,7 @@
 """Checks a walk capture (tools/mesen/walk_capture.lua) against the pose sheet.
 
     python tools/walk_check.py build/walk_c2.bin 2 [build/walk_c2.png]
+    python tools/walk_check.py build/trap_c2.bin 2 --anim 21
 
 char 0 = Bomberman (bomber_sb6.png), 1-9 = char<n>_sb6.png. Every frame's
 bomber is rebuilt from the OAM + VRAM dump exactly as the SNES draws it and
@@ -19,8 +20,8 @@ from sb6 import bomber  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR = os.path.join(ROOT, "assets", "bombers")
-REC = 6 + 544 + 5120     # object bytes, OAM, VRAM pages 0-4
-OBJ_TILES = 160          # pages 0-4: tiles below this are bombers
+REC = 6 + 544 + 16384    # object bytes, OAM, OBJ VRAM $6000-$7FFF
+PLAYER_PAL = 1           # OBJ palette of player 1's bomber (enemies and bombs use others)
 
 
 def crop(a):
@@ -66,7 +67,7 @@ def shown(rec):
         x, y, t, at = oam[4*s:4*s+4]
         hb = oam[512 + s // 4] >> (2 * (s % 4)) & 3
         tn = t | (at & 1) << 8
-        if tn >= OBJ_TILES or y >= 0xE0:
+        if (at >> 1 & 7) != PLAYER_PAL or y >= 0xE0:
             continue
         x = x - 256 if hb & 1 else x
         sz = 16 if hb >> 1 else 8
@@ -86,6 +87,13 @@ def shown(rec):
 
 
 def main():
+    args = sys.argv[1:]
+    prefer = (1, 2, 3, 4)
+    if "--anim" in args:
+        i = args.index("--anim")
+        prefer = (int(args[i + 1], 16),)
+        del args[i:i + 2]
+    sys.argv[1:] = args
     data = open(sys.argv[1], "rb").read()
     char = int(sys.argv[2]) if len(sys.argv) > 2 else 0
     ref, pals = poses(char)
@@ -93,7 +101,7 @@ def main():
     for f in range(len(data) // REC):
         img, placed = shown(data[f*REC:(f+1)*REC])
         hit = [k for k, v in ref.items() if v.shape == img.shape and (v == img).all()]
-        walk = [k for k in hit if k[0] in (1, 2, 3, 4)] or hit
+        walk = [k for k in hit if k[0] in prefer] or hit
         lab = ("%02X-%d" % walk[0]) if walk else ("NONE" if placed else "-")
         bad += bool(placed and not walk)
         seq.append(lab)

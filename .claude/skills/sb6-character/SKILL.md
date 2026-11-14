@@ -77,25 +77,52 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
   page (pages rotate); the OAM shown uses the page allocated one NMI
   earlier. Pending DMAs are kept per half (one slot per seat lost the first
   frame of every pose change - fixed).
+* Script loops (`[` in a sequence, and the end of a looping sequence): the
+  interpreter resolves `$C0:1289` once with a stray id (e.g. `$04`) and then
+  with the real pose, in the same frame. Each stream entry is
+  `[source16, animation, columns | (bank - $EC) << 4]`; `bomber_stream`
+  ignores a streamed id of another animation and a non-streamed id while
+  the seat's streamed animation (`SLANIM`) is still playing. A non-streamed
+  pose of another animation restores the stock `$073F` (`SSTK`) and cancels
+  the pending DMAs. (Bug seen: char1's cornered animation `$21` turned into
+  garbage after its first loop.)
 * If a single pose needs more than 16 tiles the build names it; options:
   redraw smaller, or widen POSE_TILES (loses the double buffer / DMA time).
 * Not tested yet: 2-4 players with streamed characters at once, Battle mode,
   real hardware. Say so when reporting.
 
-## Mesen test (headless)
+## Mesen test (headless) - run it for EVERY new character
+
+Run both tests for the new character and for Bomberman (`PLAN=a`, char 0,
+regression) after each build. Check the build printed
+`wrote ... (4194304 bytes)` first: `tail -1` hides asar errors and the test
+then runs on a stale ROM.
 
 Picker navigation: `tools/mesen/picker_nav.lua` (env `PLAN` = P1 buttons in
 the picker: `a` = Bomberman, `right,a` = char1; other chars: move the cursor
 and confirm with the `SB6_OUT_pick1_*.png` screenshots; `r`/`l` = color).
 
-Walk test (every frame must be a complete pose, sequence 1 2 3 2 1 4 5 4):
+Walk test (`TEST=walk`, default; every frame must be a complete pose,
+sequence 1 2 3 2 1 4 5 4) and cornered test (`TEST=trap`: walls the start
+cell in by poking `$1052` cells `$12`/`$21` with `$30` and drops a bomb ->
+animation `$21` "encurralado" `1 2 [ 3 4 3 5`, then the death `$16`):
 
 ```sh
 PLAN="right,a" SB6_OUT="D:/super-bomberman-6-snes/build/walk_c1" STAGE_WAIT=5000 \
 WALK_OUT="D:/super-bomberman-6-snes/build/walk_c1.bin" \
   /d/sb6-tools/mesen/Mesen.exe --testrunner "build/Super Bomberman 6.sfc" tools/mesen/walk_capture.lua
 python tools/walk_check.py build/walk_c1.bin 1 build/walk_c1.png
+TEST=trap PLAN="right,a" SB6_OUT=".../build/trap_c1" STAGE_WAIT=5000 WALK_OUT=".../build/trap_c1.bin"   /d/sb6-tools/mesen/Mesen.exe --testrunner "build/Super Bomberman 6.sfc" tools/mesen/walk_capture.lua
+python tools/walk_check.py build/trap_c1.bin 1 --anim 21
 ```
+
+The capture holds the whole OBJ VRAM (`$6000-$7FFF`): a big character's
+page can be past page 4 (char1 drew from tiles `$A0+`). `walk_check.py`
+keeps the sprites of OBJ palette 1 (player 1) and drops enemies/bombs.
+For another animation, reproduce its trigger the same way (WRAM pokes from
+Lua) and pass `--anim <hex>`; a "NONE" frame = the right mapping drawn with
+wrong tiles (look at it: render the frame, compare `$073F`, `$1D00` pages
+and `$7F:FE00` state per frame).
 
 `walk_check.py` rebuilds the bomber from OAM + VRAM pages 0-4 and matches it
 against the sheet: expect `frames: 810 no matching pose: 0`, runs like
@@ -105,8 +132,11 @@ too as a regression. The stage-start invincibility blink makes the first
 frames "-" (nothing drawn): normal.
 
 Other useful facts: the bomber object is `$17FA`; animation `$079F,Y`,
-mapping `$049F,Y`; animation setter `JSL $C0:11EC` (A = animation). Idle in
-stage = animation `$15`; stage start = `$47`. Test items in ZONE1-1
+mapping `$049F,Y`, script step `$07A0,Y`; animation setter `JSL $C0:11EC`
+(A = animation). Idle in stage = animation `$15`; stage start = `$47`;
+cornered (bomb, no way out) = `$21`; death = `$16`. Collision map `$1052`
+(16 columns, `$80` wall, `$30` soft block), player 1 cell `$16AA` (`$11` at
+the start of 1-1). Test items in ZONE1-1
 (eggs, power gloves): `TEST_ITEMS` in tools/sb6/features/louies.py.
 
 ## Pitfalls seen

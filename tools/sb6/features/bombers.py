@@ -106,26 +106,32 @@ def _insert(rb, base_rom, sheets, br, cells, name, only=None):
 
 
 def _stream_blocks(rb, streamed, name):
-    """Pose blocks of the streamed animations -> {mapping: (address, columns)}."""
+    """Pose blocks of the streamed animations -> {mapping: (address, columns, animation)}."""
     out = {}
     for a, poses in sorted(streamed.items()):
         for m, (block, w) in sorted(poses.items()):
+            if m in out:    # bomber_stream tells a pose of the current animation by its entry
+                raise BuildError(f"{name}: pose {m:02X} is streamed in animations {out[m][2]:02X} and {a:02X}")
             region = next((r for r in STREAM if rb.regions[r].free() >= len(block)), None)
             if region is None:
                 raise BuildError(f"{name}: no room for the streamed poses ({STREAM})")
-            out[m] = (rb.alloc(region, block, f"{name}: animation {a:02X}, pose {m:02X} ({w} columns, streamed)"), w)
+            out[m] = (rb.alloc(region, block, f"{name}: animation {a:02X}, pose {m:02X} ({w} columns, streamed)"), w, a)
     return out
 
 
 def _stream_table(rb, stream, count, name):
-    """[source24, columns] per mapping id 1..count (columns 0 = not streamed), in bank $E4.
+    """[source16, animation, columns | (source bank - $EC) << 4] per mapping id 1..count
+    (columns 0 = not streamed), in bank $E4. The animation lets bomber_stream skip the
+    ids the script interpreter resolves for one call at a loop point (`[`).
     Returns the 3-byte CHARSTREAM entry: offset16 in the bank, count."""
     if not stream:
         return bytes(3)
     data = bytearray()
     for m in range(1, count + 1):
-        src, w = stream.get(m, (0, 0))
-        data += bytes([src & 0xFF, src >> 8 & 0xFF, src >> 16, w])
+        src, w, a = stream.get(m, (0, 0, 0))
+        if w and not (0xEC <= src >> 16 <= 0xEF and 1 <= w <= 8):
+            raise BuildError(f"{name}: streamed pose {m:02X} must be in banks $EC-$EF with 1-8 columns")
+        data += bytes([src & 0xFF, src >> 8 & 0xFF, a, w | ((src >> 16) - 0xEC) << 4 if w else 0])
     addr = rb.alloc("bulk", bytes(data), f"{name}: streamed poses (source, columns) per mapping")
     if addr >> 16 != 0xE4 or count > 255:
         raise BuildError(f"{name}: stream table must be in bank $E4 with at most 255 mappings")
