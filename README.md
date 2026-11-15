@@ -18,7 +18,7 @@ ser gravada num cartucho repro e rodar no hardware real.
 | Tela de título: opções entre logo e personagens, versão no rodapé | pronto (`version_text` em `assets/title/convert.json`) |
 | Tela de título: música do SB6 (streaming BRR) | pronto; SFX do menu (mover/confirmar) tocam junto com ela |
 | Normal Game para 3-4 jogadores (multitap na porta 2) | pronto: escolha em NORMAL GAME → 1-4 PLAYER GAME; P3 vermelho no canto inferior esquerdo, P4 azul no inferior direito; vidas compartilhadas, Start para voltar; ovos e Louies usam páginas de sprite livres da fase (nas 8 fases sem espaço sobrando ainda podem aparecer embaralhados) e mantêm as cores (se faltar paleta, P3/P4 usam as cores do P1 por alguns instantes). Nas lutas contra chefes o rival fica no slot do P5 e os 4 jogadores lutam (P3 nasce à esquerda do P1, P4 à direita do P2); só na ZONE3-D (dois rivais) o P4 fica de fora e volta na fase seguinte com seus itens |
-| Seleção de personagem e cor no Normal Game | pronto: depois de escolher o arquivo (New Game ou Continue) abre a tela CHARACTER SELECT da Batalha com um cursor por jogador; **R** avança e **L** volta a cor (os outros personagens: branco, preto, vermelho, azul, verde, amarelo; o Bomberman: todas as colunas de `assets/bombers/BombermanPallete.png` menos a primeira, que é o modelo, na ordem da imagem); o Bomberman da grade é desenhado com a arte do SB6 (pose de frente da folha); o cursor mostra **L + R** em cima e o número do jogador embaixo; **A** confirma, **B** volta para a lista de arquivos. A escolha vale para a campanha toda |
+| Seleção de personagem e cor no Normal Game | pronto: depois de escolher o arquivo (New Game ou Continue) abre a tela CHARACTER SELECT da Batalha com um cursor por jogador; **R** avança e **L** volta a cor (os outros personagens: branco, preto, vermelho, azul, verde, amarelo; o Bomberman: todas as colunas de `assets/bombers/BombermanPallete.png` menos a primeira, que é o modelo, na ordem da imagem); o Bomberman e os personagens redesenhados (`charN_sb6.png`) aparecem na grade com a arte do SB6 (pose de frente da folha); o cursor mostra **L + R** em cima e o número do jogador embaixo; **A** confirma, **B** volta para a lista de arquivos. A escolha vale para a campanha toda |
 | Paletas dos sprites: jogadores com 15 cores, Louies e ovos em paleta própria | pronto: uma paleta de sprite guarda até 2 cores de Louie (8 cores cada, o contorno é comum) e todos os Louies da mesma cor a dividem; o ovo usa as cores do Louie rosa, então só aparece se houver uma metade livre (ou já com o rosa) ou uma paleta livre só para ele; com as 2 metades ocupadas, o Louie que nasce vira um dos 2 que já existem; morrer não troca mais as cores do jogador. Falta tratar chefes e fases que usam mais paletas (zona 5) |
 | Demais telas, fases, inimigos, chefes, músicas | originais do SB5 |
 
@@ -133,9 +133,10 @@ a partir do vizinho do Bomberman):
   colunas são as cores que o L / R escolhe (todas, não só seis). Pinte a
   folha com as cores do `bomber_sb6.png`.
 
-O build só insere o personagem quando alguma coisa ficou diferente do
-Bomberman (folha, paleta ou sequência). Enquanto a folha for igual à do
-Bomberman, o jogo continua com a arte do SB5. As animações que você não mexer
+Todo personagem com folha entra no jogo e na grade da seleção com a arte do
+SB6, mesmo que a folha ainda seja igual à do Bomberman: é só editar a folha e
+rodar o build. A paleta e os tiles iguais aos do Bomberman são reaproveitados
+(não são duplicados na ROM). As animações que você não mexer
 usam os tiles do Bomberman (não gastam ROM), e só as editadas ganham tiles
 novos. `charN_anims.txt` (opcional) troca só as sequências que forem
 diferentes das do `bomber_anims.txt`. Quando as poses de uma animação passam
@@ -144,6 +145,9 @@ o build manda cada pose separada para a VRAM na hora em que ela aparece; aí o
 limite passa a ser por pose: 16 tiles (até 32x32 px). O `check` lista essas
 animações. O retrato grande da
 seleção continua com as cores do cartucho, porque a arte dele é a do SB5.
+A altura da bomba erguida com a luva azul (Power Glove) segue a cabeça de
+cada personagem: o build compara o topo das poses com a bomba (animações
+`2F-3A`) com as do Bomberman (personagem mais baixo = bomba mais baixa).
 
 ```
 python tools/bomber_sheet.py export --edit   # recria as referências *_sb5.png e os editáveis que não existirem

@@ -39,6 +39,20 @@ STREAM = [f"stream_{b:02x}" for b in range(0xEC, 0xF0)]   # pose blocks (tools/b
 CHARS = range(1, 10)         # characters with a char<n>_sb6.png sheet
 VARIANTS = 6                 # color variants of each of them (palette ids $80:BB4E[char] + n)
 XLAT_IDS = 0x50
+LIFT_TABLE = 0xC5242C        # height of the bomb lifted with the Power Glove, per character ($C5:2403)
+CARRY_ANIMS = range(0x2F, 0x3B)   # walking / standing with the bomb lifted
+
+
+def _carry_top(br, cells):
+    """Highest drawn row of the poses carrying a bomb (cell coordinates)."""
+    tops = []
+    for a, maps in br.poses():
+        if a in CARRY_ANIMS:
+            for m in maps:
+                ys = np.nonzero(cells[(a, m)])[0]
+                if len(ys):
+                    tops.append(int(ys.min()))
+    return min(tops) if tops else None
 
 
 def _table(rb, blobs, label):
@@ -174,9 +188,9 @@ def _char_palettes(bomber_pal, char_pal, used):
 def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, ref):
     """Characters 1-9, laid out like Bomberman (char<n>_sb6.png +
     char<n>_pallete.png, optional char<n>_anims.txt over bomber_anims.txt).
-    `ref`: Bomberman's sheet, cells, layout, palettes and final tables. A
-    character whose sheet, colors and sequences are all Bomberman's keeps the
-    cartridge's sprites. Animations equal to Bomberman's use his tiles and
+    `ref`: Bomberman's sheet, cells, layout, palettes and final tables. Every
+    character with a sheet is inserted (one still equal to Bomberman's costs
+    only its tables). Animations equal to Bomberman's use his tiles and
     pieces; only the edited ones get new tiles."""
     done = []
     for c in CHARS:
@@ -193,13 +207,19 @@ def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, r
             edited |= {a for a, maps in brc.poses() if len(maps) != len(same_poses[a])}
             palettes = _char_palettes(ref["palette"], pal, ref["notes"]["used"])
             shared = palettes == ref["palettes"]
-            if not (edited or own or not shared):
-                continue
             info = dict(char=c, notes=notes, scripts=len(own), colors=len(palettes), shared=shared,
                         **_insert_char(rb, base_rom, sheets, brc, cells, edited, c, ref))
         except ValueError as e:
             raise BuildError(f"char{c}: {e}")
         info["stand"] = cells[(STAND, dict(brc.poses())[STAND][0])]
+        # the lifted bomb sits as far above the head as on Bomberman's
+        top, top0 = _carry_top(brc, cells), _carry_top(ref["br"], ref["cells"])
+        if top is not None and top0 is not None:
+            stock = base_rom[off(LIFT_TABLE) + c]
+            info["lift"] = max(0, min(0x30, base_rom[off(LIFT_TABLE)] + top0 - top))
+            if info["lift"] != stock:
+                rb.patch(LIFT_TABLE + c, bytes([stock]), bytes([info["lift"]]),
+                         f"char{c}: lifted bomb height (head {top0 - top:+d} px from Bomberman's)")
         charmap[c], charanim[c] = info["maptab"], info["animtab"]
         info["pal0"] = 0 if shared else len(all_pals)    # index in the palette table of its color 0
         if not shared:

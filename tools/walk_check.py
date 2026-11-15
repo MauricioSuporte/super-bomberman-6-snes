@@ -100,7 +100,7 @@ def main():
     seq, imgs, bad = [], [], 0
     for f in range(len(data) // REC):
         img, placed = shown(data[f*REC:(f+1)*REC])
-        hit = [k for k, v in ref.items() if v.shape == img.shape and (v == img).all()]
+        hit = [k for k, v in ref.items() if img.size and v.shape == img.shape and (v == img).all()]
         walk = [k for k in hit if k[0] in prefer] or hit
         lab = ("%02X-%d" % walk[0]) if walk else ("NONE" if placed else "-")
         bad += bool(placed and not walk)

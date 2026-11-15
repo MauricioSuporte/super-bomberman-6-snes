@@ -36,8 +36,9 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   out like Bomberman: `char<n>_sb6.png` = bomber_sb6.png's layout, colors and
   sequences (`bomber_sheet.py template`), `char<n>_pallete.png` =
   BombermanPallete.png's format, `char<n>_anims.txt` overrides
-  bomber_anims.txt per animation. Inserted only when something differs from
-  Bomberman's; animations equal to his reuse his `[sheet, row]` and pieces,
+  bomber_anims.txt per animation. Every character with a sheet is inserted
+  (in game and in the picker grid), even one still equal to Bomberman's
+  (then it costs only its tables); animations equal to his reuse his `[sheet, row]` and pieces,
   edited ones get new tiles. Palettes equal to his share his ids `$80 + n`.
   Animations over 32 tiles are streamed pose by pose (<= 16 tiles each,
   double-buffered page, `bomber_stream` / `stream_nmi` in asm/bombers.asm).

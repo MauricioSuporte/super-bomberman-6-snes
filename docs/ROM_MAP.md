@@ -232,11 +232,24 @@ script accumulator (`61` = add).
   the SB6 pose facing the screen (`bombers.STAND`; tiles `$C0-$C3` and
   `$D0-$D3`, OBJ palette 5, which no object of the screen uses with up to
   four seats; OAM sprites 114/115).
-  The first redrawn character of the first row (1-4, with `stand` and own
-  palettes; today character 1) gets the same treatment in its cell (BG
-  tiles x = 5 + 5*char): tiles `$C4-$C7` / `$D4-$D7`, OBJ palette 7 (CGRAM
-  `$F0`, refs 0 with four seats), OAM sprites 112/113, colors = its own
-  palette (`$80 + paltab index`, `XPAL` + color).
+  Every redrawn character 1-8 (cell = character; cell 9 = random) gets the
+  same treatment: figure = BG1 tiles cols 4+5k..7+5k, rows 15-18 (first row,
+  k = c) or 20-23 (second row, k = c - 5), up to 4x4 tiles (char2's SB5
+  figure is 4 wide), blanked to `$211C`; sprites at x = `$28` + 40k,
+  y = `$77` (+40 on the second row); tiles `$40 + 4((c-1) % 4) + $20((c-1) / 4)`
+  (`$40-$6F` are empty in the picker's OBJ VRAM; `$20-$3F`, `$C0-$FF`,
+  `$100+` are used); OAM sprites 96 + 2(c-1) (`!GOAM` = 96; `$03D5`, free
+  sprites, is 56 with four seats); OBJ palette 7 (CGRAM `$F0`) = first color
+  of the first redrawn character, palette 4 (CGRAM `$C0`) = the cell a seat
+  recolored last (`chpal[c]` + color; `$7F:FF68` = that character). OBJ
+  palettes 0-3 are the seats' cursors, 6 the top portraits.
+* CGRAM upload vs the VRAM queue: `$0351` = 1 makes the NMI (`$C0:0244`) DMA
+  512 bytes of CGRAM from `$7E2910` and spend `$02C0` of the frame's DMA
+  budget `$0365`; the VRAM queue (`$C0:04E0`, entries at `$7E:8000`, read
+  `$0355` / write `$0357`) then stops early and splits the portrait's
+  two-pass transfers (`$2115` = 00 then 80): the top box shows garbage that
+  looks like a blinking cursor. The picker only sets `$0351` when
+  `$0355` = `$0357` (`palflush`, flag `$7F:FF69`).
 
 ## Normal Game co-op (3-4 players)
 
@@ -419,6 +432,14 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   item) hides one item in a random soft block. Ids:
   `$0C` power glove, `$11` boxing glove, `$15` egg. Test items:
   `TEST_ITEMS` in tools/sb6/features/louies.py.
+* Power Glove lift: `$C5:2395` (bomb under the bomber, `$0E90` |= `$40`,
+  carried) sets the bomb's height `$0680,Y` from `$C5:2403`: seats < 5 not on
+  a Louie read `$C5:242C[$16C2]` (one byte per character 0-9, stock
+  `13 0B 18 18 14 1C 12 12 12 12`); on a Louie `$12` (`$1A` character 5),
+  others `$1A`. While carried `$C5:20B9` copies the owner's x/y (y + 1) into
+  the bomb. The build sets each inserted character's byte to Bomberman's +
+  (his head top - the character's) over the carry poses `$2F-$3A`
+  (`tools/sb6/features/bombers.py`, `_carry_top`).
 * Egg item = `$15` in the item map `$145A+cell` (`$1152+cell` bit 7 = item
   on the cell, copied to `$1CCB` for the player's cell). Hidden in soft
   blocks (`$C5:40D1` places two); when the block burns `$C5:457D` calls

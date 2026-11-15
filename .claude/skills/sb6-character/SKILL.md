@@ -17,7 +17,7 @@ findings in docs/ROM_MAP.md). Answer the owner in Portuguese.
 | `bomber_anims.txt` | Sequences of every bomber (Bomberman and chars). Walk 01-04 = `8 : 1*5 2 3 2 1*5 4 5 4`. |
 | `char<n>_sb6.png` | The sheet the owner paints. Same size/layout as bomber_sb6.png (2560x1024, 64x64 cells, 1st column of each block = label). |
 | `char<n>_pallete.png` | BombermanPallete.png's format: column 1 = Bomberman's key colors, columns 2.. = colors chosen with L/R in the picker (all of them, not only 6). |
-| `char<n>_anims.txt` | Optional: only the sequences that differ from bomber_anims.txt. Avoid it: the owner wants chars to animate like Bomberman. |
+| `char<n>_anims.txt` | Optional: only the sequences that differ from bomber_anims.txt (same format), e.g. char2: `20 : 8 : 1 2 3 4 5 6 7` (victory with 7 poses, Bomberman's has 3). Use it only when the owner asks for a different sequence; then redraw that character's label column (`draw_labels` on its sheet only: `bomber_sheet.py labels` rewrites every sheet, Bomberman's too). |
 | `char<n>_sb5.png` | Cartridge art, reference only (never read by the build). |
 
 `n` = position in the CHARACTER SELECT grid counting from Bomberman's
@@ -45,19 +45,38 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
 
 ## Rules the build applies (tools/sb6/features/bombers.py, tools/sb6/bomber.py)
 
-* A character is inserted only when sheet, palette or sequences differ from
-  Bomberman's; otherwise the cartridge art stays.
+* Every character with a sheet (1-9) is inserted, in game and in the picker
+  grid, even when it is still equal to Bomberman's (0 KB of tiles: his
+  `[sheet, row]`, mapping blobs and palette ids). The SB5 art is gone.
 * Animations with the same pose count and cells as Bomberman's reuse his
   `[sheet, row]` and mapping blobs (no ROM cost). Edited ones get new tiles.
   An animation whose pose count differs from his also counts as edited.
 * Unplayed cells (not in the sequence) are ignored.
 * Palette ids: `$80 + paltab index`; a shared palette uses Bomberman's ids.
   `xlat` maps the stock ids (base + n, n < 6) for Battle and co-op defaults.
-* Picker: `chpal`/`chcol` per character (first color id, color count) in
-  asm/picker.asm. The grid cell sprite of the first redrawn character of row
-  0 uses OBJ palette 7, tiles `$C4-$C7/$D4-$D7`, OAM 112/113
-  (`XCELL_CHARS = range(1, 5)` in tools/sb6/features/picker.py). The big top
-  portrait stays the cartridge's art and colors (color mod 6).
+* Picker (Normal Game CHARACTER SELECT): `chpal`/`chcol` per character
+  (first color id, color count) in asm/picker.asm. Every inserted character
+  1-8 gets its grid cell as two 16x16 sprites with its `stand` pose (BG
+  figure blanked 4x4 tiles, tiles `$40-$6F`, OAM 96-111, OBJ palette 7 =
+  default color, palette 4 = the cell a seat recolored last). If the grid
+  still shows the SB5 figure, the character was not inserted (missing
+  sheet/palette file; see the build line). Picker PLAN: row 1 = chars 1-4
+  (`right` x c, then `a`), row 2 = chars 5-8 (`down`, then `right` x (c-5),
+  then `a`); `right` wraps inside the row of five cells. The big top
+  portrait stays the cartridge's art and colors (color mod 6): never give
+  it palid. Palette uploads (`upload` -> `palpend`) are flushed by
+  `palflush` only when the VRAM queue is empty; setting `$0351` directly
+  garbles the portrait (looked like P1's cursor blinking).
+* Power Glove: the lifted bomb's height is `$C5:242C[char]`, computed by the
+  build from the head top of the carry poses `$2F-$3A` vs Bomberman's (build
+  map line `char<n>: lifted bomb height`). Test: `TEST=lift` (screenshots
+  `WALK_OUT_lift50..300.png`).
+* Template copies go stale: when the owner edits bomber_sb6.png, the
+  untouched char<n>_sb6.png copies differ from it and cost tiles as
+  "N animations redrawn" with Bomberman's old art. Check that
+  those sheets are identical to each other (title row aside) and re-run
+  `bomber_sheet.py template <n...> --force` for them; never for a sheet the
+  owner painted.
 
 ## Big characters: 32-tile limit and streaming
 
@@ -119,7 +138,13 @@ python tools/walk_check.py build/trap_c1.bin 1 --anim 21
 The capture holds the whole OBJ VRAM (`$6000-$7FFF`): a big character's
 page can be past page 4 (char1 drew from tiles `$A0+`). `walk_check.py`
 keeps the sprites of OBJ palette 1 (player 1) and drops enemies/bombs.
-For another animation, reproduce its trigger the same way (WRAM pokes from
+Any animation, without its trigger: `TEST=anim ANIM=<hex>` replaces the idle
+animation `$15` by ANIM in the setter `$C0:11EC` (Lua `emu.setState`), e.g.
+char2's victory `20` (`TEST=anim ANIM=20 PLAN="right,right,a"`, then
+`walk_check.py ... 2 --anim 20`). `PLAN="right,right,a"` = char2.
+`TEST=lift`: gives the Power Glove, drops a bomb, lifts it, walks down and
+stands; look at the screenshots (bomb right above the head).
+For a real trigger, reproduce it the same way (WRAM pokes from
 Lua) and pass `--anim <hex>`; a "NONE" frame = the right mapping drawn with
 wrong tiles (look at it: render the frame, compare `$073F`, `$1D00` pages
 and `$7F:FE00` state per frame).

@@ -117,9 +117,6 @@ def check_chars(rom, ref):
         except ValueError as e:
             raise ValueError(f"char{c}: {e}")
         shared = pals == ref["palettes"]
-        if not (edited or own or not shared):
-            print(f"char{c}: same as bomber_sb6.png, not inserted (the cartridge's art stays)")
-            continue
         pieces = [len(p) for p in mappings.values()] or [0]
         print(f"char{c}: ok, {len(edited)} animations redrawn ({len(strips)} KB of tiles, {max(pieces)} sprites in the "
               f"largest pose), the others Bomberman's; {len(pals)} colors"

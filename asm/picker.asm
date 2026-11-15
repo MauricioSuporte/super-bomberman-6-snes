@@ -17,7 +17,8 @@
 ; red, blue, green, yellow; with the SB6 art, Bomberman has the !BCOLS
 ; palettes of BombermanPallete.png and its cell of the grid, a BG figure of
 ; 8 colors in the cartridge, is drawn as a sprite with the SB6 pose; so is
-; the cell of character !XCH when its sheet was redrawn). The cursor's label shows "L + R" above the cell and
+; the cells of the other redrawn characters 1-8, !XN of them: palette 7 with their
+; first color, palette 4 for the last one a seat recolored). The cursor's label shows "L + R" above the cell and
 ; the player number below (OAM shadow rewritten after the game built it).
 ;
 ; State: $7F:FF00-$7F:FF7F (docs/FREE_SPACE.md).
@@ -44,18 +45,20 @@ hirom
 !gfx     = !PK+$5C      ; $FF = glyph tiles are in VRAM
 !drawn   = !PK+$5D      ; 1 = glyph sprites are in the OAM shadow
 !cellpal = !PK+$5E      ; 1 = the Bomberman cell's sprite has colors
-!GOAM    = 112          ; first sprite owned here (4-aligned): 2 for the !XCH cell,
-!GHIGH   = $0ADB         ;   2 for the Bomberman cell (!CS0, !CS1), then the
-!GLY     = 116          ;   12 glyphs; high bits $0ABF + !GOAM/4
+!GOAM    = 96           ; first sprite owned here (4-aligned): 2 per character 1-8
+!GHIGH   = $0ADB         ;   (96 + 2*(c-1), shadow !XOAM), 112/113 free, 2 for the
+!GLY     = 116          ;   Bomberman cell (!CS0, !CS1), then the 12 glyphs; high bits $0ABF + s/4
 !CS0     = $0A87         ; OAM shadow of sprite 114 ($08BF + 4*114)
 !CS1     = $0A8B         ; ... 115
 !CPAL    = $D0           ; CGRAM index of the cell sprite's colors (OBJ palette 5)
-!XS0     = $0A7F         ; OAM shadow of sprite 112: cell of character !XCH
-!XS1     = $0A83         ; ... 113
-!XCPAL   = $F0           ; its colors (OBJ palette 7, free with up to four seats)
+!XOAM    = $0A3F         ; OAM shadow of sprite 96 (character 1's cell)
+!XCPAL   = $F0           ; colors of the character cells (OBJ palette 7, free with up to four seats)
+!XCPAL4  = $C0           ; ... of the last recolored one (OBJ palette 4)
 !w0      = !PK+$60      ; word scratch
 !w1      = !PK+$62
 !oamn    = !PK+$64      ; 4 bytes: OAM offset/4 of each seat's number
+!p4char  = !PK+$68      ; character whose cell uses OBJ palette 4 ($FF = none)
+!palpend = !PK+$69      ; 1 = the CGRAM shadow changed, sent once the VRAM queue is empty
 
 org !E4
 
@@ -152,6 +155,9 @@ pick_op:
     sta.l !on
     sta.l !gfx
     sta.l !cellpal
+    sta.l !palpend
+    lda #$FF
+    sta.l !p4char
     plb
     rtl
 
@@ -256,7 +262,8 @@ palid:
     rts
 
 ; Palette id of the portrait of seat X's character (!s2, color !s1): the
-; cartridge's id for the characters 1-8 (color mod 6), palid for Bomberman.
+; cartridge's id for the characters 1-8 (color mod 6), palid for Bomberman
+; (the box shows the cartridge's portrait art).
 portid:
     lda.l !s2
     bne +
@@ -337,7 +344,7 @@ if !OWN
     ldx.b #!CPAL
     ldy #$10
     jsr upload
-if !XCH
+if !XN
     lda.b #!XPAL
     ldx.b #!XCPAL
     ldy #$10
@@ -351,6 +358,7 @@ endif
 -   jsr color
     dex
     bpl -
+    jsr palflush
     jsr label
 .out:
     plb
@@ -545,19 +553,23 @@ if !OWN
     plx
     rts
 +
-if !XCH
-    cmp.b #!XCH                     ; the other redrawn character: a sprite too
-    bne +
-    phx
-    lda.l !s1
+if !XN
+    phx                             ; another redrawn character: a sprite too,
+    tax                             ;   recolored in OBJ palette 4
+    lda.l xc_on,x
+    beq +
+    lda.l chpal,x
     clc
-    adc.b #!XPAL
-    ldx.b #!XCPAL
+    adc.l !s1
+    ldx.b #!XCPAL4
     ldy #$10
     jsr upload
+    lda.l !s2
+    sta.l !p4char
     plx
     rts
-+
++   plx
+    lda.l !s2
 endif
 endif
     phx
@@ -655,7 +667,7 @@ endif
     beq +
     sta $2910,x
     lda #$0001
-    sta $0351
+    sta.l !palpend
 +   inx
     inx
     iny
@@ -668,6 +680,24 @@ endif
 .out:
     sep #$30
     rts
+
+; The CGRAM upload ($0351, NMI $C0:0244) takes time from the VRAM queue
+; ($7E:8000 ring, $0355 read / $0357 write, stops at a scanline): sent while the
+; portrait's two-pass transfers are queued it split them and garbled the box.
+; So the shadow is only flagged once the queue is empty.
+palflush:
+    lda.l !palpend
+    beq +
+    rep #$20
+    lda.l $7E0355
+    cmp.l $7E0357
+    sep #$20
+    bne +
+    lda #$01
+    sta.l $7E0351
+    lda #$00
+    sta.l !palpend
++   rts
 
 ; ---------------------------------------------------------------------------
 ; Cursor label. The game draws "1P".."4P" above the cell: two 8x8 sprites,
@@ -710,29 +740,8 @@ if !OWN
     ora #$A0
     sta !GHIGH
 +
-if !XCH
-    lda $62C9+!XCH                  ; cell !XCH: the same, 40 pixels per cell
-    cmp.b #!XCH+1
-    bne +
-    lda.b #$28+40*!XCH
-    sta !XS0
-    sta !XS1
-    lda #$77
-    sta !XS0+1
-    lda #$87
-    sta !XS1+1
-    lda.b #!XTILE
-    sta !XS0+2
-    lda.b #!XTILE+2
-    sta !XS1+2
-    lda #$2E                        ; palette 7, priority 2
-    sta !XS0+3
-    sta !XS1+3
-    lda !GHIGH                      ; sprites 112/113 are 16x16, x < 256
-    and #$F0
-    ora #$0A
-    sta !GHIGH
-+
+if !XN
+    jsr xcells
 endif
 endif
     lda #$FF
@@ -979,46 +988,8 @@ if !OWN
     sta $2118
     sep #$20
 +
-if !XCH
-    rep #$20                        ; the !XCH cell: tiles and its figure off BG1
-    lda.w #xcell_tiles
-    sta $4302
-    lda #$0080
-    sta $4305
-    lda.w #!XVRAM
-    sta $2116
-    sep #$20
-    lda #$01
-    sta $420B
-    rep #$20
-    lda.w #!XVRAM+$100
-    sta $2116
-    lda #$0080
-    sta $4305
-    sep #$20
-    lda #$01
-    sta $420B
-    lda.l $7E62C9+!XCH
-    cmp.b #!XCH+1
-    bne +
-    rep #$20
-    lda.w #$3205+5*!XCH
-    sta $2116
-    lda #$211C
-    sta $2118
-    sta $2118
-    lda.w #$3225+5*!XCH
-    sta $2116
-    lda #$211C
-    sta $2118
-    sta $2118
-    lda.w #$3245+5*!XCH
-    sta $2116
-    lda #$211C
-    sta $2118
-    sta $2118
-    sep #$20
-+
+if !XN
+    incsrc "!XNMI"                  ; each character cell: tiles, its figure off BG1
 endif
     lda #$01
     sta.l !gfx
@@ -1054,9 +1025,73 @@ if !OWN
 cell_tiles:
     incbin "!CELL"
 endif
-if !XCH
-xcell_tiles:
-    incbin "!XCELL"
+if !XN
+; Cell sprites of characters 1-8 (OAM shadow, every frame the label is drawn):
+; two 16x16 sprites where cell c (= character c) shows character c.
+xcells:
+    php
+    sep #$30
+    ldx #$01
+.next:
+    lda.l xc_on,x
+    beq .skip
+    txa
+    inc a
+    cmp $62C9,x
+    bne .skip
+    dec a
+    dec a
+    asl a
+    asl a
+    asl a
+    tay                             ; 8 * (c - 1)
+    lda.l xc_x,x
+    sta !XOAM,y
+    sta !XOAM+4,y
+    lda.l xc_y,x
+    sta !XOAM+1,y
+    clc
+    adc #$10
+    sta !XOAM+5,y
+    lda.l xc_t,x
+    sta !XOAM+2,y
+    clc
+    adc #$02
+    sta !XOAM+6,y
+    txa
+    cmp.l !p4char
+    beq +
+    lda #$2E                        ; palette 7, priority 2
+    bra ++
++   lda #$28                        ; palette 4, priority 2
+++  sta !XOAM+3,y
+    sta !XOAM+7,y
+    txa                             ; 16x16, x < 256: $0ABF + (96 + 2(c-1))/4
+    dec a
+    lsr a
+    tay
+    lda #$0A
+    bcc +
+    lda #$A0
++   ora $0AD7,y
+    sta $0AD7,y
+.skip:
+    inx
+    cpx #$09
+    bcc .next
+    plp
+    rts
+
+; character c: 1 = its cell is a sprite; x, y of the top sprite; first tile
+xc_on:
+    db !XON
+xc_x:
+    db !XX
+xc_y:
+    db !XY
+xc_t:
+    db !XT
+    incsrc "!XDATA"
 endif
 glyph_tiles:
     incbin "!GLYPHS"

@@ -1,0 +1,4 @@
+# Sequencias do char2 diferentes das do bomber_anims.txt (mesmo formato).
+#   animacao : quadros por pose : sequencia
+
+20 : 8 : 1 2 3 4 5 6 7                # vitoria (7 poses, o Bomberman tem 3)

@@ -19,8 +19,24 @@ OFF_SEAT = 0                 # $6269+seat of the seats that do not play (1 = hum
 GLYPH_TILE = 0xF0            # first of the 12 "L + R" tiles: unused by the picker's OBJ sheet
 GLYPH_VRAM = 0x6000 + 16 * GLYPH_TILE   # VRAM word address (OBJ tiles at $6000)
 CELL_TILE = 0xC0             # Bomberman's cell: 4 tiles here and 4 one row below
-XCELL_TILE = 0xC4            # cell of one other redrawn character (first row of the grid): same layout
-XCELL_CHARS = range(1, 5)    # characters in the first row of the grid (cell = character, Bomberman is 0)
+XCELL_CHARS = range(1, 9)    # characters of the grid (cell = character, Bomberman is 0, cell 9 = random)
+
+
+def xcell_tile(c):
+    """First tile of character c's cell sprite: 4 tiles + 4 one row below, in
+    $40-$6F (empty in the picker's OBJ VRAM)."""
+    return 0x40 + 4 * ((c - 1) % 4) + 0x20 * ((c - 1) // 4)
+
+
+def xcell_xy(c):
+    """Top sprite of cell c: 40 px per cell, rows of five cells 40 px apart."""
+    return 0x28 + 40 * (c % 5), 0x77 + 40 * (c // 5)
+
+
+def xcell_blank(c):
+    """BG1 map words ($3000) of cell c's figure: 4 x 4 tiles."""
+    col, row = 4 + 5 * (c % 5), 15 + 5 * (c // 5)
+    return [0x3000 + 32 * (row + r) + col for r in range(4)]
 # The cursor's "1P".."4P" tiles (6+2n, 7+2n): ink color of each seat, dark outline.
 INKS = (0xF, 0x3, 0x9, 0xB)
 OUTLINE = 1
@@ -88,9 +104,9 @@ def apply(rb, base_rom, bomber):
     the grid), or None. Returns the asm symbols + `bomber_colors`."""
     own = bool(bomber and bomber.get("paltab"))
     bomber_colors = bomber["palcount"] if own else 6
-    # the first redrawn character of the grid's first row (with its own palettes) also gets a sprite cell
+    # every redrawn character of the grid (1-8) also gets a sprite cell
     chars = (bomber or {}).get("chars", []) if own else []
-    xch = next((ch for ch in chars if ch["char"] in XCELL_CHARS), None)
+    xchs = [ch for ch in chars if ch["char"] in XCELL_CHARS]
     # palette id of color 0 (0 = the cartridge's ids) and color count of characters 0-8
     chpal, chcol = [0x80 if own else 0] + [0] * 8, [bomber_colors] + [6] * 8
     for ch in chars:
@@ -99,13 +115,34 @@ def apply(rb, base_rom, bomber):
     reg = rb.regions["bulk"]
     with tempfile.TemporaryDirectory() as tmp:
         gpath, cpath = os.path.join(tmp, "glyphs.bin"), os.path.join(tmp, "cell.bin")
-        xpath = os.path.join(tmp, "xcell.bin")
+        nmi, data = [], []
+        for ch in xchs:
+            c, t = ch["char"], xcell_tile(ch["char"])
+            path = os.path.join(tmp, f"xcell{c}.bin").replace("\\", "/")
+            with open(path, "wb") as fh:
+                fh.write(_cell(ch["stand"]))
+            data += [f"xcell_{c}:", f'    incbin "{path}"']
+            vram = 0x6000 + 16 * t
+            nmi += ["    rep #$20", f"    lda.w #xcell_{c}", "    sta $4302", "    lda #$0080", "    sta $4305",
+                    f"    lda.w #${vram:04X}", "    sta $2116", "    sep #$20", "    lda #$01", "    sta $420B",
+                    "    rep #$20", f"    lda.w #${vram + 0x100:04X}", "    sta $2116", "    lda #$0080", "    sta $4305",
+                    "    sep #$20", "    lda #$01", "    sta $420B",
+                    f"    lda.l $7E62C9+{c}", f"    cmp.b #{c + 1}", "    bne +", "    rep #$20"]
+            for a in xcell_blank(c):
+                nmi += [f"    lda.w #${a:04X}", "    sta $2116", "    lda #$211C"] + ["    sta $2118"] * 4
+            nmi += ["    sep #$20", "+"]
+        xnmi, xdata = os.path.join(tmp, "xnmi.asm"), os.path.join(tmp, "xdata.asm")
+        with open(xnmi, "w") as fh:
+            fh.write("\n".join(nmi) + "\n")
+        with open(xdata, "w") as fh:
+            fh.write("\n".join(data) + "\n")
+        on = [0] * 9
+        for ch in xchs:
+            on[ch["char"]] = 1
         with open(gpath, "wb") as fh:
             fh.write(_glyphs())
         with open(cpath, "wb") as fh:
             fh.write(_cell(bomber["stand"]) if own else b"")
-        with open(xpath, "wb") as fh:
-            fh.write(_cell(xch["stand"]) if xch else b"")
         runs, syms = asar.assemble_into(rb.d, ASM, {
             "E4": f"${reg.cursor:06X}", "OFFSEAT": f"${OFF_SEAT:02X}", "BCOLS": str(bomber_colors),
             "PALS": str(bombers.PAL_IDS if own else 0), "OWN": "1" if own else "0",
@@ -113,10 +150,13 @@ def apply(rb, base_rom, bomber):
             "GTILE": f"${GLYPH_TILE:02X}", "GVRAM": f"${GLYPH_VRAM:04X}",
             "CTILE": f"${CELL_TILE:02X}", "CVRAM": f"${0x6000 + 16 * CELL_TILE:04X}",
             "GLYPHS": gpath.replace("\\", "/"), "CELL": cpath.replace("\\", "/"),
-            "XCH": str(xch["char"] if xch else 0), "XPAL": f"${0x80 + xch['pal0'] if xch else 0:02X}",
+            "XN": str(len(xchs)), "XPAL": f"${0x80 + xchs[0]['pal0'] if xchs else 0:02X}",
             "PALN": str(bomber["pal_total"] if own else 0),
-            "XTILE": f"${XCELL_TILE:02X}", "XVRAM": f"${0x6000 + 16 * XCELL_TILE:04X}",
-            "XCELL": xpath.replace("\\", "/"),
+            "XON": ",".join(map(str, on)),
+            "XX": ",".join(f"${xcell_xy(c)[0]:02X}" for c in range(9)),
+            "XY": ",".join(f"${xcell_xy(c)[1]:02X}" for c in range(9)),
+            "XT": ",".join(f"${xcell_tile(c) if c else 0:02X}" for c in range(9)),
+            "XNMI": xnmi.replace("\\", "/"), "XDATA": xdata.replace("\\", "/"),
             "SCLR": f"${(bomber or {}).get('stream_clear', 0):06X}",
             "CHPAL": ",".join(f"${v:02X}" for v in chpal), "CHCOL": ",".join(str(v) for v in chcol)})
     start, end = reg.cursor, syms["end_e4"]
@@ -138,5 +178,5 @@ def apply(rb, base_rom, bomber):
     rb.patch(0xC2069B, bytes.fromhex("7C 46 C1"), ptr("pick_op"), "picker: script op FF 1A nn >= $F0 runs native code")
     rb.patch(0xC0F421, bytes.fromhex("22 E0 04 C0"), bytes([0x22]) + ptr("pick_nmi"), "picker: cursor glyph tiles sent in the NMI")
     syms["bomber_colors"] = bomber_colors
-    syms["xcell"] = xch["char"] if xch else 0
+    syms["xcell"] = [ch["char"] for ch in xchs]
     return syms
