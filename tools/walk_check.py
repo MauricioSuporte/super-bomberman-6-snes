@@ -17,6 +17,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sb6 import bomber  # noqa: E402
+from sb6.features import bombers  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR = os.path.join(ROOT, "assets", "bombers")
@@ -50,8 +51,29 @@ def poses(char):
         own_f = os.path.join(DIR, f"char{char}_anims.txt")
         own = bomber.load_scripts(own_f, br0.cols) if os.path.exists(own_f) else {}
         br = bomber.BomberRom(rom, {**sc, **own}, 0)
-        cells, _, _ = bomber.read_sheet_like(br, os.path.join(DIR, f"char{char}_sb6.png"),
-                                             os.path.join(DIR, "bomber_sb6.png"), br0, c0, n0["cmap"], n0["sb5"])
+        sheet, pal = os.path.join(DIR, f"char{char}_sb6.png"), os.path.join(DIR, f"char{char}_pallete.png")
+        ref_sheet, fixed = os.path.join(DIR, "bomber_sb6.png"), [tuple(c) for c in n0["fixed"]]
+        if bombers._key_column(pal) != bombers._key_column(os.path.join(DIR, "BombermanPallete.png")):
+            # its own key colors: the layout the build gives it (shared by the
+            # characters with the same palette picture when their colors fit)
+            raw, counts, loose = bomber.sheet_pixels(br, sheet, ref_sheet)
+            total, lall = dict(counts), set(loose)
+            for c in range(1, 10):
+                s2, p2 = os.path.join(DIR, f"char{c}_sb6.png"), os.path.join(DIR, f"char{c}_pallete.png")
+                if c != char and os.path.exists(s2) and os.path.exists(p2) and open(p2, "rb").read() == open(pal, "rb").read():
+                    o2 = os.path.join(DIR, f"char{c}_anims.txt")
+                    b2 = bomber.BomberRom(rom, {**sc, **(bomber.load_scripts(o2, br0.cols) if os.path.exists(o2) else {})}, 0)
+                    _, n2, l2 = bomber.sheet_pixels(b2, s2, ref_sheet)
+                    lall |= l2
+                    for k, n in n2.items():
+                        total[k] = total.get(k, 0) + n
+            try:
+                cmap, pals, _, _ = bomber.own_layout(total, pal, fixed, lall)
+            except ValueError:
+                cmap, pals, _, _ = bomber.own_layout(counts, pal, fixed, loose, merge=True)
+            cells = bomber.own_cells(raw, cmap)
+        else:
+            cells, _, _ = bomber.read_sheet_like(br, sheet, ref_sheet, br0, c0, n0["cmap"], n0["sb5"])
     ref = {}
     for a, maps in br.poses():
         for k, m in enumerate(maps):

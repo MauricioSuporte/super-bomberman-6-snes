@@ -12,12 +12,24 @@ as a recording, so the title streams it instead:
   * Any other non-SFX sound request first restarts Hudson's driver at $0800
     with an empty IPL upload (as $C0:0E31 does after a set load), then runs
     normally, so leaving the title restores the original game audio.
-  * Menu SFX are silent while the stream plays (the stream owns port 0).
+  * The title intro has its own short stream (the pan's sound and the four
+    character drops, mixed on the intro's timeline) before the music.
+
+Menu SFX (cursor move, accept, back: sound API group 2, ids 1, 4, 3) are the
+SB6 fan game's recordings, in every menu:
+
+  * three BRR samples live in ARAM $B900-$DCFF with directory entries
+    $39-$3B, uploaded when the title stream starts or when a song that leaves
+    that area alone is loaded (`song_table`: its samples end below $B900 and
+    its echo buffer starts at $DD00 or above);
+  * with them in place, Hudson's definitions of the three SFX (common set 1,
+    ARAM $45B0...) are overwritten with "instrument, one long note"; a song
+    that needs the area puts SB5's definitions back (the old beeps);
+  * the stream driver plays the same samples from its own scripts.
 """
 import hashlib
-import json
 import os
-import wave
+import struct
 
 import numpy as np
 
@@ -32,28 +44,71 @@ RATE = 16000              # pitch $0800
 CHUNK = 162               # bytes: 18 BRR blocks
 CHUNK_SAMPLES = 18 * 16
 ARAM_BASE = 0x7000        # driver page; ring right after it
-RING_LIMIT = 0xCFE0       # SB5's title song area ends at $CFDF
+SFX_BASE = 0xB900         # SB6 menu SFX samples (ARAM), up to the echo buffer
+SFX_END = 0xDD00          # echo buffer of a song with EDL 4
+RING_LIMIT = SFX_BASE     # the ring stays below them (SB5's title song area ends at $CFDF)
 MAX_SRC, MAX_SLOTS = 4, 8 # SFX samples / scripts the driver holds
 PREFILL = 8               # chunks uploaded with the driver (144 ms)
 PEAK = 0.89               # -1 dBFS before BRR
 VOL, MVOL = 0x70, 0x60     # MVOL as Hudson uses on the SB5 title; one voice carries the whole mix
+# Frames from the end of the driver upload (op FF 1A FB in the title's load
+# script) to the first frame of the pan, measured in Mesen (tools note in
+# docs/ROM_MAP.md); the prefill's 8 silent chunks are part of that wait.
+PAN_LEAD_FRAMES = 14
+PAN_REGION = "title_fc"   # one bank for the pan sound's chunks
+# Menu SFX: Hudson group-2 id, recording, seconds kept, (octave, note) of the
+# one note Hudson plays and the S-DSP pitch it gives with the tuning entry of
+# SB5's own SFX sample (read from voice 0 in Mesen); the recording is
+# resampled to that pitch, so each sound has its own rate (11.9 / 10 / 7.9 kHz).
+MENU_SFX = [
+    (1, "menu_move.wav", 0.20, (2, 7)),
+    (4, "menu_confirm.wav", 0.80, (2, 4)),
+    (3, "menu_back.wav", 0.72, (1, 12)),
+]
+SFX_PITCH = {(2, 7): 0x05E9, (2, 4): 0x04FA, (1, 12): 0x03F3}
+SFX_SRCN = 0x39           # directory entries $39-$3B ($FDE4, tuning $FEE4): no set or song uses them
+SFX_INST = 28             # instruments 28-30 ($4540): after the world sets' 4-27
+SFX_TICK_MS = 16.0        # Hudson's SFX tick
+SFX_VOL, SFX_PAN = 0x4F, 0x0F
+STREAM_SFX_VOL = 0x7F     # the same samples on the stream driver's voice 0
+SET_TABLE, SONG_TABLE = 0x85F69B, 0xDAC2E0
+SAMPLE_PTRS, SAMPLE_SIZES = 0xDAD042, 0xDAD1BF
+N_SONGS = 33
+RTL_C0 = 0xC01170         # an RTL in bank $C0 (to call its JSR routines)
 HUDSON_LOADER = 0xDF2B3A  # ROM image of ARAM $0FF0 (Hudson's loader); $1041 = RET
 BANK_LIMIT = 0x10000 - CHUNK  # the feeder moves to the next bank past this offset
 
 
-def load_pcm(path):
+def read_wav(path):
+    """(rate, mono float samples in -1..1); PCM or float WAV."""
+    import warnings
+    from scipy.io import wavfile
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        rate, x = wavfile.read(path)
+    scale = 1.0 if x.dtype.kind == "f" else float(1 << (8 * x.dtype.itemsize - 1))
+    x = x.astype(np.float64) / scale
+    if x.ndim > 1:
+        x = x.mean(1)
+    return rate, x
+
+
+def resampled(x, rate, to):
+    from fractions import Fraction
     from scipy.signal import resample_poly
-    with wave.open(path) as w:
-        if w.getsampwidth() != 2:
-            raise ValueError(f"{path}: need 16-bit PCM")
-        ch, rate = w.getnchannels(), w.getframerate()
-        x = np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(np.float64)
-    x = x.reshape(-1, ch).mean(1)
-    g = np.gcd(RATE, rate)
-    y = resample_poly(x, RATE // g, rate // g)
-    y *= PEAK * 32767 / max(1.0, np.abs(y).max())
-    n = len(y) // CHUNK_SAMPLES * CHUNK_SAMPLES
-    return np.rint(y[:n]).astype(np.int64)
+    fr = Fraction(to / rate).limit_denominator(2000)
+    return resample_poly(x, fr.numerator, fr.denominator)
+
+
+def to_pcm(y):
+    y = y * (PEAK * 32767 / max(1e-9, np.abs(y).max()))
+    return np.rint(y).astype(np.int64)
+
+
+def load_pcm(path):
+    rate, x = read_wav(path)
+    y = resampled(x, rate, RATE)
+    return to_pcm(y[:len(y) // CHUNK_SAMPLES * CHUNK_SAMPLES])
 
 
 def encoded_stream(wav, cache_dir):
@@ -72,6 +127,169 @@ def encoded_stream(wav, cache_dir):
     return data
 
 
+def encoded_pcm(pcm, cache_dir, name):
+    h = hashlib.sha1(pcm.tobytes())
+    h.update(open(brr.__file__, "rb").read())
+    cache = os.path.join(cache_dir, f"{name}_{h.hexdigest()[:16]}.brr")
+    if os.path.isfile(cache):
+        with open(cache, "rb") as fh:
+            return fh.read()
+    data = brr.encode(pcm)
+    os.makedirs(cache_dir, exist_ok=True)
+    with open(cache, "wb") as fh:
+        fh.write(data)
+    return data
+
+
+def intro_stream(pan_wav, drop_wav, drop_frames, cache_dir):
+    """The title intro's sounds as one chunk run: PAN_LEAD_FRAMES of silence
+    (the stream starts while the screen is still black), the pan's sound with
+    the character drops mixed in at their frames (counted from the first frame
+    of the pan), and one silent chunk that the feeder repeats until the music
+    replaces the stream."""
+    rate, x = read_wav(pan_wav)
+    mix = resampled(x, rate, RATE)
+    if drop_frames:
+        rate, x = read_wav(drop_wav)
+        d = resampled(x, rate, RATE)
+        last = round(max(drop_frames) * RATE / 60.0988) + len(d)
+        mix = np.concatenate([mix, np.zeros(max(0, last - len(mix)))])
+        for f in drop_frames:
+            o = round(f * RATE / 60.0988)
+            mix[o:o + len(d)] += d
+    fade = RATE // 50
+    mix[-fade:] *= np.linspace(1, 0, fade)
+    pcm = to_pcm(mix)
+    lead = max(0, round(PAN_LEAD_FRAMES * RATE / 60.0988) - PREFILL * CHUNK_SAMPLES)
+    total = (lead + len(pcm) + CHUNK_SAMPLES - 1) // CHUNK_SAMPLES * CHUNK_SAMPLES + CHUNK_SAMPLES
+    out = np.zeros(total, dtype=np.int64)
+    out[lead:lead + len(pcm)] = pcm
+    return encoded_pcm(out, cache_dir, "title_intro")
+
+
+def menu_samples(sound_dir, cache_dir):
+    """[(id, BRR bytes ending in an END block, pitch, octave, note, ticks)]."""
+    out = []
+    for sid, name, seconds, key in MENU_SFX:
+        pitch = SFX_PITCH[key]
+        rate, x = read_wav(os.path.join(sound_dir, name))
+        loud = np.flatnonzero(np.abs(x) > 0.003 * np.abs(x).max())
+        x = x[loud[0]:loud[0] + round(seconds * rate)]
+        to = pitch * 32000 / 4096
+        y = resampled(x, rate, to)
+        fade = min(len(y), round(to * 0.06))
+        y[-fade:] *= np.linspace(1, 0, fade) ** 2
+        y = np.concatenate([y, np.zeros(-len(y) % 16)])
+        data = bytearray(encoded_pcm(to_pcm(y), cache_dir, f"sfx_{sid}"))
+        data[-9] |= 1                       # END without loop: the voice stops by itself
+        ticks = int(np.ceil(len(y) / to * 1000 / SFX_TICK_MS)) + 2
+        if ticks > 255:
+            raise ValueError(f"{name}: too long for one SFX note")
+        out.append((sid, bytes(data), pitch, key[0], key[1], ticks))
+    return out
+
+
+def _blocks(rom, addr):
+    """Hudson upload list at a ROM address: [(ARAM address, data)]."""
+    out = []
+    while True:
+        ln, dest = struct.unpack_from("<HH", rom, off(addr))
+        if ln == 0:
+            return out
+        out.append((dest, bytes(rom[off(addr) + 4:off(addr) + 4 + ln])))
+        addr += 4 + ln
+
+
+def _list(blocks, tail=b""):
+    return b"".join(struct.pack("<HH", len(d), a) + d for a, d in blocks) + b"\x00\x00" + tail
+
+
+def song_table(rom):
+    """One byte per song: 1 = the SB6 menu SFX samples survive while it plays
+    (its samples end below SFX_BASE and its header sets an echo delay <= 4,
+    so the echo buffer starts at $DD00 or above); 2 = its own samples cover
+    the SFX tables ($4400-$46FF: the boot jingle, loaded before any set), so
+    SB5's definitions must not be written back over them."""
+    safe = bytearray(N_SONGS + 1)
+    for song in range(N_SONGS):
+        rec = 0xDA0000 | struct.unpack_from("<H", rom, off(SONG_TABLE + 2 * song))[0]
+        end, a = struct.unpack_from("<H", rom, off(rec + 2))[0], rec + 4
+        start = end
+        while rom[off(a)] != 0xFF:
+            end += struct.unpack_from("<H", rom, off(SAMPLE_SIZES + 2 * rom[off(a)]))[0]
+            a += 1
+        if start < 0x4700 and end > 0x4400:
+            safe[song] = 2
+            continue
+        t = off(SET_TABLE + 3 * (0x27 + song))
+        p = int.from_bytes(rom[t:t + 3], "little")
+        if p >> 16 < 0xC0:
+            continue
+        seqs = [b for b in _blocks(rom, p) if b[0] == 0x3000]
+        if not seqs:
+            continue
+        base, data = seqs[0]
+        # header ops (driver $1398): 00 end, 01 mask + track pointers, 02 n, 03 n + 4n, 04 n + 4n,
+        # 05/06/09 n + 2n, 07 echo (0 + volumes, EDL, feedback, FIR, flags; else defaults: EDL 1), 08 n
+        i, edl = struct.unpack_from("<H", data, 2)[0] - base, None
+        try:
+            while data[i]:
+                op, n = data[i], data[i + 1]
+                if op == 1:
+                    i += 2 + 2 * bin(n).count("1")
+                elif op in (2, 8):
+                    i += 2
+                elif op in (3, 4):
+                    i += 2 + 4 * n
+                elif op in (5, 6, 9):
+                    i += 2 + 2 * n
+                elif op == 7:
+                    edl = data[i + 4] & 15 if n == 0 else 1
+                    i += 8 if n == 0 else 2
+                else:
+                    raise IndexError
+        except IndexError:
+            continue
+        if edl is not None and edl <= 4 and end <= SFX_BASE:
+            safe[song] = 1
+    return bytes(safe)
+
+
+def menu_sfx_lists(rom, samples):
+    """Hudson upload lists: the samples with their directory and tuning
+    entries, the SB6 definitions of the three SFX, SB5's own definitions."""
+    set1 = _blocks(rom, int.from_bytes(rom[off(SET_TABLE + 3):off(SET_TABLE + 6)], "little"))
+    by_addr = {a: d for a, d in set1}
+    table, inst, _ = struct.unpack("<HHH", by_addr[0x4400])
+    ptrs = [p for p, in struct.iter_unpack("<H", by_addr[table]) if p]
+    seq_base, seq = next((a, d) for a, d in set1 if a <= ptrs[0] < a + len(d))
+    if inst + 4 * (SFX_INST + len(samples)) > 0x4550 or by_addr[0xFE80][:4] != bytes.fromhex("04 0C 00 CE"):
+        raise RuntimeError("Hudson's common SFX set is not laid out as expected")
+    tuning = by_addr[0xFE80][:4]
+    blob, dirs, new, orig, instruments = bytearray(), bytearray(), [], [], bytearray()
+    for k, (sid, data, pitch, octave, note, ticks) in enumerate(samples):
+        start = SFX_BASE + len(blob)
+        blob += data
+        dirs += struct.pack("<HH", start, start)
+        instruments += bytes([SFX_SRCN + k, 0xFF, 0xE0, 0xA0])
+        p = ptrs[sid - 1]
+        room = min([q for q in ptrs if q > p] + [seq_base + len(seq)]) - p
+        d = bytes([0x01, (p + 3) & 0xFF, (p + 3) >> 8,       # one track on SFX channel 0
+                   0xD1, 0x00,                               # explicit note lengths
+                   0xDD, SFX_INST + k, 0xD2, octave, 0xD8, SFX_PAN, 0xD6, SFX_VOL,
+                   note << 4, ticks, 0xD0])
+        if len(d) > room:
+            raise RuntimeError("SFX definition does not fit over SB5's")
+        new.append((p, d))
+        orig.append((p, seq[p - seq_base:p - seq_base + len(d)]))
+    if SFX_BASE + len(blob) > SFX_END:
+        raise RuntimeError(f"menu SFX samples: {len(blob)} bytes, {SFX_END - SFX_BASE} fit")
+    l_samples = _list([(SFX_BASE, bytes(blob)), (0xFD00 + 4 * SFX_SRCN, bytes(dirs)),
+                       (0xFE00 + 4 * SFX_SRCN, tuning * len(samples))])
+    l_new = _list([(inst + 4 * SFX_INST, bytes(instruments))] + new)
+    return l_samples, l_new, _list(orig), len(blob)
+
+
 def chunk_positions(first_bank, count):
     """(bank, offset) of chunks 0..count (count = the position after the last)."""
     pos, bank, o = [], first_bank, 0
@@ -83,45 +301,23 @@ def chunk_positions(first_bank, count):
     return pos
 
 
-def sfx_tables(sfx_json, cache_dir):
+def sfx_tables(samples, cache_dir):
     """Builds the driver's SFX scripts and the CPU's id -> slot table.
 
     Script format (asm/spc/stream.asm): pairs (DSP reg, value); $FE n = wait
-    n * 4 ms; $FF = end. Hudson's sample numbers become indexes in the
-    driver's directory; KOF is held until the next KON (the DSP polls KON/KOF
-    every 64 us, faster rewrites could be missed)."""
-    with open(sfx_json) as fh:
-        doc = json.load(fh)
-    ids = sorted(int(k) for k in doc["sfx"])
-    if len(ids) > MAX_SLOTS or max(ids) >= 32:
-        raise ValueError("too many SFX or id >= 32")
+    n * 4 ms; $FF = end. A script keys voice 0 off, waits, then sets the
+    sample (an index in the driver's directory, copied from Hudson's entry),
+    ADSR, pitch and volume and keys it on; the sample ends by itself."""
+    if len(samples) > min(MAX_SLOTS, MAX_SRC):
+        raise ValueError("too many SFX")
     srcs, scripts = [], []
-    for sid in ids:
-        out, last = bytearray(), {}
-        for frame in doc["sfx"][str(sid)]:
-            for reg, val in frame["writes"]:
-                if reg == 0x5C:
-                    out += bytes([0x5C, 0x01])
-                    continue
-                if reg == 0x4C:
-                    out += bytes([0x5C, 0x00, 0x4C, 0x01])
-                    continue
-                if reg == 0x04:
-                    if val not in srcs:
-                        srcs.append(val)
-                    val = 1 + srcs.index(val)
-                if last.get(reg) != val:
-                    out += bytes([reg, val])
-                    last[reg] = val
-            wait = frame["wait"]
-            while wait:
-                step = min(wait, 0x7F)
-                out += bytes([0xFE, step])
-                wait -= step
-        out.append(0xFF)
-        scripts.append(bytes(out))
-    if len(srcs) > MAX_SRC:
-        raise ValueError("SFX use too many samples")
+    for k, (sid, _, pitch, _, _, _) in enumerate(samples):
+        srcs.append(SFX_SRCN + k)
+        scripts.append(bytes([0x5C, 0x01, 0xFE, 0x02,
+                              0x04, k + 1, 0x05, 0xFF, 0x06, 0xE0, 0x02, pitch & 0xFF, 0x03, pitch >> 8,
+                              0x00, STREAM_SFX_VOL, 0x01, STREAM_SFX_VOL, 0x5C, 0x00, 0x4C, 0x01,
+                              0xFE, 0x02, 0xFF]))
+    ids = [smp[0] for smp in samples]
     head = bytes([len(srcs)]) + bytes(srcs).ljust(MAX_SRC, b"\x00")
     offsets, pos = bytearray(), len(head) + 2 * MAX_SLOTS
     for sc in scripts:
@@ -145,11 +341,19 @@ def _h(v, digits):
     return f"${v:0{digits}X}"
 
 
-def apply(rb, wav, sfx_json, cache_dir, first_bank=0xE5):
+def apply(rb, wav, sound_dir, cache_dir, first_bank=0xE5, drop_frames=()):
+    """sound_dir holds title_pan.wav, title_drop.wav and the menu SFX;
+    drop_frames = frames of the intro (from the pan's first) where a wave of
+    characters starts to fall."""
     # Hudson's loader (uploaded at boot) must hold the RET the driver hooks.
     o = off(HUDSON_LOADER)
     if rb.d[o + 3:o + 9] != bytes.fromhex("8F AA F4 8F BB F5") or rb.d[o + 0x51:o + 0x54] != bytes.fromhex("6F CD 01"):
         raise RuntimeError("Hudson loader not where expected (ARAM $0FF0 image)")
+    if rb.d[off(RTL_C0)] != 0x6B:
+        raise RuntimeError("no RTL where the bank $C0 calls expect it")
+    samples = menu_samples(sound_dir, cache_dir)
+    l_samples, l_new, l_orig, sample_bytes = menu_sfx_lists(rb.d, samples)
+    safe = song_table(rb.d)
     stream = encoded_stream(wav, cache_dir)
     n = len(stream) // CHUNK
     pos = chunk_positions(first_bank, n)
@@ -167,7 +371,7 @@ def apply(rb, wav, sfx_json, cache_dir, first_bank=0xE5):
     # Driver image uploaded to ARAM $7000: driver pages + first chunks. The
     # driver is sized first (asar pass with a large area), then the ring
     # takes every whole chunk up to the end of the title song area.
-    sfx_bin, sfx_slots, sfx_ids = sfx_tables(sfx_json, cache_dir)
+    sfx_bin, sfx_slots, sfx_ids = sfx_tables(samples, cache_dir)
     spc_defs = dict(BASE=_h(ARAM_BASE, 4), PREFILL=PREFILL, VOL=_h(VOL, 2), MVOL=_h(MVOL, 2),
                     SFX_BIN=sfx_bin.replace("\\", "/"))
     _, syms = asar.assemble_blob(ASM_SPC, 0x2000, dict(spc_defs, DRIVER_SIZE="$1000", CHUNKS=1))
@@ -175,16 +379,37 @@ def apply(rb, wav, sfx_json, cache_dir, first_bank=0xE5):
     ring_chunks = (RING_LIMIT - ARAM_BASE - driver_size) // CHUNK
     driver, _ = asar.assemble_blob(ASM_SPC, driver_size,
                                    dict(spc_defs, DRIVER_SIZE=_h(driver_size, 4), CHUNKS=ring_chunks))
-    blob = driver + stream[:PREFILL * CHUNK]
-    blob_addr = rb.alloc("bulk", blob, "title music: SPC stream driver + prefill (ARAM $7000)")
+    # The prefill is silence: the stream that follows is the music or the intro's pan sound.
+    silent = brr.encode(np.zeros(CHUNK_SAMPLES, dtype=np.int64))
+    blob = driver + silent * PREFILL
+    pan = intro_stream(os.path.join(sound_dir, "title_pan.wav"), os.path.join(sound_dir, "title_drop.wav"),
+                       list(drop_frames), cache_dir)
+    if pan[-CHUNK:] != silent:
+        raise RuntimeError("the intro sounds must end in a silent chunk")
+    pan_addr = rb.alloc(PAN_REGION, pan, "title intro: pan + character drop sounds, BRR chunks (the last one is silence)")
+    if pan_addr & 0xFFFF or len(pan) > BANK_LIMIT:
+        raise RuntimeError("the intro sounds must start their bank and fit in it")
+    entry = ARAM_BASE + 4
+    l_stream = _list([(ARAM_BASE, blob), (0x1041, bytes([0x5F, entry & 0xFF, entry >> 8]))],
+                     struct.pack("<H", entry))
+    blob_addr = rb.alloc("bulk", l_stream, "title music: upload list = SPC stream driver + prefill (ARAM $7000), "
+                         "JMP entry over the loader's RET")
+    samples_addr = rb.alloc("bulk", l_samples, "menu SFX: upload list = 3 BRR samples (ARAM $B900), directory "
+                            "and tuning entries $39-$3B")
+    new_addr = rb.alloc("bulk", l_new, "menu SFX: upload list = instruments 28-30 and SB6 definitions of SFX 1, 4, 3")
+    orig_addr = rb.alloc("bulk", l_orig, "menu SFX: upload list = SB5's definitions of SFX 1, 4, 3")
+    safe_addr = rb.alloc("bulk", safe, "menu SFX: songs that leave the samples alone (1 byte each, then 0)")
 
     # CPU code.
     region = rb.regions["bulk"]
     code_addr = region.cursor
     cpu_defs = dict(CODE=_h(code_addr, 6), CODE_END=_h(region.end, 6),
-                    BASE=_h(ARAM_BASE, 4), ENTRY=_h(ARAM_BASE + 4, 4),
-                    BLOB=_h(blob_addr, 6), BLOB_SIZE=_h(len(blob), 4),
-                    START_BANK=_h(pos[PREFILL][0], 2), START_OFF=_h(pos[PREFILL][1], 4),
+                    ENTRY=_h(entry, 4), L_STREAM=_h(blob_addr, 6), L_SAMPLES=_h(samples_addr, 6),
+                    L_NEW=_h(new_addr, 6), L_ORIG=_h(orig_addr, 6), SFX_SAFE=_h(safe_addr, 6),
+                    NSONGS=N_SONGS, SONG_TABLE=_h(SONG_TABLE, 6), RTL_C0=_h(RTL_C0, 6),
+                    START_BANK=_h(pos[0][0], 2), START_OFF=_h(pos[0][1], 4),
+                    PRE_BANK=_h(pan_addr >> 16, 2), PRE_OFF=_h(0, 4), PRE_END_OFF=_h(len(pan), 4),
+                    PRE_LOOP_OFF=_h(len(pan) - CHUNK, 4),
                     LOOP_BANK=_h(pos[0][0], 2), LOOP_OFF=_h(pos[0][1], 4),
                     END_BANK=_h(pos[n][0], 2), END_OFF=_h(pos[n][1], 4),
                     SFX_SLOTS=sfx_slots.replace("\\", "/"))
@@ -206,6 +431,15 @@ def apply(rb, wav, sfx_json, cache_dir, first_bank=0xE5):
              "sound API: title music stream hook")
     rb.patch(0xC00B2C, bytes.fromhex("AD BF 03 D0 04"), jml(syms["loop_hook"]) + b"\xEA",
              "main loop: title music feeder")
+
+    def jsl(a):
+        return bytes([0x22, a & 0xFF, a >> 8 & 0xFF, a >> 16])
+
+    rb.patch(0xC00E58, bytes.fromhex("20 62 0F 20 35 0F"), jsl(syms["set_hook"]) + b"\xEA\xEA",
+             "sample set upload: SB6 menu SFX definitions again after it")
+    rb.patch(0xC00F0A, bytes.fromhex("20 35 0F 9C D1 03"), jsl(syms["song_hook"]) + b"\xEA\xEA",
+             "song upload: SB6 menu SFX samples and definitions when the song leaves them room")
     seconds = n * CHUNK_SAMPLES / RATE
     return dict(seconds=seconds, bytes=len(stream), banks=banks, code=len(code), driver=len(driver),
-                ring=ring_chunks, sfx=sfx_ids)
+                ring=ring_chunks, sfx=sfx_ids, pre_start=syms["pre_start"], pan=len(pan),
+                sfx_bytes=sample_bytes, safe=[i for i in range(N_SONGS) if safe[i] == 1])

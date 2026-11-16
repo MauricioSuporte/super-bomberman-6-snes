@@ -7,6 +7,8 @@ script subroutine from the file confirmation instead and saves the script
 variables around it.
 """
 import os
+
+import numpy as np
 import tempfile
 
 from .. import asar
@@ -75,6 +77,13 @@ def _glyphs():
 def _cell(stand):
     """The pose (indices, one 64x64 cell) as two 16x16 sprites, one above the
     other, feet on the last row: tile rows CELL_TILE.. and CELL_TILE + $10.."""
+    stand = stand.copy()
+    for _ in range(48):         # a pose wider than the cell (a tool in the hand) loses its thinnest edge columns
+        ys, xs = stand.nonzero()
+        if xs.max() - xs.min() + 1 <= 16:
+            break
+        left, right = int((xs == xs.min()).sum()), int((xs == xs.max()).sum())
+        stand[:, xs.min() if left <= right else xs.max()] = 0
     ys, xs = stand.nonzero()
     w, h = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
     if w > 16 or h > 32:
@@ -99,7 +108,14 @@ def _cell(stand):
             tile(0, 1) + tile(1, 1) + tile(0, 3) + tile(1, 3))
 
 
-def apply(rb, base_rom, bomber):
+def _recolor(stand, own, shown):
+    """The pose (indices of palette `own`) with the nearest colors of palette `shown`."""
+    a, b = np.array(own, dtype=np.int32), np.array(shown, dtype=np.int32)
+    near = np.array([0] + [int(((b - c) ** 2).sum(-1).argmin()) + 1 for c in a], dtype=np.uint8)
+    return near[stand]
+
+
+def apply(rb, base_rom, bomber, title=None):
     """`bomber`: result of features/bombers.py (its palettes and the pose for
     the grid), or None. Returns the asm symbols + `bomber_colors`."""
     own = bool(bomber and bomber.get("paltab"))
@@ -108,10 +124,20 @@ def apply(rb, base_rom, bomber):
     chars = (bomber or {}).get("chars", []) if own else []
     xchs = [ch for ch in chars if ch["char"] in XCELL_CHARS]
     # palette id of color 0 (0 = the cartridge's ids) and color count of characters 0-8
-    chpal, chcol = [0x80 if own else 0] + [0] * 8, [bomber_colors] + [6] * 8
+    own_id = bomber["own_id"] if own else 0x80
+    chpal, chcol = [own_id if own else 0] + [0] * 8, [bomber_colors] + [6] * 8
     for ch in chars:
         if ch["char"] <= 8:
-            chpal[ch["char"]], chcol[ch["char"]] = 0x80 + ch["pal0"], ch["colors"]
+            chpal[ch["char"]], chcol[ch["char"]] = own_id + ch["pal0"], ch["colors"]
+    # the cells share OBJ palette 7 = Bomberman's first color. A character
+    # painted with his color layout uses its own indices there; one with its
+    # own layout is drawn with the nearest colors (cell_7), and the cell a seat
+    # recolors (palette 4, the character's own colors) gets its real indices
+    # (cell_4), swapped in by the NMI (xswap)
+    for ch in xchs:
+        ch["cell_4"] = _cell(ch["stand"])
+        ch["cell_7"] = (_cell(_recolor(ch["stand"], ch["first"], bomber["first"]))
+                        if ch["notes"].get("own") else ch["cell_4"])
     reg = rb.regions["bulk"]
     with tempfile.TemporaryDirectory() as tmp:
         gpath, cpath = os.path.join(tmp, "glyphs.bin"), os.path.join(tmp, "cell.bin")
@@ -120,10 +146,15 @@ def apply(rb, base_rom, bomber):
             c, t = ch["char"], xcell_tile(ch["char"])
             path = os.path.join(tmp, f"xcell{c}.bin").replace("\\", "/")
             with open(path, "wb") as fh:
-                fh.write(_cell(ch["stand"]))
+                fh.write(ch["cell_7"])
             data += [f"xcell_{c}:", f'    incbin "{path}"']
+            if ch["cell_4"] != ch["cell_7"]:
+                with open(path + "4", "wb") as fh:
+                    fh.write(ch["cell_4"])
+                data += [f"xcell4_{c}:", f'    incbin "{path}4"']
             vram = 0x6000 + 16 * t
-            nmi += ["    rep #$20", f"    lda.w #xcell_{c}", "    sta $4302", "    lda #$0080", "    sta $4305",
+            nmi += ["    rep #$20", f"    lda.w #xcell_{c}"]
+            nmi += ["    sta $4302", "    lda #$0080", "    sta $4305",
                     f"    lda.w #${vram:04X}", "    sta $2116", "    sep #$20", "    lda #$01", "    sta $420B",
                     "    rep #$20", f"    lda.w #${vram + 0x100:04X}", "    sta $2116", "    lda #$0080", "    sta $4305",
                     "    sep #$20", "    lda #$01", "    sta $420B",
@@ -131,7 +162,34 @@ def apply(rb, base_rom, bomber):
             for a in xcell_blank(c):
                 nmi += [f"    lda.w #${a:04X}", "    sta $2116", "    lda #$211C"] + ["    sta $2118"] * 4
             nmi += ["    sep #$20", "+"]
+        # every frame (M 8-bit): the cell that took OBJ palette 4 gets its own
+        # indices, the one that gave it back the palette 7 ones
+        swap = [ch for ch in xchs if ch["cell_4"] != ch["cell_7"]]
+        # (one cell per NMI, and only while the game's VRAM queue is empty: the
+        # portrait and the label it sends when the cursor moves fill the vblank)
+        sw = ["    lda.l !p4char", "    cmp.l !p4tile", "    bne +", "    brl .xsw_done",
+              "+   rep #$20", "    lda.l $7E0355", "    cmp.l $7E0357", "    sep #$20", "    beq +",
+              "    brl .xsw_done", "+   lda.l !p4tile"]
+        for ch in swap:
+            c = ch["char"]
+            sw += [f"    cmp.b #{c}", "    bne +", "    rep #$20", f"    lda.w #xcell_{c}", "    sta $4302",
+                   f"    lda.w #${0x6000 + 16 * xcell_tile(c):04X}", "    jsr xs_dma", "    sep #$20",
+                   "    lda #$FE", "    sta.l !p4tile", "    brl .xsw_done", "+"]
+        sw += ["    lda.l !p4char", "    sta.l !p4tile"]
+        for ch in swap:
+            c = ch["char"]
+            sw += [f"    cmp.b #{c}", "    bne +", "    rep #$20", f"    lda.w #xcell4_{c}", "    sta $4302",
+                   f"    lda.w #${0x6000 + 16 * xcell_tile(c):04X}", "    jsr xs_dma", "    sep #$20", "+"]
+        sw += [".xsw_done:"]
+        data += ["; $4302 = source, A (16-bit) = VRAM: a cell's 4 + 4 tiles", "xs_dma:",
+                 "    sta $2116", "    pha", "    sep #$20", "    lda #$80", "    sta $2115", "    rep #$20", "    lda #$1801", "    sta $4300", "    lda #$0080", "    sta $4305",
+                 "    sep #$20", "    lda.b #xs_dma>>16", "    sta $4304", "    lda #$01", "    sta $420B",
+                 "    rep #$20", "    pla", "    clc", "    adc #$0100", "    sta $2116", "    lda #$0080",
+                 "    sta $4305", "    sep #$20", "    lda #$01", "    sta $420B", "    rep #$20", "    rts"]
         xnmi, xdata = os.path.join(tmp, "xnmi.asm"), os.path.join(tmp, "xdata.asm")
+        xswap = os.path.join(tmp, "xswap.asm")
+        with open(xswap, "w") as fh:
+            fh.write("\n".join(sw) + "\n")
         with open(xnmi, "w") as fh:
             fh.write("\n".join(nmi) + "\n")
         with open(xdata, "w") as fh:
@@ -150,14 +208,17 @@ def apply(rb, base_rom, bomber):
             "GTILE": f"${GLYPH_TILE:02X}", "GVRAM": f"${GLYPH_VRAM:04X}",
             "CTILE": f"${CELL_TILE:02X}", "CVRAM": f"${0x6000 + 16 * CELL_TILE:04X}",
             "GLYPHS": gpath.replace("\\", "/"), "CELL": cpath.replace("\\", "/"),
-            "XN": str(len(xchs)), "XPAL": f"${0x80 + xchs[0]['pal0'] if xchs else 0:02X}",
+            "XN": str(len(xchs)), "XPAL": f"${own_id:02X}", "OWNID": f"${own_id:02X}",
             "PALN": str(bomber["pal_total"] if own else 0),
             "XON": ",".join(map(str, on)),
             "XX": ",".join(f"${xcell_xy(c)[0]:02X}" for c in range(9)),
             "XY": ",".join(f"${xcell_xy(c)[1]:02X}" for c in range(9)),
             "XT": ",".join(f"${xcell_tile(c) if c else 0:02X}" for c in range(9)),
             "XNMI": xnmi.replace("\\", "/"), "XDATA": xdata.replace("\\", "/"),
+            "XSWAP": xswap.replace("\\", "/"),
             "SCLR": f"${(bomber or {}).get('stream_clear', 0):06X}",
+            "TITLE_OP": f"${(title or {}).get('title_op', 0):06X}",
+            "TITLE_NMI": f"${(title or {}).get('title_nmi', 0):06X}",
             "CHPAL": ",".join(f"${v:02X}" for v in chpal), "CHCOL": ",".join(str(v) for v in chcol)})
     start, end = reg.cursor, syms["end_e4"]
     out = bytearray(rb.d)

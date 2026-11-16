@@ -15,6 +15,7 @@ The pose sheet shows every pose (mapping) of every animation assembled in a
 64x64 cell. `convert()` cuts edited cells back into 16x16/8x8 pieces, reuses
 equal (or mirrored) pieces, and packs animations into 1 KB strips.
 """
+import os
 import struct
 
 import numpy as np
@@ -419,7 +420,7 @@ def read_sheet_recolor(br, path, palette_path):
     used = sorted({e for e in entry.values() if e[0] == "row"}) + sorted({e for e in entry.values() if e[0] == "fixed"})
     if len(used) > 15:
         lines = [f"{'linha %d da paleta' % e[1] if e[0] == 'row' else 'cor fixa %02X%02X%02X' % e[1]}: "
-                 f"{sum(n for c, n in counts.items() if entry[c] == e)} px" for e in used]
+                 f"{sum(n for c, n in counts.items() if entry.get(c) == e)} px" for e in used]
         raise ValueError(f"a folha usa {len(used)} cores; um sprite de SNES tem 15:\n  " + "\n  ".join(lines))
     index = {e: i + 1 for i, e in enumerate(used)}
 
@@ -494,6 +495,132 @@ def read_sheet_like(br, path, ref, ref_br, ref_cells, cmap, sb5=None):
         raise ValueError("cores que nao estao na paleta do Bomberman (BombermanPallete.png / bomber_sb6.png): "
                          + ", ".join("%02X%02X%02X (%d px)" % (c + (n,)) for c, n in sorted(unknown.items())[:12]))
     return cells, edited, dict(edited=len(edited), snapped=snapped)
+
+
+def sheet_pixels(br, path, ref=None):
+    """Played cells of a sheet as painted: ({(animation, mapping): (rgb, solid)},
+    {color: pixels}, colors of the cells still equal to the sheet `ref`
+    (Bomberman's: they may hold SB5 art in its old colors))."""
+    im = Image.open(path).convert("RGBA")
+    if im.size != sheet_size(br.cols):
+        raise ValueError(f"{path}: size {im.size}, expected {sheet_size(br.cols)} (do not resize or crop the sheet)")
+    a = np.asarray(im, dtype=np.int32)
+    r = np.asarray(Image.open(ref).convert("RGBA"), dtype=np.int32) if ref else None
+    raw, counts, loose = {}, {}, set()
+    for i, (an, maps) in enumerate(br.poses()):
+        for col, m in enumerate(maps):
+            x, y = cell_pos(i, col, br.cols)
+            px = a[y:y + CELL_H, x:x + CELL_W]
+            solid = (px[..., 3] >= 128) & ~(px[..., :3] == np.array(KEY)).all(-1)
+            raw[(an, m)] = (px[..., :3], solid)
+            cols, n = np.unique(px[..., :3][solid], axis=0, return_counts=True)
+            same = False
+            if r is not None:
+                rp = r[y:y + CELL_H, x:x + CELL_W]
+                rsolid = (rp[..., 3] >= 128) & ~(rp[..., :3] == np.array(KEY)).all(-1)
+                same = bool((solid == rsolid).all() and (px[..., :3][solid] == rp[..., :3][solid]).all())
+            for c, k in zip(cols, n):
+                counts[tuple(int(v) for v in c)] = counts.get(tuple(int(v) for v in c), 0) + int(k)
+                if same:
+                    loose.add(tuple(int(v) for v in c))
+    return raw, counts, loose
+
+
+STRAY_PIXELS = 10     # a color with fewer pixels than this in a whole sheet is a slip of the brush
+
+
+def own_layout(counts, palette_path, fixed, loose=(), merge=False):
+    """Color indices of sheets painted with the key colors of their own
+    palette picture (column 0 = key colors, columns 1.. = each bomber color)
+    instead of Bomberman's. `counts`: {color: pixels} of the sheets; `fixed`:
+    colors that are the same in every palette (Bomberman's skin); `loose`:
+    colors of cells not painted yet, drawn with the nearest color of the
+    first palette, like the strays. More than 15 colors: an error, or with
+    `merge` the entries that cost the least (pixels x color distance over
+    every palette) take the colors of their closest entry. Returns
+    ({color: index}, palettes [[15 rgb]], pixels snapped to a close color,
+    merges as text)."""
+    pal = np.asarray(Image.open(palette_path).convert("RGB"), dtype=np.int32)
+    if pal.shape[1] < 2:
+        raise ValueError(f"{palette_path}: precisa da coluna de cores-chave e pelo menos uma cor")
+    key = [tuple(int(v) for v in pal[r, 0]) for r in range(pal.shape[0])]
+    entry, snapped, unknown, later = {}, 0, {}, {}
+    for c, n in counts.items():
+        if c in key:
+            entry[c] = ("row", key.index(c))
+            continue
+        if c in fixed:
+            entry[c] = ("fixed", c)
+            continue
+        d = [sum((u - v) ** 2 for u, v in zip(c, k)) for k in key]
+        f = [sum((u - v) ** 2 for u, v in zip(c, k)) for k in fixed] or [1 << 30]
+        if min(d) <= 200 and min(d) <= min(f):
+            entry[c] = ("row", d.index(min(d)))
+            snapped += n
+        elif min(f) <= 200:
+            entry[c] = ("fixed", tuple(fixed[f.index(min(f))]))
+            snapped += n
+        elif c in loose or n < STRAY_PIXELS:
+            later[c] = n
+            snapped += 0 if c in loose else n
+        else:
+            unknown[c] = n
+    if unknown:
+        raise ValueError(f"cores que nao estao na paleta do personagem ({os.path.basename(palette_path)}, 1a coluna): "
+                         + ", ".join("%02X%02X%02X (%d px)" % (c + (n,)) for c, n in sorted(unknown.items())[:12]))
+
+    def signature(e):
+        cols = [pal[e[1], c] for c in range(1, pal.shape[1])] if e[0] == "row" else [e[1]] * (pal.shape[1] - 1)
+        return tuple(tuple(int(v) >> 3 for v in c) for c in cols)
+
+    first = {}
+    for e in sorted(set(entry.values()), key=lambda e: (e[0] != "row", e[1])):
+        first.setdefault(signature(e), e)
+    entry = {c: first[signature(e)] for c, e in entry.items()}
+    def entries():
+        return (sorted({e for e in entry.values() if e[0] == "row"})
+                + sorted({e for e in entry.values() if e[0] == "fixed"}))
+
+    def name(e):
+        return "linha %d (%02X%02X%02X)" % ((e[1] + 1,) + key[e[1]]) if e[0] == "row" else "cor fixa %02X%02X%02X" % e[1]
+
+    def pixels(e):
+        return sum(n for c, n in counts.items() if entry.get(c) == e)
+
+    used, merged = entries(), []
+    if len(used) > 15 and not merge:
+        lines = [f"{name(e)}: {pixels(e)} px" for e in used]
+        raise ValueError(f"a folha usa {len(used)} cores; um sprite de SNES tem 15:\n  " + "\n  ".join(lines))
+    while len(used) > 15:
+        sig = {e: np.array(signature(e), dtype=np.int32) for e in used}
+        px = {e: pixels(e) for e in used}
+        # (the first palette is the one seen most: it weighs as much as all the others)
+        def far(a, b):
+            d = ((sig[a] - sig[b]) ** 2).sum(-1)
+            return float(d.mean() + d[0]) / 2
+        cost, a, b = min((px[a] * far(a, b), a, b) for a in used for b in used if a != b and px[a] <= px[b])
+        merged.append(f"{name(a)}, {px[a]} px -> {name(b)}")
+        entry = {c: (b if e == a else e) for c, e in entry.items()}
+        used = entries()
+    index = {e: i + 1 for i, e in enumerate(used)}
+    palettes = [[tuple(int(v) for v in pal[e[1], c]) if e[0] == "row" else e[1] for e in used]
+                + [(0, 0, 0)] * (15 - len(used)) for c in range(1, pal.shape[1])]
+    cmap = {c: index[e] for c, e in entry.items()}
+    shown = np.array(palettes[0][:max(1, len(used))], dtype=np.int32)
+    for c in later:
+        cmap[c] = int(((shown - np.array(c)) ** 2).sum(-1).argmin()) + 1
+    return cmap, palettes, snapped, merged
+
+
+def own_cells(raw, cmap):
+    """Cells of sheet_pixels as indices of an own_layout."""
+    cells = {}
+    for k, (rgb, solid) in raw.items():
+        idx = np.zeros((CELL_H, CELL_W), np.uint8)
+        for c in {tuple(int(v) for v in p) for p in rgb[solid]}:
+            idx[solid & (rgb == np.array(c)).all(-1)] = cmap[c]
+        cells[k] = idx
+    return cells
 
 
 # ---- conversion ---------------------------------------------------------------

@@ -13,19 +13,22 @@ How the original title is built (SB5, verified with Mesen traces):
     characters (objects 43/44).
 Archive 7 and palette 9 are shared with another scene ($C6:EB1A), so the hack
 does not touch them: it adds graphics set 5 (empty in all three set tables)
-with its own archive, palette and arrangements, and redirects the title
-scripts to sub-scripts in free space.
+with its own archives, palette and arrangements, and redirects the title
+scripts to sub-scripts in free space. BG1/BG2 (sky, characters, logo) are not
+arrangements any more: features/title_anim.py + asm/title_anim.asm send them
+frame by frame (intro and idle animation of the Unity title).
 """
 import os
 
-from PIL import Image
-
 from .. import lz
 from ..romlib import off
-from ..compose import compose_background, compose_logo, load_layout
-from ..snesgfx import (Layer, PaletteSlot, TileSet, best_palettes, build_layer_map,
-                       cgram_block)
+from .. import asar
+from ..rombuild import BuildError
+from . import title_anim
 from .title_text import text_tiles
+
+ASM = os.path.join(os.path.dirname(__file__), "..", "..", "..", "asm", "title_anim.asm")
+ANIM_REGIONS = ["title_fa", "title_fb"]  # tiles, maps, tables and code of the animated title
 
 SET = 5                   # new graphics set used by the SB6 title
 VRAM_TILE_LIMIT = 0x3000  # words: BG1/BG2 maps start at VRAM $3000
@@ -81,60 +84,116 @@ def players_menu(rb, dig_top, dig_bottom):
     return arrangement(w, len(rows), 0x0B, 0x12 - TEXT_SHIFT_ROWS, [x for r in rows for x in r])
 
 
-def _trim(words, tw, th):
-    rows = [r for r in range(th) if any(words[r * tw + c] for c in range(tw))]
-    cols = [c for c in range(tw) if any(words[r * tw + c] for r in range(th))]
-    r0, r1, c0, c1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
-    if (c1 - c0) % 2:  # the FF 8D row writer consumes two entries per step
-        c1 = c1 + 1 if c1 < tw else c1
-        c0 = c0 - 1 if (c1 - c0) % 2 else c0
-    sub = [words[r * tw + c] for r in range(r0, r1) for c in range(c0, c1)]
-    return sub, c1 - c0, r1 - r0, c0, r0
+# Menu cursor of the fan game (assets/title/Cursor.png, 16x16 cells): row 0 =
+# 9 heads (rest, left 1-2, right 1-2, down 1-2, up 1-2), rows 1-2 = 7 + 7 face
+# plates with different eyes. The game draws a head with a face over it, the
+# face moved with the head (TitleScreenCursorEyeIdle.GetEyeOffsetPixels, y up).
+CURSOR_HEADS, CURSOR_EYES = 9, 7
+CURSOR_EYE_SHIFT = {0: (0, 0), 1: (-1, 0), 2: (-2, 0), 3: (1, 0), 4: (2, 0),
+                    5: (0, 1), 6: (0, 2), 7: (0, -1), 8: (0, -2)}   # (x, y down) per head
+# Unity sequences (11 heads in 0.5 s): the look around after 3 s without
+# input (left-right / down-up, each also reversed, random first-row face) and
+# the confirmation (face 2, which stays until the next input).
+CURSOR_SEQS = [[0, 1, 2, 2, 1, 0, 3, 4, 4, 3, 0], [0, 3, 4, 4, 3, 0, 1, 2, 2, 1, 0],
+               [0, 7, 8, 8, 7, 0, 5, 6, 6, 5, 0], [0, 5, 6, 6, 5, 0, 7, 8, 8, 7, 0],
+               [0, 7, 8, 8, 7, 0, 6, 5, 5, 6, 0]]
+CURSOR_ANIM_FRAMES, CURSOR_IDLE_FRAMES, CURSOR_CONFIRM_EYE = 30, 180, 2
 
 
-def convert(asset_dir, starts):
-    layout = load_layout(asset_dir)
-    background = compose_background(asset_dir, layout)
-    logo, (lx, ly) = compose_logo(asset_dir, layout)
-    logo_canvas = Image.new("RGBA", (256, (ly + logo.height + 7) // 8 * 8), (0, 0, 0, 0))
-    logo_canvas.paste(logo, (lx, ly))
+def cursor_tables(asset_dir):
+    """(poses, colors, steps, sequences): pose `face * 9 + head` = 4 OBJ tiles
+    (top left, top right, bottom left, bottom right; 128 bytes) of the head
+    with the face over it; colors 1-15 of the cursor's OBJ palette; the
+    sequence step shown in each frame of an animation; the sequences."""
+    from PIL import Image
+    import numpy as np
+    from ..snesgfx import bgr555, encode_4bpp
+    sheet = Image.open(os.path.join(asset_dir, "Cursor.png")).convert("RGBA")
+    colors = sorted({p[:3] for p in sheet.getdata() if p[3] >= 128})
+    if len(colors) > 15:
+        raise BuildError("Cursor.png: more than 15 colors")
+    index = {c: k + 1 for k, c in enumerate(colors)}
+    poses = bytearray()
+    for eye in range(CURSOR_EYES):                       # the first row of faces
+        face = sheet.crop((16 * eye, 16, 16 * eye + 16, 32))
+        for head in range(CURSOR_HEADS):
+            img = sheet.crop((16 * head, 0, 16 * head + 16, 16))
+            dx, dy = CURSOR_EYE_SHIFT[head]
+            img.alpha_composite(face.crop((max(0, -dx), max(0, -dy), 16 - max(0, dx), 16 - max(0, dy))),
+                                (max(0, dx), max(0, dy)))
+            px = np.array([[index[tuple(p[:3])] if p[3] >= 128 else 0 for p in row]
+                           for row in np.array(img).tolist()], dtype=np.uint8)
+            for ty in (0, 8):
+                for tx in (0, 8):
+                    poses += encode_4bpp(px[ty:ty + 8, tx:tx + 8])
+    pal = b"".join(bgr555([(v * 31 + 127) // 255 for v in c]).to_bytes(2, "little")
+                   for c in colors).ljust(30, b"\x00")
+    n = len(CURSOR_SEQS[0])
+    steps = bytes(max(i for i in range(n) if i * CURSOR_ANIM_FRAMES // n <= t) for t in range(CURSOR_ANIM_FRAMES))
+    return bytes(poses), pal, steps, bytes(sum(CURSOR_SEQS, []))
 
-    bg2 = Layer("bg2", background, opaque_required=True)
-    bg1 = Layer("bg1", logo_canvas, opaque_required=False)
 
-    def make_slots():
-        free0 = [e for e in range(1, 16) if e not in TEXT_ENTRIES]
-        return [PaletteSlot(0, free0)] + [PaletteSlot(i, range(1, 16)) for i in range(1, 8)]
-
-    assignment, slots, err, start = best_palettes([bg1, bg2], make_slots, starts)
-    by_index = {s.index: s for s in slots}
-    tiles = TileSet()
-    bg1_words, bg1_prev = build_layer_map(bg1, assignment, by_index, tiles)
-    bg2_words, bg2_prev = build_layer_map(bg2, assignment, by_index, tiles)
-    preview = bg2_prev.copy()
-    preview.alpha_composite(bg1_prev, (0, 0))
-    target = background.copy()
-    target.alpha_composite(logo_canvas, (0, 0))
-    return dict(layout=layout, slots=slots, tiles=tiles, error=err, start=start,
-                bg1=(bg1_words, bg1.tw, bg1.th), bg2=(bg2_words, bg2.tw, bg2.th),
-                preview=preview, target=target)
+def drop_frames(asset_dir):
+    """Intro frames (from the pan's first) where each wave of characters starts to fall."""
+    L = title_anim.load_layout(asset_dir)
+    A = L["animation"]
+    pan = round(A["pan_seconds"] * title_anim.FPS)
+    drop = round(A["characters_drop_seconds"] * title_anim.FPS)
+    waves = len(L["characters"]) // 2 + 1
+    return [pan + k * (drop + title_anim.SWAP_FRAMES) for k in range(waves)]
 
 
-def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
-    """boot = boot_logo.convert() result: set 5 archive 3, palette 2, arrangement 5."""
-    conv = convert(asset_dir, starts)
-    tiles = conv["tiles"].data()
-    if len(tiles) // 2 > VRAM_TILE_LIMIT:
-        raise ValueError(f"title uses {len(tiles) // 32} tiles; VRAM limit is {VRAM_TILE_LIMIT // 16}")
+def apply(rb, asset_dir, out_dir, starts, version_text, boot=None, cache_dir=None, pan_sound=0):
+    """boot = boot_logo.convert() result: set 5 archive 3, palette 2, arrangement 5.
 
+    pan_sound = title_music's `pre_start` (0 = silent intro).
+    Returns the build's numbers and `syms` (title_op, title_nmi: asm/picker.asm
+    calls them from its script op and NMI hooks)."""
     # Original BG3 text colors (palette 8 of set 3) keep CGRAM 0-3.
     pal_tab3 = 0x810000 | rb.rw(0xC00379 + 2 * 3)
     text_pal = 0x810000 | rb.rw(pal_tab3 + 2 * (8 - 1))
     reserved = {k: rb.rw(text_pal + 4 + 2 * k) for k in range(4)}
-    colors = cgram_block(conv["slots"], reserved)
 
-    # ---- data in free space ----------------------------------------------
-    tiles_addr = rb.alloc("bulk", tiles, "title: BG1/BG2 4bpp tiles (raw)")
+    # ---- animated scene (BG1/BG2): tiles, maps and tables of asm/title_anim.asm
+    def put(data, label):
+        return rb.alloc(ANIM_REGIONS, data, label)
+
+    anim = title_anim.build(asset_dir, starts, reserved, put, cache_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    title_anim.simulate(anim, os.path.join(out_dir, "title_preview.png"))
+    colors = anim["cgram"]
+    tab = {k: rb.alloc(ANIM_REGIONS, v, f"title: table {k}") for k, v in anim["tables"].items()}
+    ptrs = b"".join(rb.le16((tab["logocg"] + k * anim["consts"]["CGLEN"]) & 0xFFFF)
+                    for k in range(anim["consts"]["NLOGO"]))
+    tab["logoptr"] = rb.alloc(ANIM_REGIONS, ptrs, "title: table logoptr")
+    poses, cur_pal, cur_steps, cur_seqs = cursor_tables(asset_dir)
+    tab["curposes"] = rb.alloc(ANIM_REGIONS, poses, "title cursor: 63 poses (7 faces x 9 heads), 4 OBJ tiles each")
+    tab["curpal"] = rb.alloc(ANIM_REGIONS, cur_pal, "title cursor: OBJ palette 0, colors 1-15")
+    tab["cursteps"] = rb.alloc(ANIM_REGIONS, cur_steps, "title cursor: sequence step per animation frame")
+    tab["curseqs"] = rb.alloc(ANIM_REGIONS, cur_seqs, "title cursor: head sequences (4 looks around, confirmation)")
+    if (tab["curposes"] & 0xFFFF) + len(poses) > 0x10000:
+        raise BuildError("title cursor poses cross a bank")
+    region = next(r for r in (rb.regions[n] for n in ANIM_REGIONS) if r.free() >= 0x800)
+    defines = {"ORG": f"${region.cursor:06X}", "SET": str(SET), "CURY": f"${0xA0 - TEXT_SHIFT:02X}",
+               "JOBS": f"${tab['jobs']:06X}", "INITA": f"${tab['init_a']:06X}", "INITB": f"${tab['init_b']:06X}",
+               "PLAY": f"${tab['play']:06X}", "DROP": f"${tab['drop']:06X}", "LOGOCG": f"${tab['logocg']:06X}",
+               "LOGOPTR": f"${tab['logoptr']:06X}", "ALT": f"${tab['alt']:06X}", "PANSND": f"${pan_sound:06X}",
+               "CURPOSES": f"${tab['curposes']:06X}", "CURPAL": f"${tab['curpal']:06X}",
+               "CURSTEPS": f"${tab['cursteps']:06X}", "CURSEQS": f"${tab['curseqs']:06X}",
+               "CURHEADS": str(CURSOR_HEADS), "CURSEQLEN": str(len(CURSOR_SEQS[0])),
+               "CURANIM": str(CURSOR_ANIM_FRAMES), "CURIDLE": str(CURSOR_IDLE_FRAMES),
+               "CUREYE": str(CURSOR_CONFIRM_EYE), "CURCONFIRM": str(len(CURSOR_SEQS))}
+    defines.update({k: str(v) for k, v in anim["consts"].items()})
+    if 4 + 6 * title_anim.SCRATCH != 16 or anim["consts"]["NCHAR"] > 8:
+        raise BuildError("title: asm/title_anim.asm expects 2 scratch areas and at most 8 characters")
+    runs, syms = asar.assemble_into(rb.d, ASM, defines)
+    start, end = region.cursor, syms["end"]
+    out = bytearray(rb.d)
+    for o, d in runs:
+        if not (off(start) <= o and o + len(d) <= off(end)):
+            raise BuildError(f"title_anim.asm wrote outside its section at file offset {o:06X}")
+        out[o:o + len(d)] = d
+    rb.alloc(region.name, bytes(out[off(start):off(end)]), "title: intro and idle animation (asm/title_anim.asm)")
 
     # Version string glyphs (BG3, 2bpp) replacing SB5's copyright line.
     text = version_text if len(version_text) % 2 == 0 else version_text + " "
@@ -147,13 +206,14 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
 
     # Archive table for set 5 (bank $E3): [vram, size, src24, flags]; flag $80 = raw,
     # type 2 = 4bpp BG tiles, type 3 = 2bpp BG tiles (as SB5's BG3 text, archive $96 of set 3).
-    arc_entry = rb.le16(0x0000) + rb.le16(len(tiles)) + rb.le24(tiles_addr) + bytes([0x82])
-    arc_entry += rb.le16(BG3_CHR + VERSION_TILE * 8) + rb.le16(len(ver_tiles)) + rb.le24(ver_addr) + bytes([0x83])
+    # Entry 1 was the static title's tiles: the scene's tiles are sent by title_anim's jobs now.
+    glyphs = rb.le16(BG3_CHR + VERSION_TILE * 8) + rb.le16(len(ver_tiles)) + rb.le24(ver_addr) + bytes([0x83])
+    arc_entry = glyphs + glyphs
     if boot:
         boot_addr = rb.alloc("bulk", boot["tiles"], "boot logo: BG1 4bpp tiles (raw)")
         arc_entry += rb.le16(0x0000) + rb.le16(len(boot["tiles"])) + rb.le24(boot_addr) + bytes([0x82])
     arc_table = rb.alloc("e3_tables", arc_entry,
-                         "set 5 archive table (1 = title tiles, 2 = version glyphs, 3 = boot logo)")
+                         "set 5 archive table (1, 2 = version glyphs, 3 = boot logo)")
 
     # Palette table for set 5 (bank $81): word pointer -> [dest, count, colors].
     pal_entries = [rb.le16(0) + rb.le16(128) + b"".join(rb.le16(c) for c in colors)]
@@ -168,19 +228,15 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
     rb.d[pal_table & 0x3FFFFF:(pal_table & 0x3FFFFF) + len(pblob)] = pblob
 
     # Arrangement table for set 5 (any bank; entries are in the table's bank).
-    w1, tw1, th1 = conv["bg1"]
-    sub1, aw1, ah1, ax1, ay1 = _trim(w1, tw1, th1)
-    w2, tw2, th2 = conv["bg2"]
-    arr1 = arrangement(aw1, ah1, ax1, ay1, sub1)
-    arr2 = arrangement(tw2, th2, 0, 0, w2)
+    # 1 and 2 were the static logo and scene (kept as copies of 3: scripts use
+    # the numbers of 3-5).
     arr3 = arrangement(len(text), 2, (32 - len(text)) // 2, VERSION_ROW, ver_top + ver_bottom)
-    arrs = [arr1, arr2, arr3, players_menu(rb, dig_top, dig_bottom)]
+    arrs = [arr3, arr3, arr3, players_menu(rb, dig_top, dig_bottom)]
     if boot:
         arrs.append(arrangement(32, 28, 0, 0, boot["words"]))
     blob = bytearray(2 * len(arrs)) + b"".join(arrs)
     arr_table = rb.alloc("bulk", bytes(blob),
-                         "set 5 arrangement table + title arrangements 1 (logo), 2 (scene), 3 (version, BG3), "
-                         "4 (1-4 PLAYER GAME, BG3)")
+                         "set 5 arrangement table: 3 (version, BG3), 4 (1-4 PLAYER GAME, BG3), 5 (boot logo)")
     pos = arr_table + 2 * len(arrs)
     for i, a in enumerate(arrs):
         blob[2 * i:2 * i + 2] = rb.le16(pos & 0xFFFF)
@@ -188,16 +244,7 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
     o = arr_table & 0x3FFFFF
     rb.d[o:o + len(blob)] = blob
 
-    # Sub-scripts.
-    loadgfx = bytes([0x26, SET, 0x27, 0x01, 0x27, 0x02,     # SB6 tiles, version glyphs
-                     0x2A, 0x01,                             # SB6 colors
-                     0x26, 0x03, 0x27, 0x96, 0x2A, 0x08,     # SB5 BG3 font + text colors
-                     0x00])
-    draw = bytes([0xFF, 0x8D, 0x01, SET, 0x01, 0x00, 0x00,  # logo on BG1
-                  0xFF, 0x8D, 0x02, SET, 0x02, 0x00, 0x00,  # scene on BG2
-                  0x00])
-    s_load = rb.alloc("bulk", loadgfx, "script: title graphics load (set 5)")
-    s_draw = rb.alloc("bulk", draw, "script: title arrangements draw (set 5)")
+    s_load, s_wait = syms["s_load"], syms["s_wait"]
     s_null = rb.alloc("bulk", b"\x00", "script: empty (returns)")
 
     # ---- hook the set tables (set 5 is null in all of them) ----------------
@@ -219,7 +266,7 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
     # ---- intro path (mode $A9) --------------------------------------------
     rb.patch(0xC6FC93,
              bytes.fromhex("26 03 27 07 27 96 2A 09 2A 08 28 61 28 62 FF 8D 03 04 01 00 00 FF 8D 02 04 02 00 00"),
-             call(s_load) + call(s_draw) + skip(18), "intro title: load/draw SB6 title")
+             call(s_load) + skip(22), "intro title: load SB6 title (drawn by title_anim)")
     rb.patch(0xC6FCBB, bytes.fromhex("2C 12 02 2C 13 02 2C 14 02"), skip(7),
              "intro title: no SB5 logo palette cycling")
     rb.patch(0xC6FD7C, bytes.fromhex("24 AC FE C6"), call(s_null), "intro title: no SB5 character (left)")
@@ -230,7 +277,10 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
              "mode 2 handler 2: load SB6 title")
     rb.patch(0xC717DE, bytes.fromhex("28 61 28 62 00"), b"\x00", "mode 2 handler 4: no SB5 character sprites")
     rb.patch(0xC717E6, bytes.fromhex("FF 8D 03 04 01 00 00 FF 8D 02 04 02 00 00"),
-             call(s_draw) + skip(8), "mode 2 handler 6: draw SB6 title")
+             skip(12), "mode 2 handler 6: SB6 title drawn by title_anim")
+    # The task that starts the music and the PUSH START loop first waits for the intro.
+    rb.patch(0xC71847, bytes.fromhex("06 04 42 02 00 5B A0 60 34 10 5B 00 5F 36 10 24 D3 1A C7"),
+             call(s_wait) + skip(13), "mode 2: cursor, PUSH START and music after the intro")
     rb.patch(0xC71821, bytes.fromhex("3A 44 D0 00 C0 00 40 01 40 02 3A 43 20 00 C0 00"), skip(14),
              "mode 2: no SB5 characters")
     rb.patch(0xC71832, bytes.fromhex("2C 12 02 2C 13 02 2C 14 02"), skip(7),
@@ -255,15 +305,9 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None):
         rb.patch(win, bytes.fromhex("FF 0C 30 80 D0 90 02"), window, f"{where} title: PUSH START blink window moved")
         rb.patch(cpy, bytes.fromhex("FF 8D 06 04 03 00 00"), version, f"{where} title: version instead of (c) line")
     rb.patch(0xC71ABF, bytes.fromhex("61 A0"), bytes([0x61, 0xA0 - TEXT_SHIFT]), "title menu cursor Y moved")
-    # initial cursor Y ($1034) when the title appears (intro path / mode 2)
-    for a in (0xC6FE6F, 0xC7184C):
-        rb.patch(a, bytes.fromhex("5B A0 60 34 10"), bytes([0x5B, 0xA0 - TEXT_SHIFT, 0x60, 0x34, 0x10]),
-                 "title menu cursor initial Y moved")
+    # initial cursor Y ($1034) when the title appears (intro path; mode 2: s_wait)
+    rb.patch(0xC6FE6F, bytes.fromhex("5B A0 60 34 10"), bytes([0x5B, 0xA0 - TEXT_SHIFT, 0x60, 0x34, 0x10]),
+             "title menu cursor initial Y moved")
 
-    os.makedirs(out_dir, exist_ok=True)
-    side = Image.new("RGB", (512, 224))
-    side.paste(conv["target"].convert("RGB"), (0, 0))
-    side.paste(conv["preview"].convert("RGB"), (256, 0))
-    side.resize((1024, 448), Image.NEAREST).save(os.path.join(out_dir, "title_preview.png"))
-    return dict(tiles=len(tiles) // 32, error=conv["error"], start=conv["start"],
-                arr_bytes=len(arr1) + len(arr2))
+    return dict(stats=anim["stats"], error=anim["error"], logo_error=anim["logo_error"], start=anim["start"],
+                syms=syms)

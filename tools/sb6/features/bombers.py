@@ -32,7 +32,8 @@ STRIPS_PER_SHEET = 32        # 32 KB per sheet; row = 2 * strip (byte, doubled b
 
 PAL_TABLE = 0x818000         # set 0 palette pointers; ids 1-6 = the cartridge's six bomber colors
 PAL_IDS = 6                  # replaced in place by the first columns of the palette picture
-OWN_ID = 0x80                # every column is also palette id OWN_ID + n of set 0 (pal_lookup)
+OWN_ID = 0x5A                # every column is also palette id OWN_ID + n of set 0 (pal_lookup;
+                             # the cartridge's set 0 ends at id $59)
 STAND = 0x02                 # animation whose first pose faces the screen (walk down)
 OBJMAP = ["objmap", "objmap2", "objmap3"]
 STREAM = [f"stream_{b:02x}" for b in range(0xEC, 0xF0)]   # pose blocks (tools/build.py)
@@ -185,6 +186,12 @@ def _char_palettes(bomber_pal, char_pal, used):
     return [q + [(0, 0, 0)] * (15 - len(q)) for q in pals]
 
 
+def _key_column(path):
+    """Key colors (column 0) of a palette picture."""
+    im = Image.open(path).convert("RGB")
+    return [im.getpixel((0, y)) for y in range(im.height)]
+
+
 def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, ref):
     """Characters 1-9, laid out like Bomberman (char<n>_sb6.png +
     char<n>_pallete.png, optional char<n>_anims.txt over bomber_anims.txt).
@@ -193,21 +200,73 @@ def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, r
     only its tables). Animations equal to Bomberman's use his tiles and
     pieces; only the edited ones get new tiles."""
     done = []
+    bkeys = _key_column(ref["palette"])
+    fixed = [tuple(c) for c in ref["notes"]["fixed"]]
+
+    # characters painted with the key colors of their own palette picture:
+    # those with the same picture share one color layout (and its palettes)
+    # when their colors fit in 15 entries together
+    pre, groups = {}, {}
+    for c in CHARS:
+        sheet, pal = os.path.join(bdir, f"char{c}_sb6.png"), os.path.join(bdir, f"char{c}_pallete.png")
+        scripts = os.path.join(bdir, f"char{c}_anims.txt")
+        if not (os.path.exists(sheet) and os.path.exists(pal)) or _key_column(pal) == bkeys:
+            continue
+        try:
+            own = bomber.load_scripts(scripts, ref["br"].cols) if os.path.exists(scripts) else {}
+            brc = bomber.BomberRom(base_rom, {**ref["br"].scripts, **own}, 0)
+            raw, counts, loose = bomber.sheet_pixels(brc, sheet, ref["sheet"])
+            blank = not counts
+            if blank:       # nothing painted yet: Bomberman's art and sequences, the character's colors
+                own, brc = {}, bomber.BomberRom(base_rom, dict(ref["br"].scripts), 0)
+                raw, counts, loose = bomber.sheet_pixels(brc, ref["sheet"], ref["sheet"])
+        except ValueError as e:
+            raise BuildError(f"char{c}: {e}")
+        pre[c] = dict(own=own, brc=brc, raw=raw, counts=counts, blank=blank, loose=loose)
+        with open(pal, "rb") as fh:
+            groups.setdefault(fh.read(), []).append(c)
+    for members in groups.values():
+        pal = os.path.join(bdir, f"char{members[0]}_pallete.png")
+        total, loose = {}, set()
+        for c in members:
+            loose |= pre[c]["loose"]
+            for k, n in pre[c]["counts"].items():
+                total[k] = total.get(k, 0) + n
+        try:
+            layout = bomber.own_layout(total, pal, fixed, loose)
+            for c in members:
+                pre[c]["layout"] = layout
+        except ValueError:
+            for c in members:
+                try:
+                    pre[c]["layout"] = bomber.own_layout(pre[c]["counts"], pal, fixed, pre[c]["loose"], merge=True)
+                except ValueError as e:
+                    raise BuildError(f"char{c}: {e}")
+
     for c in CHARS:
         sheet, pal = os.path.join(bdir, f"char{c}_sb6.png"), os.path.join(bdir, f"char{c}_pallete.png")
         scripts = os.path.join(bdir, f"char{c}_anims.txt")
         if not (os.path.exists(sheet) and os.path.exists(pal)):
             continue
         try:
-            own = bomber.load_scripts(scripts, ref["br"].cols) if os.path.exists(scripts) else {}
-            brc = bomber.BomberRom(base_rom, {**ref["br"].scripts, **own}, 0)
-            cells, edited, notes = bomber.read_sheet_like(brc, sheet, ref["sheet"], ref["br"], ref["cells"],
-                                                          ref["notes"]["cmap"], ref["notes"]["sb5"])
-            same_poses = dict(ref["br"].poses())
-            edited |= {a for a, maps in brc.poses() if len(maps) != len(same_poses[a])}
-            palettes = _char_palettes(ref["palette"], pal, ref["notes"]["used"])
+            if c in pre:
+                p = pre[c]
+                own, brc = p["own"], p["brc"]
+                cmap, palettes, snapped, merged = p["layout"]
+                cells = bomber.own_cells(p["raw"], cmap)
+                edited = {a for a, maps in brc.poses() if maps}
+                notes = dict(edited=len(edited), snapped=snapped, blank=p["blank"], own=True, merged=merged)
+            else:
+                own = bomber.load_scripts(scripts, ref["br"].cols) if os.path.exists(scripts) else {}
+                brc = bomber.BomberRom(base_rom, {**ref["br"].scripts, **own}, 0)
+                cells, edited, notes = bomber.read_sheet_like(brc, sheet, ref["sheet"], ref["br"], ref["cells"],
+                                                              ref["notes"]["cmap"], ref["notes"]["sb5"])
+                same_poses = dict(ref["br"].poses())
+                edited |= {a for a, maps in brc.poses() if len(maps) != len(same_poses[a])}
+                palettes = _char_palettes(ref["palette"], pal, ref["notes"]["used"])
             shared = palettes == ref["palettes"]
             info = dict(char=c, notes=notes, scripts=len(own), colors=len(palettes), shared=shared,
+                        first=palettes[0],
                         **_insert_char(rb, base_rom, sheets, brc, cells, edited, c, ref))
         except ValueError as e:
             raise BuildError(f"char{c}: {e}")
@@ -221,8 +280,10 @@ def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, r
                 rb.patch(LIFT_TABLE + c, bytes([stock]), bytes([info["lift"]]),
                          f"char{c}: lifted bomb height (head {top0 - top:+d} px from Bomberman's)")
         charmap[c], charanim[c] = info["maptab"], info["animtab"]
-        info["pal0"] = 0 if shared else len(all_pals)    # index in the palette table of its color 0
-        if not shared:
+        # index in the palette table of its color 0 (palettes already there are not repeated)
+        info["pal0"] = next((i for i in range(len(all_pals) - len(palettes) + 1)
+                             if all_pals[i:i + len(palettes)] == palettes), len(all_pals))
+        if info["pal0"] == len(all_pals):
             all_pals.extend(palettes)
         base = base_rom[off(0x80BB4E) + c]                # the stock ids (Battle, co-op defaults)
         for n in range(min(VARIANTS, len(palettes))):
@@ -313,6 +374,9 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
 
     # every palette: word table + data in one bank (ids OWN_ID + n; the characters' through xlat)
     paltab = 0
+    if OWN_ID + len(all_pals) > 0x100:
+        raise BuildError(f"{len(all_pals)} bomber palettes; the ids ${OWN_ID:02X}-$FF hold {0x100 - OWN_ID} "
+                         f"(characters with the same palette picture share them when their colors fit together)")
     if all_pals:
         start = rb.regions["bulk"].cursor
         data, pos = bytearray(), (start & 0xFFFF) + 2 * len(all_pals)
@@ -345,7 +409,8 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
     runs, syms = asar.assemble_into(rb.d, ASM, {"E4": f"${reg.cursor:06X}", "CHARMAP": f"${cmap:06X}",
                                                 "CHARANIM": f"${canim:06X}", "PALTAB": f"${paltab:06X}",
                                                 "XLAT": f"${xtab:06X}", "CHARSTREAM": f"${cstab:06X}",
-                                                "PALS": str(PAL_IDS if palettes else 0)})
+                                                "PALS": str(PAL_IDS if palettes else 0),
+                                                "OWNID": f"${OWN_ID:02X}"})
     start, end = reg.cursor, syms["end_e4"]
     out = bytearray(rb.d)
     for o, d in runs:
@@ -379,7 +444,7 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
                  "bomber: palette ids $80+ of set 0, replaced ids")
     result = dict(chars=chars, strips=0, poses=0, max_pieces=0, inexact=inexact, notes=notes, scripts=0,
                   paltab=paltab if palettes else 0, palcount=len(palettes), stand=None, sheet=bool(info0),
-                  pal_total=len(all_pals), stream_clear=syms["stream_clear"] if streaming else 0)
+                  pal_total=len(all_pals), own_id=OWN_ID, first=palettes[0] if palettes else None, stream_clear=syms["stream_clear"] if streaming else 0)
     if info0:
         pieces = [len(p) for p in info0["mappings"].values()]
         result.update(strips=info0["strips"], poses=len(pieces), max_pieces=max(pieces), scripts=len(br.scripts))

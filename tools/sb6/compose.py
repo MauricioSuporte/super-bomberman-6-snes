@@ -1,8 +1,8 @@
 """Builds the reference 256x224 title picture from the fan-game assets.
 
 The geometry mirrors TitleScreenDropIntro / TitleScreenVerticalPanIntro of the
-Unity project (see assets/title/layout.json). Returns RGBA layers so the
-background (BG2) and the logo (BG1) can be converted separately.
+Unity project (see assets/title/layout.json): character positions and the
+logo; features/title_anim.py composes the scene's pictures with them.
 """
 import json
 import os
@@ -48,25 +48,6 @@ def character_positions(layout):
         top = round(sh - (bottom + h))
         pos[c["name"]] = (left, top)
     return pos
-
-
-def compose_background(asset_dir, layout):
-    sw, sh = layout["screen"]
-    bg = Image.open(os.path.join(asset_dir, layout["background"]["file"])).convert("RGBA")
-    top = layout["background"]["crop_top"]
-    canvas = bg.crop((0, top, sw, top + sh))
-    canvas = _binary_alpha(canvas)
-    by_name = {c["name"]: c for c in layout["characters"]}
-    pos = character_positions(layout)
-    for name in layout["draw_order"]:
-        c = by_name[name]
-        sprite = Image.open(os.path.join(asset_dir, c["file"])).convert("RGBA")
-        if sprite.size != tuple(c["size"]):
-            sprite = sprite.resize(tuple(c["size"]), Image.NEAREST)
-        canvas = _alpha_paste(canvas, _binary_alpha(sprite), *pos[name])
-    # The background is opaque: fill any hole with the top-left sky color.
-    opaque = Image.new("RGBA", canvas.size, canvas.getpixel((0, 0))[:3] + (255,))
-    return Image.alpha_composite(opaque, canvas)
 
 
 def compose_logo(asset_dir, layout, frame_file=None, native=False):

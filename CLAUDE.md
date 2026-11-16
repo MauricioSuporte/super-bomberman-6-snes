@@ -22,7 +22,17 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 
 * `tools/sb6/features/<feature>.py` — one feature per module, `apply(rb, …)`.
 * Native code called from a script: op `FF 1A nn` with nn >= `$F0`
-  (`pick_op` in `asm/picker.asm`); add new values there.
+  (`pick_op` in `asm/picker.asm`); add new values there (`$F8-$FB` are the
+  animated title's). Scripts cannot wait: a native op that must wait puts
+  its task to sleep (`title_op` `.again`, docs/ROM_MAP.md "Script tasks").
+* Title scene (BG1/BG2): `features/title_anim.py` builds pictures, palettes,
+  tile slots and per-frame job tables from `assets/title/layout.json`
+  (positions and timings copied from the Unity scene); `asm/title_anim.asm`
+  plays them from the NMI. `simulate()` replays the tables on a software
+  VRAM at build time; new title animation goes through jobs, not arrangements.
+  The menu cursor (`assets/title/Cursor.png`: heads, faces) is SB5's sprite 0
+  with its tiles and colors rewritten by `cursor` in the same NMI player
+  (`cursor_tables` in `features/title.py` holds the Unity sequences).
 * `asm/*.asm` 65816, `asm/spc/*.asm` SPC700 (asar 1.91, `asar 1.90` mode).
 * Shared: `rombuild.py` (patch/alloc/map), `lz.py` (SB5 compression),
   `snesgfx.py` (4bpp + palettes), `compose.py` (Unity title layout),
@@ -39,12 +49,18 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   bomber_anims.txt per animation. Every character with a sheet is inserted
   (in game and in the picker grid), even one still equal to Bomberman's
   (then it costs only its tables); animations equal to his reuse his `[sheet, row]` and pieces,
-  edited ones get new tiles. Palettes equal to his share his ids `$80 + n`.
+  edited ones get new tiles. Palettes equal to his share his ids `$5A + n`.
   Animations over 32 tiles are streamed pose by pose (<= 16 tiles each,
   double-buffered page, `bomber_stream` / `stream_nmi` in asm/bombers.asm).
 * Bomber colors: every column of `BombermanPallete.png` after the first is
-  palette id `$80 + n` of set 0 (`pal_lookup`); columns 1-6 also replace the
-  stock ids 1-6.
+  palette id `$5A + n` of set 0 (`OWN_ID`, `pal_lookup`); columns 1-6 also
+  replace the stock ids 1-6. A `char<n>_pallete.png` whose first column is
+  not Bomberman's (e.g. 44-column pictures with extra rows) means the sheet
+  is painted with those key colors: own 15-color layout (`own_layout` in
+  `sb6/bomber.py`; over 15 colors the least used entries are merged into
+  the closest, listed by the build), shared by characters with the same
+  picture. Cells still equal to bomber_sb6.png are drawn with the nearest
+  colors.
 * OBJ palettes: a bomber owns all 16 colors of its slot. Louies and eggs
   live in halves of a Louie palette (`asm/louies.asm`, at most two Louie
   colors at once); new OBJ sheets are registered in `objsheets.ObjSheets`.
@@ -60,7 +76,8 @@ Lua: `emu.read(a, emu.memType.snesDebug | spcRam | spcDspRegisters)`,
 `emu.getState()["spc.pc"]`, write callbacks on WRAM use bank-00 addresses,
 input via `emu.setInput` in the `inputPolled` event. The boot logo (mode 1)
 shows at frames ~56-410, then the hack goes straight to the title (mode 2,
-the intro is skipped); an attract demo starts ~36 s later. Old scripts that
+SB5's intro is skipped; the title's own intro runs at frames ~540-755,
+music and pads from ~760); an attract demo starts ~36 s later. Old scripts that
 wait for frame ~5650 still work (the title is already up). Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), Options →
 back restarts it, Normal Game releases it (Hudson PC `$08xx`, stage music).
 
@@ -72,8 +89,15 @@ exec callback at `$C0:0AF9` (end of the pad reader).
 
 * Hudson's `$10` loader returns instead of jumping; the stream driver is
   started by patching its `RET` at `$1041` and returns through it.
-* While streaming, every non-SFX request must release first; SFX go to the stream driver (move/accept) or are dropped.
+* While streaming, every non-SFX request must release first; SFX go to the stream driver (move/accept/back) or are dropped.
 * `$03CD` (song in ARAM) is set to `$FF` when the ring overwrites song 1.
-* Title SFX: captured once with `tools/capture_sfx.py` into
-  `assets/sound/title_sfx.json`, replayed by the stream driver on voice 0.
+* Menu SFX 1/4/3 (move/accept/back) are recordings (`assets/sound/menu_*.wav`)
+  kept as samples at ARAM `$B900-$DCFF`; Hudson's definitions of those SFX
+  are swapped in and out by the song/set upload hooks (`song_hook`,
+  `set_hook` in `asm/title_music.asm`), the stream driver plays the same
+  samples from scripts. A song whose samples or echo buffer reach that
+  area gets SB5's beeps back; changing the notes in `MENU_SFX` means
+  reading the new pitch from voice 0 in Mesen (`SFX_PITCH`).
+* The title intro's sounds (pan, drops) are one pre-mixed stream in bank
+  `$FC`; `PAN_LEAD_FRAMES` is the measured wait from its start to the pan.
   Mesen `spc.cycle` runs at 2.048 MHz.

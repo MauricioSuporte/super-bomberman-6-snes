@@ -33,9 +33,9 @@ ring). Encoder: `tools/sb6/lz.py`.
 | Arrangements (`FF 8D arr set layer x y`, drawer `$C0:001B`) | long at `$C0:8000 + 3*set` | words in the table's bank → parts `[w, h, x, y, mode]` + LZ low stream (+ high stream if mode 0), until a 0 width byte. Width must be even (`$C0:0135` writes 2 entries per step). |
 
 Set 3 = SB5 title graphics, set 4 = SB5 arrangements. **Set 5 was null in all
-three tables and now belongs to the hack** (archives 1 title tiles, 2 BG3
-glyphs, 3 boot logo; palettes 1 title, 2 boot logo; arrangements 1 logo,
-2 scene, 3 version, 4 1-4 PLAYER GAME, 5 boot logo). Sets 1 and 2 are also
+three tables and now belongs to the hack** (archives 1-2 BG3 glyphs, 3 boot
+logo; palettes 1 title, 2 boot logo; arrangements 3 version, 4 1-4 PLAYER
+GAME, 5 boot logo; 1-2 are unused copies of 3). Sets 1 and 2 are also
 null. The archive set table ends at `$C0:1CAF` (13 sets).
 
 ## Script VM
@@ -68,9 +68,79 @@ script accumulator (`61` = add).
 
 ## Title screen
 
-* Mode 1. BG1 logo (map `$3000`), BG2 scene (map `$3800`), BG3 text (map
-  `$4000`, chr `$5000`, CGRAM 0-3 = palette 8 of set 3). BG1/BG2 chr at
-  `$0000` (768 tiles max). OBJ `$6000`.
+* Mode 1. Cartridge: BG1 logo (map `$3000`), BG2 scene (map `$3800`), BG3
+  text (map `$4000`, chr `$5000`, CGRAM 0-3 = palette 8 of set 3), BG1/BG2
+  chr at `$0000`, OBJ `$6000` (all maps 64x32: screen configuration 0 of
+  `$80:8015`, 8 bytes per configuration = OBSEL, `$210B`, `$210C`,
+  `$2107-$210A`; set by `$C0:076F`, shadows `$0368+`, only `$2109` is
+  rewritten every NMI). On the title only OBJ tiles `$00-$17` (the menu
+  cursor) and VRAM `$4000-$47FF`, `$5800-$5BFF` (BG3) are used.
+* Hack, animated title (`tools/sb6/features/title_anim.py`,
+  `asm/title_anim.asm`; the Unity title's pan, drops, logo and alternate
+  poses): while its state is on, the NMI sets BG1 = map `$4800` 32x64 + chr
+  `$6000` (tiles `$18-$1FF`: blank, logo, two areas for the falling waves),
+  BG2 = map `$3800` 32x64 + chr `$0000` (tiles 0-`$37F`: BG1's old map is
+  tile space), writes both V scrolls (-1 at rest: screen line 1 = map line
+  0) and `$212C` (BG3 hidden until the logo lands), and runs one job per
+  frame (rows of DMA, <= 2560 bytes; the NMI then ends at scanline <= 257).
+  The logo's 6 frames are 2 BG palettes (6-7) rewritten every 5 frames
+  straight into CGRAM (the shadow `$7E2910` keeps frame 1). It turns itself
+  off, restoring `$2107/$2108/$210B`, on the first blanked frame of another
+  mode. Script ops `FF 1A F8` start (finished scene when the intro was
+  already seen since the last boot logo / stage), `F9` / `FA` put the task
+  to sleep until the tiles are loaded / the logo has landed (see "Script
+  tasks" below), `FB` starts the intro's sound stream (pan + character
+  drops, `asm/title_music.asm` `pre_start`) when the intro is going to play.
+  Start or A (raw pad words `$19`/`$1B`; the actions in `$2C+` are not
+  decoded during the intro) skips to the finished scene. Checked in Mesen:
+  VRAM after the intro equal to the build's simulation, skip, Options and
+  back, Normal Game to stage 1, attract demo and back.
+* Title flow in mode 2: task 5 runs the handlers (forced blank from the end
+  of the boot logo's fade), fade-in over 16 frames, then the task at
+  `$C7:1847` (`06 04`, `42 02 00` music, cursor Y, `24 D3 1A C7` PUSH START
+  loop) - the hack makes it wait for the intro first. Options is mode `$0B`,
+  the Normal menu 3, the attract demos `$0D`/`$74`; the mode byte changes
+  when the fade-out starts.
+* Bomber palette ids: the cartridge's set 0 ends at `$59`; the SB6
+  palettes are ids `$5A`+ (`OWN_ID`, `pal_lookup` / picker `upload`), room
+  for 166 palettes. Characters with their own key colors
+  (`char<n>_pallete.png` column 0 differs from Bomberman's) get their own
+  15-color layout; characters with the same picture share it (and its
+  palette entries) when their colors fit together.
+* Title menu cursor: one 16x16 sprite, the first in OAM (shadow
+  `$08BF` X, `$08C0` Y, `$08C1` tile, `$08C2` attributes `$20`), OBJ
+  palette 0 (CGRAM 128-143), tile 0 at rest; after an accepted option it
+  hops: tiles `02 04 02 06` and Y +1/-5, a 25-frame loop that goes on until
+  the menu changes. The Options screen has its own hand cursor. SB6
+  (`cursor` in `asm/title_anim.asm`, tables from `cursor_tables` in
+  `features/title.py`, art `assets/title/Cursor.png`) sends the fan game's
+  pose (4 tiles, 63 poses = 7 faces x 9 heads) to whichever of the frames
+  0/2/4/6 the shadow asks for (VRAM `$6000 + $20*tile`, lower row `+$100`)
+  and its 15 colors to CGRAM 129-143, from the NMI while the title idles;
+  during the confirmation it writes the Y of the moment A/Start was pressed
+  to the shadow and to OAM (no hop). Looks around after 180 frames without
+  input; pads read from `$19-$1C` (pad 2 = `$FFFF` when unplugged).
+  The game loads its own cursor tiles through its VRAM queue (`$C0:0580`,
+  8 x 32 bytes per NMI) and its colors through the CGRAM copy `$7E:2910`
+  (sent whole when dirty): SB6 writes its colors into that copy too and
+  re-sends its pose the frame the sprite appears (Y < `$E0`). A confirmed
+  face goes back to rest when the menu `$1036` changes (Normal Game ->
+  players). The mode-2 wait script creates the cursor (`24 D3 1A C7`)
+  before the music upload (which holds the main loop ~0.5 s), waiting six
+  frames (`FF 1A FC`) so the game's tile queue and the upload do not share
+  an NMI.
+* Script tasks: a script runs to its end inside one frame - there is no
+  wait op (`05/06/07/08 n` set / clear / toggle / test flag n of
+  `$7E:2900`). The interpreter loop is `$C2:0222`; after every op the next
+  op's address is saved in `$0C87/$0CAF/$0CD7 + task`; `00` returns from a
+  `24` call and, at depth -1 (`$0CFF + task`), ends the task. The task
+  runner `$C0:22F0` keeps its stack pointer in `$75` and calls each task at
+  its resume address `$0BBF/$0BE7/$0C0F + task` (`$0B97 + task` = frames to
+  skip first). So a native op that must wait rewinds the saved script
+  pointer to itself, sets the resume address to `$C2:0211` (reloads that
+  pointer and continues), sets S = `$75` - 3 and `RTL`s to the runner
+  (`title_op` `.again`). Looping inside the script instead holds the whole
+  main loop (nothing else runs, e.g. the stream feeder).
 * Intro path (mode `$A9`) setup script `$C6:FC93`; title without intro (mode
   2) handler list `$C7:1783` (2 = `$C7:17D1` load, 4 = `$C7:17DE` OBJ
   archives, 6 = `$C7:17E3` draw).
@@ -108,12 +178,21 @@ script accumulator (`61` = add).
   Options: `0204` → `1001` → `0401` → song 1 → `0002`.
 * All APU port accesses are in `$C0:0DC0-$C0:1130`.
 
-* Title menu SFX (group 2): `1` cursor move, `4` accept, `3` back (only
-  on Options). Hudson plays them on voice 0, sample `$20` (DIR `$FD`),
-  ADSR `$FF/$E0`, a frame every ~16 ms. Captured with
-  `tools/mesen/sfx_capture.lua` on a base-ROM copy whose title song is
-  silenced (cmd byte of `$80:8655` entry 2 = 0), converted by
-  `tools/capture_sfx.py`. Mesen's `spc.cycle` counts at **2.048 MHz**.
+* Menu SFX (group 2): `1` cursor move, `4` accept, `3` back. SB5 plays
+  them on voice 0, sample `$20` (DIR `$FD`), ADSR `$FF/$E0`, a tick every
+  ~16 ms (seen with `tools/mesen/sfx_capture.lua` / `tools/capture_sfx.py`,
+  research tools the build no longer uses). Mesen's `spc.cycle` counts at
+  **2.048 MHz**. The hack replaces the three with recordings (below).
+* Uploads: `$C0:0F13` handshake (port 1 = `$10`, waits `$AA`/`$BB`, kick
+  `$4B` = `$CC`), `$C0:0F62` sends the list at `[$48]` = blocks `[length,
+  ARAM address, data]` until a zero length (`$03D1` = 1: one raw block of
+  `$4C` bytes to `$03CF`), `$C0:0F35` ends the session (jump address = the
+  two bytes after the list; Hudson's loader ignores it). All end in `RTS`.
+  Sets: `$85:F69B + 3*set` -> list. Songs: `$DA:C2E0 + 2*song` -> record in
+  bank `$DA` = [list pointer, first sample address, sample ids, `$FF`];
+  samples `$DA:D042 + 3*id` (sizes `$DA:D1BF + 2*id`) are sent one after
+  the other. Music id n = set `$26 + n` (its sequence, at `$3000`) + song
+  n - 1.
 
 ## Sound driver (Hudson, ARAM)
 
@@ -128,6 +207,47 @@ script accumulator (`61` = add).
 * `$0ADC` `JMP $FFC0` (real IPL) is a different, full-reset path.
 * ARAM while the title is up: sets `$3000-$5924`, title song 1 at
   `$7000-$CFDF`.
+* ARAM map from the upload lists: song sequences `$3000-$4240` (sets
+  `$27-$3F`); SFX tables and sequences `$4400-$554C` (common set 1: header
+  `$4400` = pointers to the SFX pointer table `$4410`, the instruments
+  `$44D0` (4 bytes: sample, ADSR1, ADSR2, gain; 0-1 common, 4-27 world
+  sets from `$44E0`) and the priorities `$4550`; world sets 2-14 continue
+  those tables); voice sets `$5600-$575E`; SFX samples `$5800-$5847`
+  (common), `$5900+` / `$6580-$7FB1` (world); song samples from `$5900`,
+  `$7000`, `$8000` or `$9000` up to `$E0F4` at most; directory `$FD00 +
+  4*n` and tuning `$FE00 + 4*n` (songs use entries 0-`$14`, sets
+  `$20-$38`). Echo buffer = `$FD00 - $800 * EDL`; EDL comes from the song
+  header (op `07 00 volL volR EDL feedback FIR flags`; `07 nn` = defaults,
+  EDL 1; boot jingle 11, most songs 3-4).
+* Song header (first word list at `$3000`, then ops at driver `$1398`):
+  `00` end, `01 mask + pointers` tracks, `02 n`, `03 n + 4n` instruments,
+  `04 n + 4n`, `05/06/09 n + 2n`, `07` echo, `08 n`.
+* SFX engine (driver `$28B2`, 4 channels, state at `$0679-$06EC`): an SFX =
+  [channel mask, track pointer per set bit]. Track bytes below `$D0` are
+  notes (high nibble 1-12 = note, 0 = rest; with default length 0 the next
+  byte is the length in ticks, else length = default * (low nibble + 1));
+  `D0` end, `D1 n` default length, `D2 n` octave, `D3`/`D4` octave up /
+  down, `D5` tie, `D6 n` volume (max `$4F`), `D7 n` volume add, `D8 n` pan
+  (0-`$1F`), `D9 n` pan add, `DA n` detune, `DB n` detune add, `DC n`
+  pitch slide, `DD n` instrument, `DE n` transpose, `E0 n` ... `E1` loop,
+  `E2 n` transpose add, `E3`/`E4` echo on / off, `E5 a16` jump, `E8 lo hi
+  len` raw pitch (needs a note played before on that channel), `E9 n len`
+  raw pitch add. Pitch of a note = table(note + 12 * octave + tuning byte
+  2 + transpose) scaled by tuning bytes 0-1, + detune.
+* Hack, SB6 menu SFX (`tools/sb6/features/title_music.py`): the three
+  recordings are BRR samples at ARAM `$B900-$DCFF` (directory / tuning
+  entries `$39-$3B`, instruments 28-30 at `$4540`); SFX 1/3/4 become
+  `01 ptr, D1 00, DD inst, D2 octave, D8 0F, D6 4F, note, ticks, D0`
+  written over SB5's sequences. Notes (octave 2 note 7, octave 2 note 4,
+  octave 1 note 12) give pitches `$05E9`, `$04FA`, `$03F3` (read from
+  voice 0 in Mesen), and each recording is resampled to its pitch. Only
+  songs that leave the area alone keep them (3 Normal menu, 18 Battle
+  menu, 26, 10, 16, 20, 28, 29, 31, 32: samples end below `$B900` and EDL
+  <= 4); loading any other song puts SB5's sequences back, so stages still
+  beep - except song 0 (the boot jingle): its voice sample sits at
+  `$3400-$94C8`, over the SFX tables, so nothing is written there (doing
+  it cut "By Hudson" short; set 1 is loaded afterwards anyway). Not covered: a song that changes EDL in a track, the group-3 data
+  stream.
 
 ## Hooks installed by the hack
 
@@ -135,11 +255,14 @@ script accumulator (`61` = add).
 |---|---|---|
 | `$C0:0CED` | `85 9F EB C9 10` | title music stream (`asm/title_music.asm`) |
 | `$C0:0B2C` | `AD BF 03 D0 04` | stream feeder, once per main-loop pass |
+| `$C0:0E58` | `20 62 0F 20 35 0F` | set upload: SB6 menu SFX definitions again (`set_hook`) |
+| `$C0:0F0A` | `20 35 0F 9C D1 03` | song upload: SB6 menu SFX samples + definitions, or SB5's back (`song_hook`) |
 | title scripts | see `tools/sb6/features/title.py` | SB6 title graphics |
+| `$C7:1847` | `06 04 42 02 00 5B A0 60 34 10` | title: music and PUSH START wait for the intro |
 | co-op | see `tools/sb6/features/coop.py` | 3/4-player Normal Game (below) |
 | `$C7:10E2`, `$C7:0E27` | `24 4C 12 C7` | file confirm -> character selection (`asm/picker.asm`, below) |
 | `$C2:069B` | `7C 46 C1` | script op `FF 1A nn`: nn >= `$F0` runs `pick_op` |
-| `$C0:F421` | `22 E0 04 C0` | NMI: cursor glyph tiles of the picker (`pick_nmi`) |
+| `$C0:F421` | `22 E0 04 C0` | NMI: cursor glyph tiles of the picker (`pick_nmi`), which first calls `title_nmi` |
 | `$C0:01FA` | `A9 81 85 AA C2 30` | palette lookup: ids `$80+` of set 0 = bomber palettes (`pal_lookup`, `asm/bombers.asm`) |
 
 ## Script VM details, pads, OAM (found for the character selection)

@@ -2,8 +2,8 @@
 ;
 ; Plays one BRR voice (voice 7) from a ring buffer that the SNES CPU keeps
 ; filling, so a long recording (the SB6 title music) can play without fitting
-; in ARAM, and replays SB5's menu sound effects on voice 0 from DSP-write
-; scripts captured from Hudson's driver (tools/capture_sfx.py).
+; in ARAM, and plays the SB6 menu sound effects on voice 0 from DSP-write
+; scripts built by tools/sb6/features/title_music.py (sfx_tables).
 ;
 ; How it runs: the CPU uploads this driver through Hudson's own loader
 ; (ARAM $0FF0, entered with command $10 on port 1) together with a 3-byte

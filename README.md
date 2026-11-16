@@ -15,8 +15,11 @@ ser gravada num cartucho repro e rodar no hardware real.
 |---|---|
 | Abertura: logo HU3DSON (`assets/HU3DSON LOGO.png`) e ida direta ao título, sem a intro do SB5 | pronto (a intro do SB6 virá depois) |
 | Tela de título: fundo, personagens e logo do SB6 | pronto |
+| Tela de título: abertura do jogo Unity (câmera subindo, personagens caindo do centro para fora, logo descendo), logo com as cores animadas e troca ocasional de pose dos personagens | pronto (Start/A pula; voltando de um menu a abertura não repete; com o som da câmera e das quedas dos personagens; sem os pequenos deslocamentos das poses alternadas) |
 | Tela de título: opções entre logo e personagens, versão no rodapé | pronto (`version_text` em `assets/title/convert.json`) |
-| Tela de título: música do SB6 (streaming BRR) | pronto; SFX do menu (mover/confirmar) tocam junto com ela |
+| Tela de título: cursor do SB6 (`assets/title/Cursor.png`) | pronto: cabeça com o rosto do jogo Unity; depois de 3 s sem apertar nada ele olha para os lados ou para cima/baixo com um rosto sorteado; ao confirmar (A/Start) faz o aceno de confirmação e fica com o rosto de confirmação (sem o pulinho do cursor do SB5). As animações de "opção negada" e de apagar o progresso do Unity não existem neste menu |
+| Tela de título: música do SB6 (streaming BRR) | pronto; SFX do menu tocam junto com ela |
+| SFX de menu do SB6 (mover cursor, confirmar, voltar) | pronto no título e nos menus (Normal, Battle, senha...); durante as fases, onde a música ocupa a memória de som, continuam os bipes do SB5 |
 | Normal Game para 3-4 jogadores (multitap na porta 2) | pronto: escolha em NORMAL GAME → 1-4 PLAYER GAME; P3 vermelho no canto inferior esquerdo, P4 azul no inferior direito; vidas compartilhadas, Start para voltar; ovos e Louies usam páginas de sprite livres da fase (nas 8 fases sem espaço sobrando ainda podem aparecer embaralhados) e mantêm as cores (se faltar paleta, P3/P4 usam as cores do P1 por alguns instantes). Nas lutas contra chefes o rival fica no slot do P5 e os 4 jogadores lutam (P3 nasce à esquerda do P1, P4 à direita do P2); só na ZONE3-D (dois rivais) o P4 fica de fora e volta na fase seguinte com seus itens |
 | Seleção de personagem e cor no Normal Game | pronto: depois de escolher o arquivo (New Game ou Continue) abre a tela CHARACTER SELECT da Batalha com um cursor por jogador; **R** avança e **L** volta a cor (os outros personagens: branco, preto, vermelho, azul, verde, amarelo; o Bomberman: todas as colunas de `assets/bombers/BombermanPallete.png` menos a primeira, que é o modelo, na ordem da imagem); o Bomberman e os personagens redesenhados (`charN_sb6.png`) aparecem na grade com a arte do SB6 (pose de frente da folha); o cursor mostra **L + R** em cima e o número do jogador embaixo; **A** confirma, **B** volta para a lista de arquivos. A escolha vale para a campanha toda |
 | Paletas dos sprites: jogadores com 15 cores, Louies e ovos em paleta própria | pronto: uma paleta de sprite guarda até 2 cores de Louie (8 cores cada, o contorno é comum) e todos os Louies da mesma cor a dividem; o ovo usa as cores do Louie rosa, então só aparece se houver uma metade livre (ou já com o rosa) ou uma paleta livre só para ele; com as 2 metades ocupadas, o Louie que nasce vira um dos 2 que já existem; morrer não troca mais as cores do jogador. Falta tratar chefes e fases que usam mais paletas (zona 5) |
@@ -131,7 +134,12 @@ a partir do vizinho do Bomberman):
 * `charN_pallete.png`: no mesmo formato do `BombermanPallete.png` (começa como
   uma cópia dele). A 1ª coluna são as cores-chave do Bomberman, e as outras
   colunas são as cores que o L / R escolhe (todas, não só seis). Pinte a
-  folha com as cores do `bomber_sb6.png`.
+  folha com as cores do `bomber_sb6.png`. Também pode ser uma paleta com
+  cores-chave próprias (por exemplo a de 44 colunas com linhas a mais, como
+  nos chars 4, 5 e 6): aí a folha é pintada com a 1ª coluna dessa imagem.
+  Um sprite de SNES tem só 15 cores; se a folha usar mais, o build junta as
+  menos usadas com a cor mais parecida e lista no final quais juntou.
+  Personagens com a mesma imagem de paleta dividem as mesmas cores na ROM.
 
 Todo personagem com folha entra no jogo e na grade da seleção com a arte do
 SB6, mesmo que a folha ainda seja igual à do Bomberman: é só editar a folha e
@@ -173,7 +181,7 @@ multitap (Super Multitap) na **porta 2**.
 
 * `Super Bomberman 6.sfc`: a ROM (4 194 304 bytes, checksum corrigido)
 * `sb6.map`: mapa de tudo que foi alocado e de cada byte original alterado
-* `title_preview.png`: tela de título do jogo Unity comparada com o resultado convertido
+* `title_preview.png`: quadros da abertura e das poses alternadas do título, desenhados a partir das mesmas tabelas que a ROM usa (o build falha se alguma etapa não sair como foi composta)
 * `boot_logo_preview.png`: a logo de abertura convertida
 * `cache/`: áudio BRR já codificado
 
@@ -194,7 +202,7 @@ Para ouvir a conversão da música sem emulador:
 ```
 assets/title/        imagens, layout e música vindos do fan game
 assets/bombers/      folha de poses do Bomberman (bomber.png) e a referência do SB5
-assets/              logo de abertura (HU3DSON LOGO.png), SFX capturados (sound/)
+assets/              logo de abertura (HU3DSON LOGO.png), sons do fan game (sound/)
 asm/                 código 65816 (asar)
 asm/spc/             código SPC700 (asar)
 tools/build.py       ponto de entrada do build

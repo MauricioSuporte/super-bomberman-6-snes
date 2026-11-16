@@ -58,7 +58,8 @@ hirom
 !w1      = !PK+$62
 !oamn    = !PK+$64      ; 4 bytes: OAM offset/4 of each seat's number
 !p4char  = !PK+$68      ; character whose cell uses OBJ palette 4 ($FF = none)
-!palpend = !PK+$69      ; 1 = the CGRAM shadow changed, sent once the VRAM queue is empty
+!palpend = !PK+$69      ; 1 = the CGRAM shadow changed, sent once the VRAM queue is empty (written as a word: +$6A too)
+!p4tile  = !PK+$6C      ; character whose cell has the tiles for palette 4 ($FF = none)
 
 org !E4
 
@@ -103,7 +104,14 @@ pick_op:
     cmp #$F0
     bcs +
     jml $C1467C
-+   phb
++
+if !TITLE_OP
+    cmp #$F8                        ; F8-FC: the animated title (asm/title_anim.asm)
+    bcc +
+    jml !TITLE_OP
++
+endif
+    phb
     pha
     lda #$7E
     pha
@@ -158,6 +166,7 @@ pick_op:
     sta.l !palpend
     lda #$FF
     sta.l !p4char
+    sta.l !p4tile
     plb
     rtl
 
@@ -340,7 +349,7 @@ if !OWN
     lda.l !cellpal
     cmp #$01
     beq +
-    lda #$80
+    lda.b #!OWNID
     ldx.b #!CPAL
     ldy #$10
     jsr upload
@@ -518,7 +527,7 @@ color:
     tax                             ; CGRAM index
     pla
     ldy #$10
-    cmp #$80
+    cmp.b #!OWNID
     bcs +
     cmp.b #!PALS+1
     bcc +
@@ -606,7 +615,7 @@ upload:
     rep #$30
     and #$00FF
     phx
-    cmp #$0080
+    cmp.w #!OWNID
     bcs .own
     cmp #$0050
     bcs .bad
@@ -622,7 +631,7 @@ upload:
 .own:
 if !OWN
     sec
-    sbc #$0080
+    sbc.w #!OWNID
     cmp.w #!PALN                    ; Bomberman's and the other characters' own palettes
     bcs .bad
     asl a
@@ -908,6 +917,9 @@ hide:
 ; SB6 pose, rows !CTILE and !CTILE + $10) and the empty BG tiles under it.
 pick_nmi:
     jsl $C004E0
+if !TITLE_NMI
+    jsl !TITLE_NMI                  ; the animated title's transfers and scroll
+endif
     php
     sep #$20
     lda.l !live
@@ -918,7 +930,13 @@ pick_nmi:
     bne .quit
     lda.l !gfx
     cmp #$FF
-    beq .quit
+    bne .busy
+if !XN
+    jsr xswap                       ; the cell in OBJ palette 4: its own color indices
+endif
+    plp
+    rtl
+.busy:
     lda.l $7E0CE0
     cmp #$C6
     bne .quit
@@ -993,7 +1011,7 @@ if !XN
 endif
     lda #$01
     sta.l !gfx
-    bra .out
+    brl .out
 .glyphs:
 endif
     rep #$20
@@ -1092,6 +1110,9 @@ xc_y:
 xc_t:
     db !XT
     incsrc "!XDATA"
+xswap:
+    incsrc "!XSWAP"
+    rts
 endif
 glyph_tiles:
     incbin "!GLYPHS"

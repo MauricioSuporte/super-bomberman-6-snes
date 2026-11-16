@@ -436,7 +436,7 @@ bomber_loop:
 ; Replaces `LDA #$09 / STA $AB` at $C4:37C1; the id is at 4,S.
 bomber_palcount:
     LDA 4,S
-    CMP #$80                        ; (own palettes, below)
+    CMP.b #!OWNID                   ; (own palettes, below)
     BCS .all
     CMP.b #!PALS+1
     BCC .all
@@ -461,7 +461,7 @@ bomber_palcount:
     RTL
 
 ; Palette lookup ($C0:01DE: A = id, set $0AE7 -> [$A8] = palette, bank $81).
-; Ids $80 + n of set 0 are the bomber palettes of BombermanPallete.png
+; Ids !OWNID + n of set 0 (the cartridge's end at $59) are the bomber palettes of BombermanPallete.png
 ; (column n + 1), table !PALTAB (words, data in the table's bank). The other
 ; characters' palettes follow them in the table: !XLAT (byte per id 1-$50,
 ; 0 = stock) is the table entry + 1 that replaces a stock id. Replaces
@@ -471,7 +471,7 @@ pal_lookup:
     STA $AA
     LDA $0AE7
     BNE +
-    CPY #$7F
+    CPY.b #!OWNID-1
     BCS .own
     CPY #$50
     BCS +
@@ -483,7 +483,7 @@ pal_lookup:
 .own
     TYA
     SEC
-    SBC #$7F
+    SBC.b #!OWNID-1
 .tab
     TAY
     REP #$20

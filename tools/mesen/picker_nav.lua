@@ -32,7 +32,7 @@ emu.addEventCallback(function()
     end
     if mode>=0x0D and mode<0x74 and not stage then stage=f L("stage reached mode "..string.format("%02X",mode)) end
     if stage and (f-stage==560 or f-stage==600) then shot("stage"..(f-stage)) L("obj "..hx(0x17FA,6).." st "..hx(0x15A2,5).." x "..hx(0x1602,4)) end
-    if stage and f-stage==(tonumber(os.getenv("STAGE_WAIT") or "520")) then shot("stage") L("chars "..hx(0x16C2,5).." pal "..hx(0x16DA,5).." 1D24/25="..hx(0x1D24,2).." count="..hx(0x129,1)) fin() end
+    if stage and f-stage==(tonumber(os.getenv("STAGE_WAIT") or "520")) then shot("stage") L("chars "..hx(0x16C2,5).." pal "..hx(0x16DA,5).." 1D24/25="..hx(0x1D24,2).." count="..hx(0x129,1).." cg90="..cg(0x90,16).." cgA0="..cg(0xA0,16)) fin() end
   elseif st=="pick" then
     pt=pt+1
     if pt==2 then L("6269="..hx(0x6269,5).." 1039="..hx(0x1039,1)) end
@@ -45,7 +45,7 @@ emu.addEventCallback(function()
         if b~="a" and b~="b" then wait=30 end
       end
     end
-    if hold==0 and wait==20 and step>1 then shot("pick"..picks.."_"..(step-1)) L("  col="..hx(0x6264,5).." char="..hx(0x625F,5).." cg80="..cg(0x80,16).." 1038="..hx(0x1038,1).." 1040="..hx(0x1040,1)) end
+    if hold==0 and wait==20 and step>1 then shot("pick"..picks.."_"..(step-1)) L("  col="..hx(0x6264,5).." char="..hx(0x625F,5).." cg80="..cg(0x80,16).." p4="..string.format("%02X %02X",emu.read(0x7FFF68,emu.memType.snesMemory),emu.read(0x7FFF6A,emu.memType.snesMemory)).." cgC0="..cg(0xC0,16).." cgF0="..cg(0xF0,16).." 1038="..hx(0x1038,1).." 1040="..hx(0x1040,1)) end
     if mode~=4 then L(string.format("picker left f=%d pt=%d mode=%02X pc9=%06X 16C2=%s 16DA=%s",f,pt,mode,pc9(),hx(0x16C2,5),hx(0x16DA,5))) st="nav" step=1 phase=4 wait=60 end
     if pt>2500 then L("picker timeout pc9="..string.format("%06X",pc9()).." 1038/39="..hx(0x1038,2)) shot("timeout") fin() end
   end

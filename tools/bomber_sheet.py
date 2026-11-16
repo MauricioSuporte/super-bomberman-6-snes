@@ -108,11 +108,23 @@ def check_chars(rom, ref):
         try:
             own = bomber.load_scripts(scripts, ref["br"].cols) if os.path.exists(scripts) else {}
             brc = bomber.BomberRom(rom, {**ref["br"].scripts, **own}, 0)
-            cells, edited, n = bomber.read_sheet_like(brc, sheet, ref["sheet"], ref["br"], ref["cells"],
-                                                      ref["notes"]["cmap"], ref["notes"]["sb5"])
-            same = dict(ref["br"].poses())
-            edited |= {a for a, maps in brc.poses() if len(maps) != len(same[a])}
-            pals = bombers._char_palettes(ref["palette"], pal, ref["notes"]["used"])
+            if bombers._key_column(pal) != bombers._key_column(ref["palette"]):
+                # painted with the key colors of its own palette picture
+                raw, counts, loose = bomber.sheet_pixels(brc, sheet, ref["sheet"])
+                if not counts:
+                    print(f"char{c}: sheet not painted yet (Bomberman's art is used)")
+                    continue
+                cmap, pals, snapped, merged = bomber.own_layout(counts, pal, [tuple(k) for k in ref["notes"]["fixed"]],
+                                                                loose, merge=True)
+                cells, edited, n = bomber.own_cells(raw, cmap), {a for a, maps in brc.poses() if maps}, dict(snapped=snapped)
+                if merged:
+                    print(f"char{c}: mais de 15 cores; as menos usadas ficam com a cor mais parecida:\n  " + "\n  ".join(merged))
+            else:
+                cells, edited, n = bomber.read_sheet_like(brc, sheet, ref["sheet"], ref["br"], ref["cells"],
+                                                          ref["notes"]["cmap"], ref["notes"]["sb5"])
+                same = dict(ref["br"].poses())
+                edited |= {a for a, maps in brc.poses() if len(maps) != len(same[a])}
+                pals = bombers._char_palettes(ref["palette"], pal, ref["notes"]["used"])
             strips, _, mappings, streamed = bomber.convert(brc, cells, edited, stream=True)
         except ValueError as e:
             raise ValueError(f"char{c}: {e}")

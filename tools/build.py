@@ -48,6 +48,10 @@ def main():
         rb.add_region(f"obj_f{bank & 15}", bank << 16, (bank + 1) << 16, "OBJ sheets: raw 4bpp strips (bombers)")
     for bank in range(0xEC, 0xF0):
         rb.add_region(f"stream_{bank:02x}", bank << 16, (bank + 1) << 16, "bomber poses streamed one by one (DMA source)")
+    rb.add_region("title_fc", 0xFC0000, 0xFD0000, "title intro: pan and drop sounds (streamed BRR, one bank)")
+    for bank in (0xFA, 0xFB):
+        rb.add_region(f"title_f{bank & 15:x}", bank << 16, (bank + 1) << 16,
+                      "animated title: tiles, maps, tables, code (DMA sources)")
     rb.add_region("objmap", 0xF38000, 0xF40000, "sprite mappings, used through bank $B3 (the drawer needs WRAM in DBR)")
     rb.add_region("objmap2", 0xF48000, 0xF50000, "sprite mappings of more characters (bank $B4)")
     rb.add_region("objmap3", 0xF58000, 0xF60000, "sprite mappings of more characters (bank $B5)")
@@ -64,16 +68,21 @@ def main():
     boot = boot_logo.convert(os.path.join(ROOT, "assets", "HU3DSON LOGO.png"))
     print(f"boot logo: {boot['count']} tiles, palette error {boot['error']:.0f}")
     boot["preview"].save(os.path.join(args.out, "boot_logo_preview.png"))
-    info = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot)
-    print(f"title: {info['tiles']} tiles, palette error {info['error']:.0f} (start {info['start']}), "
-          f"arrangements {info['arr_bytes']} bytes")
-
+    # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),
-                              os.path.join(ROOT, "assets", "sound", "title_sfx.json"),
-                              os.path.join(args.out, "cache"))
+                              os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"),
+                              drop_frames=title.drop_frames(os.path.join(ROOT, "assets", "title")))
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
-          f"CPU code {music['code']} B; menu SFX replayed: {music['sfx']}")
+          f"CPU code {music['code']} B; intro sounds {music['pan']} bytes; SB6 menu SFX {music['sfx']} in "
+          f"{music['sfx_bytes']} bytes of ARAM, kept by songs {music['safe']}")
+
+    tinfo = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot,
+                        os.path.join(args.out, "cache"), music["pre_start"])
+    st = tinfo["stats"]
+    print(f"title: sky {st['sky']} tiles, scene {st['scene']} + 2 x {st['scratch']} for alternate poses, "
+          f"logo {st['logo']}, falling waves {st['waves']}; {st['frames']} intro frames, {st['jobs']} transfers; "
+          f"palette error {tinfo['error']:.0f} + logo {tinfo['logo_error']:.0f} (start {tinfo['start']})")
 
     bomber = bomberman_sprites.apply(rb, os.path.join(ROOT, "assets", "bomberman"))
     print(f"bomberman: {bomber['tiles']} tiles and {bomber['palettes']} palettes changed")
@@ -93,7 +102,7 @@ def main():
         info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir)
     sheets.finish()
 
-    pick = picker.apply(rb, base_rom, info)
+    pick = picker.apply(rb, base_rom, info, tinfo["syms"])
     print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")
 
     coop.apply(rb, louie["louie_tick"], pick)
@@ -101,7 +110,11 @@ def main():
     for ch in info["chars"] if info else []:
         n = ch["notes"]
         print(f"char{ch['char']}: Bomberman's layout, {n['edited']} animations redrawn in {ch['strips']} KB of tiles, "
-              f"the others his; {ch['colors']} colors" + (" (his palettes)" if ch["shared"] else " (own palettes)")
+              f"the others his; {ch['colors']} colors"
+              + (" (his palettes)" if ch["shared"] else f" (own palettes from {ch['pal0']}"
+                 + (", own key colors)" if n.get("own") else ")"))
+              + (" - SHEET NOT PAINTED YET: Bomberman's art" if n.get("blank") else "")
+              + ("".join(f"\n    more than 15 colors: {m}" for m in n.get("merged", [])))
               + (f", {ch['scripts']} own sequences" if ch["scripts"] else "")
               + (f"; {n['snapped']} pixels off-palette (nearest color used)" if n["snapped"] else ""))
     if info and info["sheet"]:
