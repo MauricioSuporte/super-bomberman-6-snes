@@ -341,10 +341,11 @@ def _h(v, digits):
     return f"${v:0{digits}X}"
 
 
-def apply(rb, wav, sound_dir, cache_dir, first_bank=0xE5, drop_frames=()):
+def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=()):
     """sound_dir holds title_pan.wav, title_drop.wav and the menu SFX;
     drop_frames = frames of the intro (from the pan's first) where a wave of
-    characters starts to fall."""
+    characters starts to fall; game_sfx = the symbols of asm/game_sfx.asm
+    (in-game SFX, called from the hooks here)."""
     # Hudson's loader (uploaded at boot) must hold the RET the driver hooks.
     o = off(HUDSON_LOADER)
     if rb.d[o + 3:o + 9] != bytes.fromhex("8F AA F4 8F BB F5") or rb.d[o + 0x51:o + 0x54] != bytes.fromhex("6F CD 01"):
@@ -412,7 +413,8 @@ def apply(rb, wav, sound_dir, cache_dir, first_bank=0xE5, drop_frames=()):
                     PRE_LOOP_OFF=_h(len(pan) - CHUNK, 4),
                     LOOP_BANK=_h(pos[0][0], 2), LOOP_OFF=_h(pos[0][1], 4),
                     END_BANK=_h(pos[n][0], 2), END_OFF=_h(pos[n][1], 4),
-                    SFX_SLOTS=sfx_slots.replace("\\", "/"))
+                    SFX_SLOTS=sfx_slots.replace("\\", "/"),
+                    **{f"GS_{k.upper()}": _h(game_sfx[f"gs_{k}"], 6) for k in ("sound", "tick", "set", "song")})
     runs, syms = asar.assemble_into(rb.d, ASM_CPU, cpu_defs)
     lo, hi = off(code_addr), off(syms["end"])
     for o, data in runs:

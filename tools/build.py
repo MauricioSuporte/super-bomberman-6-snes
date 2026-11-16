@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, louies, picker, title, title_music  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, picker, title, title_music  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,9 +68,14 @@ def main():
     boot = boot_logo.convert(os.path.join(ROOT, "assets", "HU3DSON LOGO.png"))
     print(f"boot logo: {boot['count']} tiles, palette error {boot['error']:.0f}")
     boot["preview"].save(os.path.join(args.out, "boot_logo_preview.png"))
+    # in-game SFX (cornered, deaths): code called from the sound hooks of title_music
+    gsfx = game_sfx.apply(rb, os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"))
+    print(f"game SFX: R = {gsfx['r_bytes']} bytes of ARAM $5900 (SB1 death {gsfx['death']}, enemy {gsfx['enemy']}); "
+          f"cornered {gsfx['corner_seconds']:.2f} s at {gsfx['corner_rate']:.0f} Hz = {gsfx['a']} + {gsfx['b']} bytes "
+          f"(B at ${gsfx['b1']:04X} / ${gsfx['b2']:04X}), cut short in songs {gsfx['short']}")
     # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),
-                              os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"),
+                              os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"), gsfx["syms"],
                               drop_frames=title.drop_frames(os.path.join(ROOT, "assets", "title")))
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "

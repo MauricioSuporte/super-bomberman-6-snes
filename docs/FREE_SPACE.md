@@ -37,6 +37,7 @@ sequenced driver).
 | `$7F:FE00-$7F:FE66` | streamed bomber poses (`asm/bombers.asm`): `+$00` mapping in each seat's page, `+$06` pending DMA per slot (2 * seat + half, `$A5`), `+$10` `$073F` set per seat, `+$1A` table entry per slot, `+$2E` VRAM per slot, `+$42` `$5AA5` once cleared (from the title, `pick_tick`), `+$44-$57` scratch, `+$58` stock `$073F` per seat (restored when another animation's pose follows), `+$62` animation of each seat's streamed pose. Ignored by the NMI until cleared. |
 | `$7F:FF00-$7F:FF7F` | character selection (`asm/picker.asm`): `+$00` picker running, `+$01` choices valid, `+$02` choice of 5 seats, `+$08` color of 5 seats, `+$10` saved `$1032-$104F`, `+$30` saved `$1D20-$1D3F`, `+$50` scratch, `+$5C` glyph tiles sent, `+$5D` glyph sprites drawn, `+$5E` cell sprite colors loaded, `+$60` scratch, `+$64` OAM of the seat numbers, `+$68` character whose grid cell uses OBJ palette 4, `+$69` CGRAM shadow changed (sent when the VRAM queue is empty), `+$6A` high byte of that word, `+$6C` character whose grid cell holds the tiles for OBJ palette 4. `$7F:E000-$7F:FFFF` was never written in a 12 000-frame run (title, menus, picker, Zone 1); flags are compared with exact values and cleared on the title, so they do not depend on the reset contents. |
 | `$7F:FD00-$7F:FD3C` | animated title (`asm/title_anim.asm`): `+$00` `$5AA5` once started, `+$02` state (0 off, 1 loading, 2 waiting for the fade-in, 3 intro, 4 idle), `+$03` intro seen, `+$04` logo landed, `+$05` main screen layers, `+$06` list/frame offset, `+$08` loading the finished scene, `+$0A`/`+$0C` BG1/BG2 V scroll, `+$0E` pad held, `+$0F`-`+$15` idle counters and RNG, `+$16`-`+$1D` the two alternate-pose areas, `+$1E` 7 character timers, `+$26`-`+$2D` scratch, `+$2E`-`+$39` menu cursor (frames without input, animation 0 rest / 1-4 look around / 5 confirming / 6 confirmed, its frame and face, pose and sprite frame in VRAM, refresh counter, scratch, the cursor Y / menu `$1036` / menu Y `$1034` when the confirmation began), `+$3A` cursor visible last frame, `+$3B` forced resend, `+$3C` `FF 1A FC` frame wait). Only read after the signature matches. |
+| `$0188-$018C` | in-game SFX (`asm/game_sfx.asm`): `$0188` R in ARAM, `$0189` restore state, `$018A` restore wait, `$018B` song last uploaded, `$018C` command waiting for the next main-loop pass (cornered / enemy hit). Zero after reset (0 = song 0, whose samples cover R). |
 | `$0160-$0187` | Louie palettes (`asm/louies.asm`): `$0160` half of each actor (24 bytes, 0 = none), `$0178` users of the 3 halves, `$017B` palette id in each half, `$017E` OBJ slot of the main / spare palette (0 = none), `$0180-$0187` scratch. Zero after reset; forgotten when the slot table loses the `$FF` mark (new stage). |
 
 ## ARAM (sound RAM)
@@ -46,6 +47,15 @@ SB6 menu SFX: samples at `$B900-$DCFF` (~9 KB used), directory entries
 (`$4540-$454B`), and the first 16 bytes of SB5's SFX 1/3/4 sequences
 (`$45B0`, `$45F8`, `$4618`). Present only while the stream or a song that
 leaves `$B900-$DCFF` alone is loaded (docs/ROM_MAP.md, "Sound").
+
+In-game SFX (`tools/sb6/features/game_sfx.py`): R = `$5900-$6579`
+(SB5's group-3 voice buffer; sequences of SFX `$5E-$60`, a silent END block,
+the SB1 death and enemy samples, part A of the cornered recording) while the
+current song leaves it alone; part B of the recording (1359 bytes) right
+below `$DD00` (echo buffer), or below `$B900` for songs that keep the menu
+SFX. Pointer table entries `$448A-$448F`, priorities `$458D-$458F`,
+instruments 2-3 (`$44D8`) and 31 (`$454C`), directory / tuning entries `$1F`,
+`$3C`, `$3D`. Sizes are printed by the build.
 
 While the title music streams, the stream driver owns `$7000-$B8FF`
 (driver + SFX scripts `$7000-$72FF`, ring `$7300-$B89B`,

@@ -173,6 +173,38 @@ script accumulator (`61` = add).
   * others: `$80:8655 + 3*id` = `[set, song, cmd]` → `$C0:0E31` set upload
     (if ≠ `$03CE`), `$C0:0E9C` song upload (if ≠ `$03CD`), then the command
     twice through `$C0:0E7F`.
+* Group 3 in detail: `$80:8765 + 2*id` = `[set, command]`; the task at
+  `$C0:0FEC` takes the set's first upload block and sends it with port-1
+  command `$31` (`$C0:106C`, at most `$40` bytes per main-loop pass, skipped
+  on lag frames), then sends the command as an SFX (`$03C3`, `$C0:1135`).
+  Every set targets ARAM `$5900` (the voice buffer, up to `$70F1`). Id 1 =
+  player death (set `$48`, `$7CE` bytes, SFX `$4F`; callers `$C4:3674`
+  Battle, `$C4:3684` Normal): ~32 frames of transfer before the sound, the
+  "late" death sound. Ids 2 (`$C4:2FA3`), 3 (`$C4:33F6`, Battle), 4
+  (`$C5:08C8`); 5-13 = SFX `$26-$2E`, 14-17 = SFX `$68`.
+* SFX command c (port 0, `$C0:0E7F`) = entry c - `$21` of Hudson's pointer
+  table `$4410` (priority `$4550 + entry`). Group 2 id `$33` = enemy death
+  (`$C5:3BD6`, SFX `$57`), id `$0C` explosion (`$2C`), id 6 bomb drop
+  (`$26`). Commands `$5D-$66` are referenced by no table (entries `$3D-$45`
+  all point at one sequence). SB5's stage SFX use channel masks 1/2/4 only.
+* Stage music: script ops `42 id 00` with ids 6-`$0E` (worlds), `$0F`,
+  `$14`, `$15` (songs 5-14, 19, 20).
+* Hack, in-game SFX (`tools/sb6/features/game_sfx.py`, `asm/game_sfx.asm`):
+  SFX `$5E` cornered (recording), `$5F` enemy death and `$60` player death
+  (Super Bomberman 1's samples and notes: its sound commands `$16` / `$1F`
+  via `$C4:8522`, voice 0, ADSR `$DF/$94`; death = 8 key-ons alternating
+  pitch `$09C4` / `$05DC`, enemy = one at `$04B0`). Group 3 id 1 is answered
+  by `gs_sound` (the death sound now starts with animation `$16`), animation
+  `$21` of a seat bomber by `gs_anim`. The object code never talks to the
+  SPC: `gs_anim`/`gs_enemy` leave the command in `$018C` and `gs_tick`
+  (main loop) sends it; waiting for the SPC inside the setter delayed the
+  frame and characters 1/4 lost the tile DMA of animation `$21`. Enemy hit: `$C3:4D41` (the enemy object becomes type 0 with
+  its death "puff", animation from `$C3:B930`) calls `gs_enemy`; SB5's own
+  enemy sound, group 2 id `$33` (`$C5:3BD6`), comes ~70 frames later with
+  the score and is now silent. Set `$48`
+  now uploads R (used to restore it after another group-3 voice). Hudson
+  note n (12 * octave + note) with tuning `04 0C 00 CE` plays at
+  ~1011 * 2^((n-24)/12).
 * Script music load `$C0:1171` uploads its song unconditionally.
 * Title flow: `0401` (sets), `$C0:1171` song 1, `0002` = play title music.
   Options: `0204` → `1001` → `0401` → song 1 → `0002`.
@@ -257,6 +289,9 @@ script accumulator (`61` = add).
 | `$C0:0B2C` | `AD BF 03 D0 04` | stream feeder, once per main-loop pass |
 | `$C0:0E58` | `20 62 0F 20 35 0F` | set upload: SB6 menu SFX definitions again (`set_hook`) |
 | `$C0:0F0A` | `20 35 0F 9C D1 03` | song upload: SB6 menu SFX samples + definitions, or SB5's back (`song_hook`) |
+| `$C0:11EC` | `99 9F 07 A9 00` | animation setter: cornered `$21` of a seat bomber plays SFX `$5E` (`gs_anim`, `asm/game_sfx.asm`) |
+| `$C3:4D41` | `BD C2 16 8D 51 1D` | enemy hit: SB1's enemy death SFX `$5F` (`gs_enemy`) |
+| `$85:F69B + 3*$48` | set `$48` pointer | group-3 set of SB5's death voice -> upload list of R (in-game SFX) |
 | title scripts | see `tools/sb6/features/title.py` | SB6 title graphics |
 | `$C7:1847` | `06 04 42 02 00 5B A0 60 34 10` | title: music and PUSH START wait for the intro |
 | co-op | see `tools/sb6/features/coop.py` | 3/4-player Normal Game (below) |

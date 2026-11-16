@@ -98,6 +98,12 @@ exec callback at `$C0:0AF9` (end of the pad reader).
   samples from scripts. A song whose samples or echo buffer reach that
   area gets SB5's beeps back; changing the notes in `MENU_SFX` means
   reading the new pitch from voice 0 in Mesen (`SFX_PITCH`).
+* In-game SFX (cornered, player/enemy death: `features/game_sfx.py`,
+  `asm/game_sfx.asm`) are Hudson SFX `$5E-$60` whose data sits in ARAM
+  `$5900-$657F` (SB5's group-3 voice buffer) + a part below the echo buffer;
+  title_music's sound/set/song/loop hooks call `gs_*`. Only send them while
+  `$0188` = 1 (R in ARAM). Research: `tools/spc_render.py` turns a Mesen log
+  of S-DSP writes into a WAV.
 * The title intro's sounds (pan, drops) are one pre-mixed stream in bank
   `$FC`; `PAN_LEAD_FRAMES` is the measured wait from its start to the pan.
   Mesen `spc.cycle` runs at 2.048 MHz.

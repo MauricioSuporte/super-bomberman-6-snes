@@ -20,6 +20,10 @@
 ;             rewrites the definitions, so it is followed by the SB6 ones
 ;             again while they are in use.
 ;
+; The same hooks call the in-game SFX code (asm/game_sfx.asm): GS_SOUND first
+; in the sound API while Hudson's driver runs, GS_TICK every pass, GS_SET /
+; GS_SONG inside the set / song upload sessions.
+;
 ; Uploads go through the game's own routines in bank $C0 ($0F13 handshake,
 ; $0F62 list of [length, ARAM address, data] blocks ending in a zero length,
 ; $0F35 end + jump address read after the list); they end in RTS, so they are
@@ -89,7 +93,15 @@ sound_hook:
     phx
     phy
     sep #$20
-    lda $06,s               ; group
+    lda.l !active
+    bne +
+    lda $06,s               ; in-game SFX (asm/game_sfx.asm) while Hudson's driver runs
+    xba
+    lda $05,s
+    jsl !GS_SOUND
+    bcc +
+    brl .swallow
++   lda $06,s               ; group
     cmp #$02
     bne .not_sfx
     lda.l !active
@@ -166,7 +178,8 @@ loop_hook:
     lda.l !active
     beq +
     jsr feed
-+   plp
++   jsl !GS_TICK
+    plp
     lda $03BF               ; replaced instructions
     bne +
     jml $C00B31
@@ -229,6 +242,7 @@ start_stream:
 ; ---- $C0:0E58 (JSR $0F62 : JSR $0F35), M/X 8-bit --------------------------
 set_hook:
     %c0call($C00F62)        ; the set
+    jsl !GS_SET             ; in-game SFX tables (and their samples when missing)
     lda.l !sfxnew
     beq +
     %sendlist(!L_NEW)       ; set 1 holds SB5's definitions
@@ -250,6 +264,7 @@ song_hook:
     lsr
     tax
     sep #$30
+    phx                     ; song number, for gs_song
     lda.l !SFX_SAFE,x
     beq .unsafe
     cmp #$02                ; the song's samples lie over the SFX tables (boot
@@ -274,6 +289,8 @@ song_hook:
     sta.l !sfxnew
     %sendlist(!L_ORIG)
 .end:
+    plx
+    jsl !GS_SONG            ; in-game SFX: samples, tables
     stz $03D1
     %c0call($C00F35)
     rtl
