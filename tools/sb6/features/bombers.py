@@ -192,6 +192,14 @@ def _key_column(path):
     return [im.getpixel((0, y)) for y in range(im.height)]
 
 
+PICK_ANIMS = (0x02, 0x20)       # walk down, victory: the picker's row of chosen characters
+
+
+def _pick_anims(br, cells):
+    """{animation: [(pose indices 64x64 or None, frames)]} of the picker's animations."""
+    return {a: [(cells.get((a, m)) if m else None, f) for m, f in br.anim(a)] for a in PICK_ANIMS}
+
+
 def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, ref):
     """Characters 1-9, laid out like Bomberman (char<n>_sb6.png +
     char<n>_pallete.png, optional char<n>_anims.txt over bomber_anims.txt).
@@ -271,6 +279,8 @@ def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, r
         except ValueError as e:
             raise BuildError(f"char{c}: {e}")
         info["stand"] = cells[(STAND, dict(brc.poses())[STAND][0])]
+        info["pick_anims"] = _pick_anims(brc, cells)
+        info["palettes"] = palettes
         # the lifted bomb sits as far above the head as on Bomberman's
         top, top0 = _carry_top(brc, cells), _carry_top(ref["br"], ref["cells"])
         if top is not None and top0 is not None:
@@ -451,4 +461,6 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
         result.update(strips=info0["strips"], poses=len(pieces), max_pieces=max(pieces), scripts=len(br.scripts))
         if palettes:
             result["stand"] = cells[(STAND, dict(br.poses())[STAND][0])]
+            result["pick_anims"] = _pick_anims(br, cells)
+            result["palettes"] = palettes
     return result

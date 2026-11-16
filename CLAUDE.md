@@ -22,7 +22,7 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 
 * `tools/sb6/features/<feature>.py` — one feature per module, `apply(rb, …)`.
 * Native code called from a script: op `FF 1A nn` with nn >= `$F0`
-  (`pick_op` in `asm/picker.asm`); add new values there (`$F8-$FB` are the
+  (`pick_op` in `asm/picker.asm`, `$F0-$F4` its own); add new values there (`$F8-$FB` are the
   animated title's). Scripts cannot wait: a native op that must wait puts
   its task to sleep (`title_op` `.again`, docs/ROM_MAP.md "Script tasks").
 * Title scene (BG1/BG2): `features/title_anim.py` builds pictures, palettes,
@@ -52,6 +52,13 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   edited ones get new tiles. Palettes equal to his share his ids `$5A + n`.
   Animations over 32 tiles are streamed pose by pose (<= 16 tiles each,
   double-buffered page, `bomber_stream` / `stream_nmi` in asm/bombers.asm).
+* Character select (Normal Game): `features/picker.py` + `asm/picker.asm`
+  redraw SB5's Battle picker like the SB6 fan game's SkinSelect: SB5's
+  script sets the screen up, then its task sleeps in `pk_loop` while
+  `pick_tick` (logic, OAM) and `pick_nmi` (VRAM) run ours. Grid = the
+  columns of `assets/picker/CharacterSelectPortrait.png`; one seat chooses
+  at a time; top row = animations 02 / 20 of each character (<= 8 16x16
+  sprites per pose). State in `$7F:FC00` (docs/FREE_SPACE.md).
 * Bomber colors: every column of `BombermanPallete.png` after the first is
   palette id `$5A + n` of set 0 (`OWN_ID`, `pal_lookup`); columns 1-6 also
   replace the stock ids 1-6. A `char<n>_pallete.png` whose first column is

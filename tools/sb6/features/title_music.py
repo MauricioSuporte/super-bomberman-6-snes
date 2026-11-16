@@ -41,6 +41,7 @@ ASM_CPU = os.path.join(ROOT, "asm", "title_music.asm")
 ASM_SPC = os.path.join(ROOT, "asm", "spc", "stream.asm")
 
 RATE = 16000              # pitch $0800
+PALETTE_SFX = 0x1E        # group-2 id of the picker's color change sound
 # The Normal Game's save file / character selection music: 40 s would take
 # 360 KB at 16 kHz, so it streams at 12 kHz (270 KB, in the tails of the
 # banks the title uses and banks $FD-$FF).
@@ -67,11 +68,18 @@ PAN_REGION = "title_fc"   # one bank for the pan sound's chunks
 # resampled to that pitch, so each sound has its own rate (11.9 / 10 / 7.9 kHz).
 MENU_SFX = [
     (1, "menu_move.wav", 0.20, (2, 7)),
-    (4, "menu_confirm.wav", 0.80, (2, 4)),
+    (4, "menu_confirm.wav", 0.70, (2, 4)),
     (3, "menu_back.wav", 0.72, (1, 12)),
+    # the character picker's color change (Unity Sounds/Skin/change.wav): only
+    # sent by asm/picker.asm while the save music streams, so it has no Hudson
+    # definition (id $1E stays SB5's own when Hudson's driver plays)
+    (PALETTE_SFX, "menu_palette.wav", 0.13, (2, 4)),
 ]
+STREAM_ONLY = {PALETTE_SFX}
 SFX_PITCH = {(2, 7): 0x05E9, (2, 4): 0x04FA, (1, 12): 0x03F3}
 SFX_SRCN = 0x39           # directory entries $39-$3B ($FDE4, tuning $FEE4): no set or song uses them
+# directory entry of each menu SFX sample: $39-$3B, then $3E ($3C/$3D are game_sfx.py's)
+SFX_DIRS = (0x39, 0x3A, 0x3B, 0x3E)
 SFX_INST = 28             # instruments 28-30 ($4540): after the world sets' 4-27
 SFX_TICK_MS = 16.0        # Hudson's SFX tick
 SFX_VOL, SFX_PAN = 0x4F, 0x0F
@@ -285,12 +293,15 @@ def menu_sfx_lists(rom, samples):
     if inst + 4 * (SFX_INST + len(samples)) > 0x4550 or by_addr[0xFE80][:4] != bytes.fromhex("04 0C 00 CE"):
         raise RuntimeError("Hudson's common SFX set is not laid out as expected")
     tuning = by_addr[0xFE80][:4]
-    blob, dirs, new, orig, instruments = bytearray(), bytearray(), [], [], bytearray()
+    blob, dirs, new, orig, instruments = bytearray(), [], [], [], bytearray()
     for k, (sid, data, pitch, octave, note, ticks) in enumerate(samples):
         start = SFX_BASE + len(blob)
         blob += data
-        dirs += struct.pack("<HH", start, start)
-        instruments += bytes([SFX_SRCN + k, 0xFF, 0xE0, 0xA0])
+        dirs.append((0xFD00 + 4 * SFX_DIRS[k], struct.pack("<HH", start, start)))
+        dirs.append((0xFE00 + 4 * SFX_DIRS[k], tuning))
+        if sid in STREAM_ONLY:
+            continue
+        instruments += bytes([SFX_DIRS[k], 0xFF, 0xE0, 0xA0])
         p = ptrs[sid - 1]
         room = min([q for q in ptrs if q > p] + [seq_base + len(seq)]) - p
         d = bytes([0x01, (p + 3) & 0xFF, (p + 3) >> 8,       # one track on SFX channel 0
@@ -303,8 +314,7 @@ def menu_sfx_lists(rom, samples):
         orig.append((p, seq[p - seq_base:p - seq_base + len(d)]))
     if SFX_BASE + len(blob) > SFX_END:
         raise RuntimeError(f"menu SFX samples: {len(blob)} bytes, {SFX_END - SFX_BASE} fit")
-    l_samples = _list([(SFX_BASE, bytes(blob)), (0xFD00 + 4 * SFX_SRCN, bytes(dirs)),
-                       (0xFE00 + 4 * SFX_SRCN, tuning * len(samples))])
+    l_samples = _list([(SFX_BASE, bytes(blob))] + dirs)
     l_new = _list([(inst + 4 * SFX_INST, bytes(instruments))] + new)
     return l_samples, l_new, _list(orig), len(blob)
 
@@ -331,7 +341,7 @@ def sfx_tables(samples, cache_dir):
         raise ValueError("too many SFX")
     srcs, scripts = [], []
     for k, (sid, _, pitch, _, _, _) in enumerate(samples):
-        srcs.append(SFX_SRCN + k)
+        srcs.append(SFX_DIRS[k])
         scripts.append(bytes([0x5C, 0x01, 0xFE, 0x02,
                               0x04, k + 1, 0x05, 0xFF, 0x06, 0xE0, 0x02, pitch & 0xFF, 0x03, pitch >> 8,
                               0x00, STREAM_SFX_VOL, 0x01, STREAM_SFX_VOL, 0x5C, 0x00, 0x4C, 0x01,

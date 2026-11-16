@@ -54,19 +54,22 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
 * Unplayed cells (not in the sequence) are ignored.
 * Palette ids: `$80 + paltab index`; a shared palette uses Bomberman's ids.
   `xlat` maps the stock ids (base + n, n < 6) for Battle and co-op defaults.
-* Picker (Normal Game CHARACTER SELECT): `chpal`/`chcol` per character
-  (first color id, color count) in asm/picker.asm. Every inserted character
-  1-8 gets its grid cell as two 16x16 sprites with its `stand` pose (BG
-  figure blanked 4x4 tiles, tiles `$40-$6F`, OAM 96-111, OBJ palette 7 =
-  default color, palette 4 = the cell a seat recolored last). If the grid
-  still shows the SB5 figure, the character was not inserted (missing
-  sheet/palette file; see the build line). Picker PLAN: row 1 = chars 1-4
-  (`right` x c, then `a`), row 2 = chars 5-8 (`down`, then `right` x (c-5),
-  then `a`); `right` wraps inside the row of five cells. The big top
-  portrait stays the cartridge's art and colors (color mod 6): never give
-  it palid. Palette uploads (`upload` -> `palpend`) are flushed by
-  `palflush` only when the VRAM queue is empty; setting `$0351` directly
-  garbles the portrait (looked like P1's cursor blinking).
+* Picker (Normal Game CHARACTER SELECT, SB6 layout: tools/sb6/features/picker.py,
+  asm/picker.asm): `chpal`/`chcol` per character (first color id, color
+  count). The grid has one cell per column of
+  `assets/picker/CharacterSelectPortrait.png` (224x64: row 1 at rest, row 2
+  under the cursor; chars 0-6 today): a new character needs a new column
+  there, or it stays out of the grid (chars 7-9). Portrait colors come from
+  `SkinSelectPallete_26.png` (26-column palettes) or `_44.png` (44 columns);
+  the cursor tint is row 0 of that picture at the skin's column. The row of
+  chosen characters at the top uses the character's animations 02 (walk
+  down, while choosing) and 20 (victory, once, holds its last pose): each
+  pose must fit 8 sprites of 16x16 (the build says which pose does not).
+  Picker PLAN: row 1 = chars 0-4 (`right` x c, then `a`), row 2 = chars
+  5-6 (`down`, then `right` x (c-5), then `a`); left/right wrap inside the
+  row, up/down by column. With more players every seat confirms in turn.
+  Palette uploads (`upload` -> `palpend`) are flushed by `palflush` only
+  when the VRAM queue is empty.
 * Power Glove: the lifted bomb's height is `$C5:242C[char]`, computed by the
   build from the head top of the carry poses `$2F-$3A` vs Bomberman's (build
   map line `char<n>: lifted bomb height`). Test: `TEST=lift` (screenshots
@@ -118,8 +121,8 @@ regression) after each build. Check the build printed
 then runs on a stale ROM.
 
 Picker navigation: `tools/mesen/picker_nav.lua` (env `PLAN` = P1 buttons in
-the picker: `a` = Bomberman, `right,a` = char1; other chars: move the cursor
-and confirm with the `SB6_OUT_pick1_*.png` screenshots; `r`/`l` = color).
+the picker: `a` = Bomberman, `right,a` = char1, `down,a` = char5; check the
+cursor with the `SB6_OUT_pick1_*.png` screenshots; `r`/`l` = color).
 
 Walk test (`TEST=walk`, default; every frame must be a complete pose,
 sequence 1 2 3 2 1 4 5 4) and cornered test (`TEST=trap`: walls the start

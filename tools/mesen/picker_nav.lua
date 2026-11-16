@@ -1,6 +1,7 @@
 -- Boots the hack, opens the Normal Game picker, presses PLAN there and waits in stage 1-1.
 -- env: SB6_PLAYERS, SB6_OUT (prefix of the log/screenshots), PLAN (comma list of P1 buttons in the picker:
--- "a" = Bomberman, "right,a" = character 1; r/l change the color), STAGE_WAIT (frames in the stage), CANCEL=1
+-- "a" = Bomberman, "right,a" = character 1, 5 cells per row: "down,a" = character 5; r/l change the color;
+-- with SB6_PLAYERS > 1 every seat confirms in turn, so repeat "a" per seat), STAGE_WAIT (frames in the stage), CANCEL=1
 local N = tonumber(os.getenv("SB6_PLAYERS") or "1")
 local OUT = os.getenv("SB6_OUT") or "build/picker_nav"
 local PLAN = {} for k in string.gmatch(os.getenv("PLAN") or "r,r,right,a", "[^,]+") do PLAN[#PLAN+1]=k end
@@ -37,7 +38,7 @@ emu.addEventCallback(function()
     pt=pt+1
     if pt==2 then L("6269="..hx(0x6269,5).." 1039="..hx(0x1039,1)) end
     if wait>0 then wait=wait-1
-    elseif pc9()==0xC68E68 and pt>150 then
+    elseif emu.read(0x7FFC00,emu.memType.snesMemory)==2 and pt>100 then   -- SB6 picker ready (asm/picker.asm !st)
       if step==1 then shot("pick"..picks.."_0") L("ready: 625F="..hx(0x625F,5).." 6264="..hx(0x6264,5).." 62AB="..hx(0x62AB,5).." 62B5="..hx(0x62B5,5).." 62BF="..hx(0x62BF,5).." 1038/39="..hx(0x1038,2).." cells="..hx(0x62C9,10).." slots="..hx(0x2B10,8).." refs="..hx(0x349,8)) end
       local b=PLAN[step]
       if os.getenv("CANCEL") and picks==1 then b=({"r","b"})[step] end

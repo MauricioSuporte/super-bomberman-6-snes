@@ -1,27 +1,28 @@
-; Character + color selection in the Normal Game
-; (tools/sb6/features/picker.py; port of normal_character_mod.c and
-; selection_color_mod.c of SuperBomberman5SNESRecomp).
+; Character + color selection in the Normal Game, laid out like the SB6 fan
+; game's SkinSelect scene (tools/sb6/features/picker.py has the overview).
 ;
 ; Confirming a file (New Game $C7:10E2, Continue $C7:0E27) calls the scripts
 ; below instead of the fade $C7:124C: fade, then Battle's character picker
-; ($C6:89CF, it returns to its caller) with the game's seats as humans, then
-; back to the file's own flow. B in the picker ($1040 = $FF on return) goes
-; back to the file list. The script variables the picker uses are saved
-; around it. The picker replaces the menu's graphics, so the way back loads
-; them again ($C7:0B47, the menu's own loader script).
+; ($C6:89CF) for its screen (checker, frame, title). When its task (9)
+; reaches the picker's main loop ($C6:8E68) it is sent to `pk_loop` instead,
+; a script op that sleeps every frame while pick_tick / pick_nmi run the SB6
+; picker; when it is done the task goes on at $C6:8EC4 (the stock end:
+; fade-out, `00` back to our script). B on player 1 leaves with $1040 = $FF:
+; the menu's graphics are loaded again and the file list comes back. The
+; script variables the picker uses are saved around it.
 ;
 ; Native code is reached from a script through `FF 1A nn` (handler
 ; $C1:467C, its table entry at $C2:069B now points here): nn >= $F0 is ours.
 ;
-; In the picker L / R change the color of the seat's cursor (white, black,
-; red, blue, green, yellow; with the SB6 art, Bomberman has the !BCOLS
-; palettes of BombermanPallete.png and its cell of the grid, a BG figure of
-; 8 colors in the cartridge, is drawn as a sprite with the SB6 pose; so is
-; the cells of the other redrawn characters 1-8, !XN of them: palette 7 with their
-; first color, palette 4 for the last one a seat recolored). The cursor's label shows "L + R" above the cell and
-; the player number below (OAM shadow rewritten after the game built it).
+; Screen: BG1 inside the frame (rows 5-24) is ours: portraits at rest
+; (BG palettes 3, 4, 7) and the one under the cursor (5, 6), tiles $160+.
+; OBJ: the whole OAM shadow is rewritten every frame (the stock objects of
+; the picker stay alive but are never drawn): the cursor and the player
+; cursors in OBJ palette 4 (tiles 0-11, 16+), the characters of the player
+; row in palettes 0-3 (tiles $100 + $40 * seat, two halves of $20).
 ;
-; State: $7F:FF00-$7F:FF7F (docs/FREE_SPACE.md).
+; State: $7F:FF00-$7F:FF7F (the choices, kept for the campaign) and
+; $7F:FC00-$7F:FC7F (the screen) (docs/FREE_SPACE.md).
 
 asar 1.90
 hirom
@@ -37,36 +38,68 @@ hirom
 !col     = !PK+$08      ; 5 bytes: color
 !save1   = !PK+$10      ; $1032-$104F
 !save2   = !PK+$30      ; $1D20-$1D3F
-!refs    = !PK+$50      ; 8 bytes (palette slot references)
 !s0      = !PK+$58      ; scratch
 !s1      = !PK+$59
 !s2      = !PK+$5A
 !s3      = !PK+$5B
-!gfx     = !PK+$5C      ; $FF = glyph tiles are in VRAM
-!drawn   = !PK+$5D      ; 1 = glyph sprites are in the OAM shadow
-!cellpal = !PK+$5E      ; 1 = the Bomberman cell's sprite has colors
-!GOAM    = 96           ; first sprite owned here (4-aligned): 2 per character 1-8
-!GHIGH   = $0ADB         ;   (96 + 2*(c-1), shadow !XOAM), 112/113 free, 2 for the
-!GLY     = 116          ;   Bomberman cell (!CS0, !CS1), then the 12 glyphs; high bits $0ABF + s/4
-!CS0     = $0A87         ; OAM shadow of sprite 114 ($08BF + 4*114)
-!CS1     = $0A8B         ; ... 115
-!CPAL    = $D0           ; CGRAM index of the cell sprite's colors (OBJ palette 5)
-!XOAM    = $0A3F         ; OAM shadow of sprite 96 (character 1's cell)
-!XCPAL   = $F0           ; colors of the character cells (OBJ palette 7, free with up to four seats)
-!XCPAL4  = $C0           ; ... of the last recolored one (OBJ palette 4)
 !w0      = !PK+$60      ; word scratch
-!w1      = !PK+$62
-!oamn    = !PK+$64      ; 4 bytes: OAM offset/4 of each seat's number
-!p4char  = !PK+$68      ; character whose cell uses OBJ palette 4 ($FF = none)
-!palpend = !PK+$69      ; 1 = the CGRAM shadow changed, sent once the VRAM queue is empty (written as a word: +$6A too)
-!p4tile  = !PK+$6C      ; character whose cell has the tiles for palette 4 ($FF = none)
+!palpend = !PK+$69      ; 1 = the CGRAM shadow changed (sent once the VRAM queue is empty)
+!fadein  = !PK+$6A      ; 1 = back from the picker: fade the file list in
+
+; screen state, bank $7F (DB = $7F in the tick: short addresses)
+!st      = $FC00        ; 0 waiting for SB5's setup, 1 loading, 2 choosing, 3 all chosen, 5 fading out, 4 leaving
+!job     = $FC01        ; word: next record of pk_jobs
+!act     = $FC03        ; seat choosing ($FF none)
+!hov     = $FC04        ; cell shown with its cursor face ($FF none)
+!hovw    = $FC05        ; cell the NMI must show next
+!hjob    = $FC06        ; 1 = the NMI swaps the cells
+!hcell   = $FC07        ; character / color in the hover palettes
+!hcol    = $FC08
+!tick    = $FC09        ; cursor corners (0-119)
+!wait    = $FC0A        ; frames before leaving
+!tint    = $FC0B        ; word: cursor color sent
+!conf    = $FC10        ; 4: 1 = confirmed
+!pidx    = $FC14        ; 4: cursor cell of each seat
+!pchar   = $FC18        ; 4: confirmed character
+!pcol    = $FC1C        ; 4: confirmed color
+!kind    = $FC20        ; 4: player row animation 0 none / 1 walk / 2 victory
+!achar   = $FC24        ; 4: its character
+!step    = $FC28        ; 4: step of the sequence
+!tim     = $FC2C        ; 4: frames left on the step
+!want    = $FC30        ; 4: pose to show ($FF none)
+!shown   = $FC34        ; 4: pose in VRAM ($FF none)
+!half    = $FC38        ; 4: VRAM half shown (0 / 1)
+!epal    = $FC3C        ; 4: palette id in OBJ palette 0-3 + seat
+!edim    = $FC40        ; 4: 1 = dimmed
+!stop    = $FC44        ; 4: 1 = the victory reached its last pose
+!oi      = $FC50        ; word: OAM offset of the next sprite
+!ox      = $FC52
+!oy      = $FC53
+!ot      = $FC54
+!oa      = $FC55
+!big     = $FC56
+!cx      = $FC57
+!cy      = $FC58
+!e       = $FC59
+!t0      = $FC5A        ; word scratch
+!t1      = $FC5C
+!t2      = $FC5E
+!lim     = $FC60        ; poses sent this NMI
+!SL      = $7FFC00      ; the same with long addresses
+!SLst    = $7FFC00
+
+!DBANK   = (!PK_BGMAP>>16)
+!nt0     = !SL+$70      ; NMI scratch (words)
+!nt1     = !SL+$72
+!nt2     = !SL+$74
+!WAITF   = 72           ; frames from the last confirmation to the fade (its victory plays)
 
 org !E4
 
 script_new:
     db $24,$4C,$12,$C7              ; the file menu's own fade
     db $FF,$1A,$F0                  ; open
-    db $24,$CF,$89,$C6              ; Battle's character picker
+    db $24,$CF,$89,$C6              ; Battle's character picker (its screen; our picker inside)
     db $FF,$1A,$F1                  ; close; B: drops the call, skips the 00
     db $00
     db $24 : dl menu_gfx            ; the menu's graphics again
@@ -81,10 +114,11 @@ script_cont:
     db $FF,$1A,$F3                  ; -> $C7:0D59, the Continue file list
 
 ; The part of the menu's loader script ($C7:0B47) that the picker's screen
-; replaced (VRAM $08F0-$15EF and the BG2 map; the tiles below $08F0 are the
-; same on both screens). The first archive sent after the picker comes out
-; wrong (the menu sends $0C before $22; seen in Mesen, cause not traced), so
-; $22 is sent again at the end.
+; replaced (VRAM $08F0-$15EF and the BG2 map; $1600-$1F1F, the portraits,
+; is archive $93's tail; the tiles below $08F0 are the same on both
+; screens). The first archive sent after the picker comes out wrong (the
+; menu sends $0C before $22; seen in Mesen, cause not traced), so $22 is
+; sent again at the end.
 menu_gfx:
     db $26,$03
     db $29,$22,$F0,$08
@@ -96,6 +130,10 @@ menu_gfx:
     db $FF,$8E,$4A,$04,$02,$00,$00
     db $FF,$8E,$4A,$04,$02,$20,$00
     db $00
+
+; task 9 runs this instead of the stock main loop
+pk_loop:
+    db $FF,$1A,$F4
 
 ; ---------------------------------------------------------------------------
 ; FF 1A nn (M/X 8-bit, [$0D] = operand, $0A-$0C = next op, $73 = task).
@@ -111,7 +149,10 @@ if !TITLE_OP
     jml !TITLE_OP
 +
 endif
-    phb
+    cmp #$F4
+    bne +
+    brl .wait
++   phb
     pha
     lda #$7E
     pha
@@ -120,7 +161,11 @@ endif
     cmp #$F1
     beq .close
     bcc .open
-    ldx #$0E                        ; ---- F2 / F3: go to a file list
+    pha                             ; ---- F2 / F3: go to a file list
+    lda #$01                        ; the screen is dark (the picker faded out)
+    sta.l !fadein
+    pla
+    ldx #$0E
     ldy #$10                        ; $C7:100E
     cmp #$F2
     beq +
@@ -151,7 +196,7 @@ endif
     lda #$01
 +   sta $6269,x
     txa
-    sta.l !col,x
+    sta.l !col,x                    ; default colors: P1 white, P2 black, P3 red, P4 blue
     dex
     bpl -
     stz $1038
@@ -161,16 +206,30 @@ endif
     sta.l !live
     lda #$00
     sta.l !on
-    sta.l !gfx
-    sta.l !cellpal
     sta.l !palpend
-    lda #$FF
-    sta.l !p4char
-    sta.l !p4tile
+    ldx #$7F
+-   sta.l !SL,x
+    dex
+    bpl -
     plb
     rtl
 
 .close:
+    rep #$30                        ; the picker's sprites go (the OAM builder only
+    ldx #$01FC                      ; hides the ones it drew itself)
+-   lda #$E000
+    sta $08BF,x
+    dex
+    dex
+    dex
+    dex
+    bpl -
+    ldx #$001E
+-   stz $0ABF,x
+    dex
+    dex
+    bpl -
+    sep #$30
     lda $1040
     sta.l !s1                       ; $FF = left with B
     ldx #$04
@@ -192,6 +251,7 @@ endif
     sta $1031
     lda #$00
     sta.l !live
+    sta.l !SLst
     lda.l !s1
     bne .cancel
     lda #$01
@@ -212,6 +272,45 @@ endif
     ldx $73
     dec $0CFF,x
     plb
+    rtl
+
+.wait:
+    lda.l !SLst                     ; ---- F4: the picker runs; leave when it says so
+    cmp #$04
+    bne .again
+    lda #$C4                        ; $C6:8EC4: the stock end of the picker
+    sta $0A
+    lda #$8E
+    sta $0B
+    lda #$C6
+    sta $0C
+    rtl
+.again:
+    ; the task sleeps: its saved script pointer goes back to this op and it
+    ; resumes in the interpreter ($C2:0211), see asm/title_anim.asm
+    ldx $73
+    rep #$20
+    lda $0A
+    sec
+    sbc #$0003
+    sep #$20
+    sta $0C87,x
+    xba
+    sta $0CAF,x
+    lda $0C
+    sta $0CD7,x
+    lda #$11
+    sta $0BBF,x
+    lda #$02
+    sta $0BE7,x
+    lda #$C2
+    sta $0C0F,x
+    rep #$20
+    lda $75
+    sec
+    sbc #$0003
+    tcs
+    sep #$30
     rtl
 
 ; ---------------------------------------------------------------------------
@@ -252,9 +351,8 @@ pick_apply:
     plp
     rtl
 
-; A = character (0-8), !s1 = color: A = palette id of set 0. Bomberman with
-; the SB6 art and the characters drawn on his layout have their own palettes,
-; ids chpal[char] + color (asm/bombers.asm; chpal 0 = the cartridge's).
+; A = character (0-8), !s1 = color: A = palette id of set 0 (chpal + color,
+; asm/bombers.asm; chpal 0 = the cartridge's).
 palid:
     phx
     tax
@@ -267,26 +365,6 @@ palid:
 +   lda.l $80BB4E,x
     clc
     adc.l !s1
-    plx
-    rts
-
-; Palette id of the portrait of seat X's character (!s2, color !s1): the
-; cartridge's id for the characters 1-8 (color mod 6), palid for Bomberman
-; (the box shows the cartridge's portrait art).
-portid:
-    lda.l !s2
-    bne +
-    lda.l !s3
-    rts
-+   phx
-    tax
-    lda.l !s1
--   cmp #$06
-    bcc +
-    sbc #$06
-    bra -
-+   clc
-    adc.l $80BB4E,x
     plx
     rts
 
@@ -312,211 +390,634 @@ pick_tick:
     lda #$7E
     pha
     plb
-    lda.l !drawn
-    cmp #$01
-    bne +
-    jsr hide
-+   lda $1031
+    lda $1031
     cmp #$02                        ; title: a new session
     bne +
     lda #$00
     sta.l !on
     sta.l !live
+    sta.l !SLst
+    sta.l !fadein
 if !SCLR
     jsl !SCLR                       ; streamed poses (asm/bombers.asm)
 endif
+    bra .out
++   cmp #$03
+    bne +
+    lda.l !fadein
+    cmp #$01
+    bne .out
+    jsr fadein
     bra .out
 +   cmp #$04
     bne .out
     lda.l !live
     cmp #$01
     bne .out
-    lda $0CE0                       ; task 9 inside the picker's main part
-    cmp #$C6
-    bne .out
-    lda $0CB8
-    xba
-    lda $0C90
-    rep #$20
-    cmp #$8B48
-    bcc .out
-    cmp #$8EE4
-    bcs .out
-    sep #$20
-    jsr buttons
-    jsr isolate
-if !OWN
-    lda.l !cellpal
-    cmp #$01
-    beq +
-    lda.b #!OWNID
-    ldx.b #!CPAL
-    ldy #$10
-    jsr upload
-if !XN
-    lda.b #!XPAL
-    ldx.b #!XCPAL
-    ldy #$10
-    jsr upload
-endif
-    lda #$01
-    sta.l !cellpal
-+
-endif
-    ldx #$04
--   jsr color
-    dex
-    bpl -
-    jsr palflush
-    jsr label
+    lda #$7F
+    pha
+    plb
+    jsr np_tick
 .out:
     plb
     plp
     rtl
 
-; A = colors of the character chosen by seat X (0 = none: random cell).
-colcount:
-    lda $625F,x
-    beq .none
-    cmp #$0A
-    bcs .none
-    phx
-    tax
-    lda.l chcol-1,x                 ; colors of each character
-    plx
-    cmp #$00                        ; (Z for the callers)
-    rts
-.none:
+; back on the file list: once the menu's graphics are in VRAM (queue
+; empty), brightness 0 -> 15, one step per tick (DB = $7E)
+fadein:
+    rep #$20
+    lda $0355
+    cmp $0357
+    sep #$20
+    bne .out
+    lda $0300
+    bpl +
     lda #$00
+    bra ++
++   inc a
+++  sta $0300
+    cmp #$0F
+    bcc .out
+    lda #$00
+    sta.l !fadein
+.out:
     rts
 
-; L / R of each pad -> color of the seat its cursor is on ($62AB), while the
-; seat is choosing ($62B5 = 1). New presses: $36+pad, R = $10, L = $20.
-buttons:
-    ldy #$04
-.pad:
-    ldx $62AB,y
-    cpx #$05
-    bcs .next
-    lda $62B5,x
-    cmp #$01
-    bne .next
-    jsr colcount
-    beq .next
-    sta.l !s0
-    lda $0036,y
-    and #$30
-    cmp #$10
-    beq .r
-    cmp #$20
-    bne .next
-    lda.l !col,x                    ; L: previous
+np_tick:
+    lda !st
+    bne .loaded
+    lda #$02                        ; SB5's setup: only the background shows
+    sta.l $7E030F
+    lda.l $7E0CE0                   ; task 9 at the stock main loop?
+    cmp #$C6
     bne +
-    lda.l !s0
-+   dec a
-    bra .set
-.r:
-    lda.l !col,x                    ; R: next
-    inc a
-    cmp.l !s0
-    bcc .set
-    lda #$00
-.set:
-    sta.l !col,x
-.next:
-    dey
-    bpl .pad
+    lda.l $7E0CB8
+    cmp #$8E
+    bne +
+    lda.l $7E0C90
+    cmp #$68
+    bne +
+    jsr redirect
+    jsr setup
+    lda #$01
+    sta !st
++   rts
+.loaded:
+    cmp #$01
+    bne +
+    lda #$02
+    sta.l $7E030F
+    rts
++   lda #$13                        ; BG1, BG2, sprites
+    sta.l $7E030F
+    lda !st
+    cmp #$02
+    bne +
+    jsr logic
++   lda.l !SL+$76                   ; video frames since the last tick (the picker runs at 30 Hz)
+    sec
+    sbc.l !SL+$77
+    beq .anim
+    cmp #$05
+    bcc +
+    lda #$04
++   sta $FC78
+    lda.l !SL+$76
+    sta.l !SL+$77
+-   lda $FC78
+    beq .anim
+    dec $FC78
+    jsr anims
+    bra -
+.anim:
+    jsr colors
+    jsr oam
+    lda !st
+    cmp #$03
+    bne +
+    dec !wait
+    bne +
+    lda #$05
+    sta !st
++   lda !st
+    cmp #$05                        ; fade-out: the stock end and the file script
+    bne +                           ; load graphics with the screen still on
+    lda.l $7E0300                   ; INIDISP shadow
+    and #$0F
+    beq .dark
+    dec a
+    sta.l $7E0300
+    bra +
+.dark:
+    lda #$80                        ; forced blank until the next screen fades in
+    sta.l $7E0300
+    lda #$04
+    sta !st
++   jsr palflush
     rts
 
-; Portraits that show the same palette share an OBJ palette slot. Each seat
-; gets slot = seat when the slots 0-4 have no other owner.
-isolate:
-    ldx #$07
--   lda $0349,x
-    sta.l !refs,x
+; task 9 resumes in pk_loop
+redirect:
+    lda.b #pk_loop
+    sta.l $7E0C90
+    lda.b #pk_loop>>8
+    sta.l $7E0CB8
+    lda.b #pk_loop>>16
+    sta.l $7E0CE0
+    lda #$11
+    sta.l $7E0BBF+9
+    lda #$02
+    sta.l $7E0BE7+9
+    lda #$C2
+    sta.l $7E0C0F+9
+    lda #$00
+    sta.l $7E0B97+9
+    rts
+
+; first state, the colors of the portraits at rest and of the cursors
+setup:
+    rep #$20
+    lda.w #!PK_JOBS&$FFFF
+    sta !job
+    sep #$20
+    lda #$FF
+    sta !act
+    sta !hov
+    sta !hovw
+    sta !hcell
+    sta !hcol
+    ldx #$03
+-   sta !want,x
+    sta !shown,x
+    stz !kind,x
+    stz !conf,x
+    stz !pidx,x
+    stz !half,x
+    stz !epal,x
     dex
     bpl -
-    ldx #$04
-.seat:
-    ldy $62BF,x
-    cpy #$60
-    bcs .next
-    lda $06DF,y
-    cmp #$08
-    bcs .no
+    rep #$30
+    ldx #$0000                      ; [CGRAM byte offset, 15 colors] per palette
+    ldy.w #!NSTATIC
+.pal:
+    phy
+    lda.l !PK_STATIC,x
     tay
-    lda $2B18,y
-    bne .no
+    inx
+    inx
+    lda #$000F
+    sta !t0
+-   lda.l !PK_STATIC,x
     phx
     tyx
-    lda.l !refs,x
-    beq .nopl
-    dec a
-    sta.l !refs,x
+    sta.l $7E2912,x
     plx
-.next:
-    dex
-    bpl .seat
-    ldx #$04
--   lda.l !refs,x
-    bne .no
-    dex
-    bpl -
-    ldx #$04
-.give:
-    ldy $62BF,x
-    cpy #$60
-    bcs +
-    txa
-    sta $06DF,y
+    inx
+    inx
+    iny
+    iny
+    dec !t0
+    bne -
+    ply
+    dey
+    bne .pal
+    ldx #$0000
+-   lda.l !PK_PAL4,x
+    sta.l $7E2912+$180,x            ; OBJ palette 4 (CGRAM 192)
+    inx
+    inx
+    cpx #$001E
+    bcc -
+    sep #$30
     lda #$01
-    sta.l !refs,x
-    stz $2B18,x
-+   dex
-    bpl .give
-    ldx #$07
--   lda.l !refs,x
-    sta $0349,x
-    dex
-    bpl -
-.no:
-    rts
-.nopl:
-    plx
+    sta.l !palpend
     rts
 
-; Seat X: its color in $6264, in its portrait and in its cell of the grid.
-color:
-    jsr colcount
-    bne +
+; ---------------------------------------------------------------------------
+; Pad of the seat choosing: arrows (new or repeated, $40+pad: right 1,
+; left 2, down 4, up 8), L / R color, A / Start confirm, B back.
+logic:
+    ldx #$00
+-   txa
+    cmp.l $7E0000|!count
+    bcs .none
+    lda !conf,x
+    beq .found
+    inx
+    cpx #$04
+    bcc -
+.none:
+    lda #$FF
+    sta !act
     rts
-+   sta.l !s0
+.found:
+    stx !act
+    lda $40,x
+    and #$0F
+    beq .lr
+    jsr move
+    rts
+.lr:
+    lda $36,x
+    and #$30
+    beq .ab
+    jsr recolor
+    rts
+.ab:
+    lda $36,x
+    and #$08
+    beq +
+    jsr back
+    rts
++   lda $36,x
+    and #$81
+    beq +
+    jsr confirm
++   rts
+
+; A = arrows, X = seat
+move:
+    sta !t0
+    lda !pidx,x
+    sta !t1                         ; old
+    jsr colrow                      ; !t2 = column, A = row start
+    sta !t1+1
+    lda !t0
+    lsr a
+    bcc .left
+    lda !t1+1                       ; right: next in the row, wraps
+    clc
+    adc #!GCOLS-1
+    jsr clampn
+    cmp !t1
+    beq +
+    bcc +
+    lda !t1
+    inc a
+    bra .set
++   lda !t1+1
+    bra .set
+.left:
+    lsr a
+    bcc .down
+    lda !t2
+    beq +
+    lda !t1
+    dec a
+    bra .set
++   lda !t1+1
+    clc
+    adc #!GCOLS-1
+    jsr clampn
+    bra .set
+.down:
+    lsr a
+    bcc .up
+    lda !t1
+    clc
+    adc #!GCOLS
+    cmp #!N
+    bcc .set
+    lda !t2
+    bra .fit
+.up:
+    lda !t1
+    sec
+    sbc #!GCOLS
+    bcs .set
+    lda #!LASTROW                   ; the same column on the last row
+    clc
+    adc !t2
+.fit:
+-   cmp #!N
+    bcc .set
+    sec
+    sbc #!GCOLS
+    bcs -
+    lda #$00
+.set:
+    cmp !t1
+    beq +
+    sta !pidx,x
+    jsr fitcol
+    lda #$01                        ; cursor move
+    jsr sfx
++   rts
+
+; A = cell: !t2 = column, A = first cell of its row
+colrow:
+    sta !t2
+    lda #$00
+-   pha
+    lda !t2
+    cmp #!GCOLS
+    bcc +
+    sbc #!GCOLS
+    sta !t2
+    pla
+    clc
+    adc #!GCOLS
+    bra -
++   pla
+    rts
+
+; A = min(A, N - 1)
+clampn:
+    cmp #!N
+    bcc +
+    lda #!N-1
++   rts
+
+; the seat's color must exist for the character under its cursor
+fitcol:
+    phx
+    lda !pidx,x
+    tay
     lda.l !col,x
-    cmp.l !s0
+    tyx
+    cmp.l chcol,x
+    plx
     bcc +
     lda #$00
     sta.l !col,x
-+   sta $6264,x
-    sta.l !s1                       ; color
-    lda $625F,x
-    dec a
-    sta.l !s2                       ; character
-    jsr palid
-    sta.l !s3                       ; palette id
-    ldy $62BF,x                     ; portrait
-    cpy #$60
-    bcs .grid
-    txa
-    cmp $06DF,y
-    bne .grid
-    lda $2B18,x
-    bne .grid
-    lda $0349,x
-    cmp #$01
-    bne .grid
-    jsr portid                      ; the portrait is SB5 art: the cartridge's colors
-    sta $2B10,x
++   rts
+
+; L / R: previous / next color of the character under the cursor
+recolor:
+    sta !t0
+    lda !pidx,x
     phx
+    tax
+    lda.l chcol,x
+    plx
+    sta !t1
+    lda !t0
+    and #$10
+    beq .l
+    lda.l !col,x
+    inc a
+    cmp !t1
+    bcc .set
+    lda #$00
+    bra .set
+.l: lda.l !col,x
+    bne +
+    lda !t1
++   dec a
+.set:
+    sta.l !col,x
+    lda #!PALSFX
+    jsr sfx
+    rts
+
+; B: the previous player chooses again; nobody before: back to the files
+back:
+    dex
+    bmi .leave
+-   lda !conf,x
+    bne +
+    dex
+    bpl -
+    bra .leave
++   stz !conf,x
+    lda #$03
+    jsr sfx
+    rts
+.leave:
+    lda #$FF
+    sta.l $7E1040
+    lda #$05
+    sta !st
+    lda #$03
+    jsr sfx
+    rts
+
+; A / Start: the character and color, unless another player has them
+confirm:
+    stx !e
+    ldy #$00
+-   cpy !e
+    beq +
+    lda !conf,y
+    beq +
+    lda !pchar,y
+    cmp !pidx,x
+    bne +
+    phx
+    tyx
+    lda.l !col,x
+    plx
+    cmp.l !col,x
+    bne +
+    lda #$03                        ; taken
+    jsr sfx
+    rts
++   iny
+    cpy #$04
+    bcc -
+    lda !pidx,x
+    sta !pchar,x
+    lda.l !col,x
+    sta !pcol,x
+    lda #$01
+    sta !conf,x
+    lda #$04
+    jsr sfx
+    ldx #$00                        ; everybody chose: the picker's outputs
+-   txa
+    cmp.l $7E0000|!count
+    bcs .all
+    lda !conf,x
+    beq .out
+    inx
+    bra -
+.all:
+    ldx #$00
+-   txa
+    cmp.l $7E0000|!count
+    bcs +
+    lda !pchar,x
+    inc a
+    sta.l $7E625F,x
+    lda !pcol,x
+    sta.l $7E6264,x
+    inx
+    bra -
++   lda #$00
+    sta.l $7E1040
+    lda #!WAITF
+    sta !wait
+    lda #$03
+    sta !st
+    lda #$FF
+    sta !act
+.out:
+    rts
+
+; A = SFX id (group 2)
+sfx:
+    phx
+    phy
+    phb
+    pha
+    lda #$7E
+    pha
+    plb
+    lda #$02
+    xba
+    pla
+    jsl $C00CED
+    plb
+    ply
+    plx
+    rts
+
+; ---------------------------------------------------------------------------
+; Player row: what each seat shows and its sequence (walk down, looping;
+; victory once, then its last pose).
+anims:
+    ldx #$00
+.seat:
+    txa
+    cmp.l $7E0000|!count
+    bcc +
+    rts
++   lda !conf,x
+    beq +
+    lda #$02
+    ldy !pchar,x
+    bra .have
++   cpx !act
+    bne +
+    lda #$01
+    ldy !pidx,x
+    bra .have
++   lda #$00
+    ldy #$00
+.have:
+    sta !t0
+    sty !t0+1
+    cmp !kind,x
+    bne .new
+    tya
+    cmp !achar,x
+    bne .new
+    lda !kind,x
+    beq .none
+    lda !stop,x
+    bne .next
+    dec !tim,x
+    bne .next
+    inc !step,x
+    jsr seqread                     ; A = frames (0: end), !t1 = pose
+    bne .pose
+    lda !kind,x
+    cmp #$02
+    beq +
+    stz !step,x                     ; walk: again
+    jsr seqread
+    bra .pose
++   dec !step,x                     ; victory: stays on its last pose
+    lda #$01
+    sta !stop,x
+    jsr seqread
+    bra .pose
+.new:
+    lda !t0
+    sta !kind,x
+    lda !t0+1
+    sta !achar,x
+    stz !step,x
+    stz !stop,x
+    lda !kind,x
+    beq .none
+    jsr seqread
+.pose:
+    sta !tim,x
+    lda !t1
+    sta !want,x
+    bra .next
+.none:
+    lda #$FF
+    sta !want,x
+.next:
+    inx
+    cpx #$04
+    bcs +
+    brl .seat
++
+    rts
+
+; seat X: A = frames of its step (Z: end of the sequence), !t1 = its pose
+seqread:
+    phx
+    lda !step,x
+    sta !t2
+    lda !achar,x
+    asl a
+    tay
+    lda !kind,x
+    rep #$30
+    and #$00FF
+    cmp #$0002
+    tyx
+    bcs +
+    lda.l !PK_WALKP,x
+    bra ++
++   lda.l !PK_WINP,x
+++  sta !t1
+    lda !t2
+    and #$00FF
+    sta !t2
+    asl a
+    adc !t2
+    adc !t1
+    tax
+    sep #$20
+    lda.l !DBANK<<16,x
+    sta !t1
+    lda.l (!DBANK<<16)+2,x
+    sep #$10
+    plx
+    cmp #$00
+    rts
+
+; ---------------------------------------------------------------------------
+; Colors: each seat's character (OBJ palette seat; dimmed while choosing,
+; as the Unity preview), the cursor, the portrait under the cursor.
+colors:
+    ldx #$00
+.seat:
+    stx !e
+    txa
+    cmp.l $7E0000|!count
+    bcs .cursor
+    lda !kind,x
+    beq .next
+    cmp #$02
+    beq +
+    lda.l !col,x                    ; choosing: under the cursor, dimmed
+    sta.l !s1
+    lda !pidx,x
+    ldy #$01
+    bra ++
++   lda !pcol,x
+    sta.l !s1
+    lda !pchar,x
+    ldy #$00
+++  sty !t0
+    jsr palid
+    cmp !epal,x
+    bne +
+    lda !t0
+    cmp !edim,x
+    beq .next
+    lda !epal,x
++   sta !epal,x
+    lda !t0
+    sta !edim,x
+    lda !epal,x
     pha
     txa
     asl a
@@ -527,86 +1028,508 @@ color:
     tax                             ; CGRAM index
     pla
     ldy #$10
-    cmp.b #!OWNID
-    bcs +
-    cmp.b #!PALS+1
-    bcc +
-    ldy #$09
-+   jsr upload
-    plx
-.grid:
-    lda $62B5,x
-    cmp #$01
+    jsr upload_l
+    ldx !e
+    lda !edim,x
+    beq .next
+    jsr dim
+.next:
+    ldx !e
+    inx
+    stx !e
+    cpx #$04
+    bcc .seat
+.cursor:
+    ldx !act
+    bmi .hover
+    lda !pidx,x
+    asl a
+    tay
+    lda.l !col,x
+    rep #$30
+    and #$00FF
+    asl a
+    sta !t0
+    tyx
+    lda.l !PK_TINTP,x
+    clc
+    adc !t0
+    tax
+    lda.l !DBANK<<16,x
+    cmp !tint
+    beq +
+    sta !tint
+    sta.l $7E2910+$184              ; OBJ palette 4, entry 2
+    sep #$20
+    lda #$01
+    sta.l !palpend
++   sep #$30
+.hover:
+    lda !hjob                       ; the NMI has not swapped the cells yet
     bne .out
-    lda.l !s2
-    inc a
-    ldy #$00
--   cmp $62C9,y
-    beq .cell
-    iny
-    cpy #$0A
-    bcc -
+    ldx !act
+    lda #$FF
+    cpx #$04
+    bcs +
+    lda !pidx,x
++   cmp !hov
+    beq +
+    sta !hovw
+    lda #$01
+    sta !hjob
++   ldx !act
+    cpx #$04
+    bcs .out
+    lda !pidx,x
+    cmp !hcell
+    bne +
+    lda.l !col,x
+    cmp !hcol
+    beq .out
++   lda !pidx,x                     ; hover palettes: 30 colors of character / color
+    sta !hcell
+    lda.l !col,x
+    sta !hcol
+    jsr hovpal
 .out:
     rts
-.cell:
-    lda.l !s1
-    sta $62D3,y
-if !OWN
-    lda.l !s2                       ; Bomberman: the cell is a sprite
-    bne +
-    phx
-    lda.l !s3
-    ldx.b #!CPAL
-    ldy #$10
-    jsr upload
-    plx
-    rts
-+
-if !XN
-    phx                             ; another redrawn character: a sprite too,
-    tax                             ;   recolored in OBJ palette 4
-    lda.l xc_on,x
-    beq +
-    lda.l chpal,x
-    clc
-    adc.l !s1
-    ldx.b #!XCPAL4
-    ldy #$10
-    jsr upload
-    lda.l !s2
-    sta.l !p4char
-    plx
-    rts
-+   plx
-    lda.l !s2
-endif
-endif
-    phx
-    lda.l !s2                       ; strip palette id: $C2:130B + 7*char + color
+
+; 2 x 15 colors from pk_hcol<c> + 60 * color to BG palettes 5 and 6
+hovpal:
+    lda !hcol
+    sta.l $004202
+    lda #60
+    sta.l $004203
+    lda !hcell
     asl a
-    asl a
-    asl a
-    sec
-    sbc.l !s2
-    clc
-    adc.l !s1
     tax
-    lda.l $C2130B,x
-    pha
+    nop
+    nop
+    rep #$30
+    lda.l $004216
+    clc
+    adc.l !PK_HCOLP,x
+    tax
+    ldy #$0000
+-   lda.l !DBANK<<16,x
+    phx
     tyx
-    lda.l $C21301,x                 ; CGRAM index of the cell's strip
-    tax
-    pla
-    ldy #$08
-    jsr upload
+    sta.l $7E2910+$A2,x             ; CGRAM 81-95
     plx
+    inx
+    inx
+    iny
+    iny
+    cpy #$001E
+    bcc -
+    ldy #$0000
+-   lda.l !DBANK<<16,x
+    phx
+    tyx
+    sta.l $7E2910+$C2,x             ; CGRAM 97-111
+    plx
+    inx
+    inx
+    iny
+    iny
+    cpy #$001E
+    bcc -
+    sep #$30
+    lda #$01
+    sta.l !palpend
     rts
 
+; OBJ palette of seat !e: colors 1-15 halfway to the checker behind
+dim:
+    lda !e
+    rep #$30
+    and #$00FF
+    asl a
+    asl a
+    asl a
+    asl a
+    asl a
+    tax
+    ldy #$000F
+-   lda.l $7E2910+$102,x
+    lsr a
+    and #$3DEF
+    clc
+    adc.w #(!SHADE>>1)&$3DEF
+    sta.l $7E2910+$102,x
+    inx
+    inx
+    dey
+    bne -
+    sep #$30
+    rts
+
+; upload with DB = $7E (A = palette id, X = CGRAM index, Y = colors)
+upload_l:
+    phb
+    pha
+    lda #$7E
+    pha
+    plb
+    pla
+    jsr upload
+    plb
+    rts
+
+; ---------------------------------------------------------------------------
+; OAM shadow ($7E:08BF, 4 bytes per sprite; high bits $0ABF): the cursor,
+; the characters of the player row, the player cursors; the rest hidden.
+oam:
+    rep #$30
+    ldx #$0000
+    lda #$E000
+-   sta.l $7E08BF,x                 ; x 0, y $E0
+    inx
+    inx
+    inx
+    inx
+    cpx #$0200
+    bcc -
+    lda #$0000
+    ldx #$001E
+-   sta.l $7E0ABF,x
+    dex
+    dex
+    bpl -
+    stz !oi
+    sep #$30
+    jsr cursor
+    jsr row
+    jsr brackets
+    rts
+
+; one sprite (!ox, !oy, !ot, !oa; !big = 16x16)
+put:
+    rep #$10
+    ldx !oi
+    cpx #$0200
+    bcs .full
+    lda !ox
+    sta.l $7E08BF,x
+    lda !oy
+    sta.l $7E08C0,x
+    lda !ot
+    sta.l $7E08C1,x
+    lda !oa
+    sta.l $7E08C2,x
+    lda !big
+    beq +
+    rep #$20
+    txa
+    lsr a
+    lsr a
+    pha
+    lsr a
+    lsr a
+    tay                             ; high table byte
+    pla
+    and #$0003
+    tax
+    sep #$20
+    lda.l bigbit,x
+    tyx
+    ora.l $7E0ABF,x
+    sta.l $7E0ABF,x
+    ldx !oi
++   inx
+    inx
+    inx
+    inx
+    stx !oi
+.full:
+    sep #$10
+    rts
+
+bigbit:
+    db $02,$08,$20,$80
+
+; corners (breathing 0 1 2 1, half a second each), "L / R" above, "nP" below
+cursor:
+    ldx !act
+    cpx #$04
+    bcc +
+    rts
++   lda !pidx,x
+    tay
+    tyx
+    lda.l !PK_CELLX,x
+    sta !cx
+    lda.l !PK_CELLY,x
+    sta !cy
+    stz !big
+    lda #$38                        ; priority 3, palette 4
+    sta !oa
+    lda !tick
+    inc a
+    cmp #120
+    bcc +
+    lda #$00
++   sta !tick
+    ldx #$00
+-   cmp #30
+    bcc +
+    sbc #30
+    inx
+    bra -
++   lda.l breathe,x
+    sta !e
+    ldx #$00                        ; four corners: x, y = center +- (20 + e) / (12 + e)
+.corner:
+    lda !cx
+    clc
+    adc.l cdx,x
+    jsr signe
+    sta !ox
+    lda !cy
+    clc
+    adc.l cdy,x
+    jsr signe2
+    sta !oy
+    stx !ot
+    phx
+    jsr put
+    plx
+    inx
+    cpx #$04
+    bcc .corner
+    ldx #$00                        ; L / R and the number
+.glyph:
+    lda !cx
+    clc
+    adc.l gdx,x
+    sta !ox
+    lda !cy
+    clc
+    adc.l gdy,x
+    sta !oy
+    lda.l gtile,x
+    cpx #$03
+    bne +
+    clc
+    adc !act                        ; the player's digit
++   sta !ot
+    phx
+    jsr put
+    plx
+    inx
+    cpx #$05
+    bcc .glyph
+    rts
+
+; corner offsets: x / y with the sign of the expansion in X: A -= e for the
+; left / top corners, += e for the right / bottom ones
+signe:
+    pha
+    txa
+    and #$01                        ; TR, BR: right
+    bra signc
+signe2:
+    pha
+    txa
+    and #$02                        ; BL, BR: bottom
+signc:
+    beq +
+    pla
+    clc
+    adc !e
+    rts
++   pla
+    sec
+    sbc !e
+    rts
+
+breathe:
+    db 0,1,2,1
+cdx:
+    db -20,12,-20,12
+cdy:
+    db -20,-20,12,12
+gdx:
+    db -8,-2,3,-8,0
+gdy:
+    db -24,-24,-24,12,12
+gtile:
+    db 4,5,6,7,11
+
+; the characters of the player row, from the poses in VRAM
+row:
+    lda #$01
+    sta !big
+    ldx #$00
+.seat:
+    stx !e
+    txa
+    cmp.l $7E0000|!count
+    bcc +
+    brl .out
++
+    lda !kind,x
+    beq .next
+    lda !shown,x
+    cmp #$FF
+    beq .next
+    jsr entryxy                     ; !cx, !cy: feet
+    ldx !e
+    lda !shown,x
+    rep #$30
+    and #$00FF
+    sta !t0
+    asl a
+    adc !t0
+    tax
+    lda.l !PK_POSEP,x
+    sta $A8
+    sep #$20
+    lda.l !PK_POSEP+2,x
+    sta $AA
+    sep #$10
+    lda [$A8]                       ; blocks
+    beq .next
+    sta !t1
+    ldx !e                          ; tile = $40 * seat + $20 * half + 2k (second table)
+    lda !half,x
+    asl a
+    asl a
+    asl a
+    asl a
+    asl a
+    sta !t2
+    txa
+    asl a
+    asl a
+    asl a
+    asl a
+    asl a
+    asl a
+    ora !t2
+    sta !ot
+    txa
+    asl a
+    ora #$31                        ; priority 3, palette = seat, second table
+    sta !oa
+    ldy #$01
+.block:
+    lda [$A8],y
+    clc
+    adc !cx
+    sta !ox
+    iny
+    lda [$A8],y
+    clc
+    adc !cy
+    sta !oy
+    iny
+    phy
+    jsr put
+    ply
+    lda !ot
+    clc
+    adc #$02
+    sta !ot
+    dec !t1
+    bne .block
+.next:
+    ldx !e
+    inx
+    cpx #$04
+    bcs +
+    brl .seat
++
+.out:
+    stz !big
+    rts
+
+; seat !e: !cx = its cursor's x, !cy = feet; A = cursor x
+entryxy:
+    lda.l $7E0000|!count
+    dec a
+    asl a
+    asl a
+    clc
+    adc !e
+    tax
+    lda.l !PK_ENTX,x
+    pha
+    clc
+    adc #16
+    sta !cx
+    lda #!ENTY+!FEET
+    sta !cy
+    pla
+    rts
+
+; the player cursors (Unity P1-P4 Cursor): bright when confirmed, dimmer
+; while choosing, dimmest while waiting
+brackets:
+    stz !big
+    lda #$38
+    sta !oa
+    ldx #$00
+.seat:
+    stx !e
+    txa
+    cmp.l $7E0000|!count
+    bcs .out
+    jsr entryxy
+    sta !cx
+    ldx !e
+    ldy #$02
+    lda !conf,x
+    beq +
+    ldy #$00
+    bra ++
++   cpx !act
+    bne ++
+    ldy #$01
+++  sty !t0                         ; step; tile = BTILE + BN * (3 * seat + step)
+    txa
+    asl a
+    adc !e
+    adc !t0
+    sta.l $004202
+    lda #!BN
+    sta.l $004203
+    nop
+    nop
+    nop
+    lda.l $004216
+    clc
+    adc #!BTILE
+    sta !ot
+    ldx #$00
+.tile:
+    lda.l !PK_BXY,x
+    clc
+    adc !cx
+    sta !ox
+    lda.l !PK_BXY+1,x
+    clc
+    adc #!ENTY
+    sta !oy
+    phx
+    jsr put
+    plx
+    inc !ot
+    inx
+    inx
+    cpx #2*!BN
+    bcc .tile
+    ldx !e
+    inx
+    cpx #$04
+    bcc .seat
+.out:
+    rts
+
+; ---------------------------------------------------------------------------
 ; A = palette id of set 0 ($81:8000 + 2*(id-1) -> [dest16, count16, colors];
-; $80 + n = Bomberman's own palette n, table !PALTAB),
-; X = CGRAM index, Y = colors. A strip in the upper half of a BG palette
-; keeps its first entry (shared with the lower half). Sets the CGRAM dirty
-; flag when something changed.
+; ids !OWNID+ = the bombers' own palettes, table !PALTAB), X = CGRAM index,
+; Y = colors. DB = $7E. Flags the CGRAM shadow when something changed.
 upload:
     cmp #$00
     bne +
@@ -629,10 +1552,9 @@ upload:
     lda #$0081
     bra .src
 .own:
-if !OWN
     sec
     sbc.w #!OWNID
-    cmp.w #!PALN                    ; Bomberman's and the other characters' own palettes
+    cmp.w #!PALN
     bcs .bad
     asl a
     tax
@@ -642,7 +1564,6 @@ if !OWN
     sta $A8
     lda.w #!PALTAB>>16
     bra .src
-endif
 .bad:
     plx
     bra .out
@@ -658,26 +1579,10 @@ endif
     and #$00FF
     sta.l !w0
     ldy #$0000
-    lda.l !w0
-    cmp #$0008
-    bne .loop
-    txa
-    and #$0010
-    beq .loop
-    inx
-    inx
-    iny
-    iny
-    lda #$0007
-    sta.l !w0
 .loop:
     lda [$A8],y
-    cmp $2910,x
-    beq +
     sta $2910,x
-    lda #$0001
-    sta.l !palpend
-+   inx
+    inx
     inx
     iny
     iny
@@ -685,15 +1590,15 @@ endif
     dec a
     sta.l !w0
     bne .loop
-    sep #$30
+    lda #$0001
+    sta.l !palpend
 .out:
     sep #$30
     rts
 
 ; The CGRAM upload ($0351, NMI $C0:0244) takes time from the VRAM queue
-; ($7E:8000 ring, $0355 read / $0357 write, stops at a scanline): sent while the
-; portrait's two-pass transfers are queued it split them and garbled the box.
-; So the shadow is only flagged once the queue is empty.
+; ($7E:8000 ring, $0355 read / $0357 write): the shadow is only flagged
+; once the queue is empty.
 palflush:
     lda.l !palpend
     beq +
@@ -709,413 +1614,268 @@ palflush:
 +   rts
 
 ; ---------------------------------------------------------------------------
-; Cursor label. The game draws "1P".."4P" above the cell: two 8x8 sprites,
-; tiles 6+2n / 7+2n of the first OBJ page, attributes $3C. They move 40
-; lines down and three sprites "L", "+", "R" (tiles !GTILE + 3n + 0..2,
-; unused by the picker's sheet, drawn at build time in the label's style
-; and sent to VRAM by pick_nmi) take their place, in the last 12 sprites of
-; the OAM shadow ($08BF, 4 bytes per sprite; high bits $0ABF; $03D5 =
-; sprites left free by the builder; hidden sprites have y = $E0).
-label:
-    lda.l !gfx
-    cmp #$FF
-    beq +
--   rts                             ; tiles not in VRAM yet
-+   lda $03D5                       ; sprites the builder left free
-    cmp.b #128-!GOAM
-    bcc -
-    lda #$01
-    sta.l !drawn
-if !OWN
-    lda $62C9                       ; Bomberman's cell (the first one): two
-    cmp #$01                        ;   16x16 sprites over the blanked figure
-    bne +
-    lda #$28
-    sta !CS0
-    sta !CS1
-    lda #$77
-    sta !CS0+1
-    lda #$87
-    sta !CS1+1
-    lda.b #!CTILE
-    sta !CS0+2
-    lda.b #!CTILE+2
-    sta !CS1+2
-    lda #$2A                        ; palette 5, priority 2
-    sta !CS0+3
-    sta !CS1+3
-    lda !GHIGH                      ; sprites 114/115 are 16x16, x < 256
-    and #$0F
-    ora #$A0
-    sta !GHIGH
-+
-if !XN
-    jsr xcells
-endif
-endif
-    lda #$FF
-    sta.l !oamn
-    sta.l !oamn+1
-    sta.l !oamn+2
-    sta.l !oamn+3
-    rep #$10
-    ldx #$0000
-.scan:
-    lda $08C0,x
-    cmp #$B1                        ; y + 48 must stay on screen
-    bcs .nx
-    lda $08C2,x
-    cmp #$3C
-    bne .nx
-    lda $08C1,x
-    cmp #$06
-    bcc .nx
-    cmp #$0D
-    bcs .nx
-    bit #$01
-    bne .nx                         ; odd = the "P", found from its number
-    sec
-    sbc #$06
-    lsr a                           ; seat
-    phx
-    rep #$20
-    and #$00FF
-    tay
-    txa
-    lsr a
-    lsr a                           ; sprite
-    tyx
-    sep #$20
-    sta.l !oamn,x
-    plx
-.nx:
-    inx
-    inx
-    inx
-    inx
-    cpx.w #!GOAM*4
-    bcc .scan
-    sep #$10
-
-    ldx #$03
-.seat:
-    lda.l !oamn,x
-    beq .skip                       ; (the "P" is the sprite before it)
-    cmp #$80
-    bcs .skip
-    phx
-    sta.l !s0
-    txa
-    sta.l !s1
-    jsr relabel
-    plx
-.skip:
-    dex
-    bpl .seat
-    rts
-
-; !s0 = sprite of the number, !s1 = seat.
-relabel:
-    rep #$30
-    lda.l !s0
-    and #$00FF
-    asl a
-    asl a
-    tax
-    sep #$20                        ; the "P": previous sprite, 8 to the right
-    lda.l !s1
-    asl a
-    clc
-    adc #$07
-    cmp $08C1-4,x
-    bne .quit
-    lda $08C0-4,x
-    cmp $08C0,x
-    bne .quit
-    lda $08BF,x
-    clc
-    adc #$08
-    cmp $08BF-4,x
-    bne .quit
-    lda $08BF,x
-    sec
-    sbc #$04
-    sta.l !s2                       ; x of the "L"
-    lda $08C0,x
-    sta.l !s3                       ; y of the label
-    clc
-    adc #$28
-    sta $08C0,x
-    sta $08C0-4,x
-    lda.l !s1                       ; first glyph tile
-    asl a
-    clc
-    adc.l !s1
-    pha
-    clc
-    adc.b #!GTILE
-    sta.l !s0
-    pla                             ; sprites !GLY + 3*seat ...
-    rep #$20
-    and #$00FF
-    asl a
-    asl a
-    clc
-    adc.w #!GLY*4
-    tax
-    sep #$20
-    ldy #$0003
--   lda.l !s2
-    sta $08BF,x
-    clc
-    adc #$08
-    sta.l !s2
-    lda.l !s3
-    sta $08C0,x
-    lda.l !s0
-    sta $08C1,x
-    inc a
-    sta.l !s0
-    lda #$3C
-    sta $08C2,x
-    inx
-    inx
-    inx
-    inx
-    dey
-    bne -
-.quit:
-    sep #$30
-    rts
-
-; The glyph sprites leave the screen (the OAM builder only hides the sprites
-; it used the frame before).
-hide:
-    rep #$10
-    ldx.w #!GOAM*4
-    lda #$E0
--   sta $08C0,x
-    inx
-    inx
-    inx
-    inx
-    cpx #$0200
-    bcc -
-    sep #$10
-    stz !GHIGH                      ; small, x < 256
-    stz !GHIGH+1
-    stz !GHIGH+2
-    stz !GHIGH+3
-    lda #$00
-    sta.l !drawn
-    rts
-
-; ---------------------------------------------------------------------------
 ; NMI ($C0:F421, JSL $C004E0 = the VRAM transfers of the frame; M/X 8-bit,
-; DBR = 0, forced blank): sends the 12 glyph tiles once the picker's screen
-; is up; the frame before, the 8 tiles of the Bomberman cell's sprite (the
-; SB6 pose, rows !CTILE and !CTILE + $10) and the empty BG tiles under it.
+; DBR = 0, forced blank): the picker's loads, one group per NMI while the
+; screen is hidden; then the portrait swaps and the poses of the player row.
 pick_nmi:
     jsl $C004E0
 if !TITLE_NMI
     jsl !TITLE_NMI                  ; the animated title's transfers and scroll
 endif
     php
-    sep #$20
+    sep #$30
+    lda.l !SL+$76                   ; NMIs seen: the player row counts video frames
+    inc a
+    sta.l !SL+$76
     lda.l !live
     cmp #$01
     bne .quit
     lda.l $7E1031
     cmp #$04
     bne .quit
-    lda.l !gfx
-    cmp #$FF
-    bne .busy
-if !XN
-    jsr xswap                       ; the cell in OBJ palette 4: its own color indices
-endif
-    plp
-    rtl
-.busy:
-    lda.l $7E0CE0
-    cmp #$C6
-    bne .quit
-    rep #$20
-    lda.l $7E0CB8
-    and #$00FF
-    xba
-    sta.l !w1
-    lda.l $7E0C90
-    and #$00FF
-    ora.l !w1
-    cmp #$8E68                      ; the picker's main loop
-    beq +
+    lda.l !SLst
+    beq .quit
+    lda #$80
+    sta $2115
+    lda #$01
+    sta $4300
+    lda #$18
+    sta $4301
+    lda.b #!DBANK
+    sta $4304
+    lda.l !SLst
+    cmp #$01
+    bne +
+    jsr nmi_load
+    bra .quit
++   jsr nmi_hover                   ; C set: a swap was made (the VBlank is used up)
+    bcs .quit
+    jsr nmi_poses
 .quit:
     plp
     rtl
-+
-    sep #$20
-    lda #$80
-    sta $2115
-if !OWN
-    lda.l !gfx
-    cmp #$01
-    bne .first
-    brl .glyphs
-.first:
-    rep #$20                        ; first frame: the Bomberman cell
-    lda #$1801
-    sta $4300
-    lda.w #cell_tiles
+
+; one group of pk_jobs: [vram, source, size, -, last]
+nmi_load:
+    rep #$30
+    lda.l !SL+$01                   ; !job
+    tax
+.rec:
+    lda.l !DBANK<<16,x
+    cmp #$FFFF
+    beq .done
+    sta $2116
+    lda.l (!DBANK<<16)+2,x
     sta $4302
-    lda #$0080
+    lda.l (!DBANK<<16)+4,x
     sta $4305
-    lda.w #!CVRAM
-    sta $2116
     sep #$20
-    lda.b #cell_tiles>>16
-    sta $4304
     lda #$01
     sta $420B
+    lda.l (!DBANK<<16)+7,x
     rep #$20
-    lda.w #!CVRAM+$100
-    sta $2116
-    lda #$0080
-    sta $4305
-    sep #$20
-    lda #$01
-    sta $420B
-    lda.l $7E62C9
-    cmp #$01
+    pha
+    txa
+    clc
+    adc #$0008
+    tax
+    pla
+    and #$0001
+    beq .rec
+    txa
+    sta.l !SL+$01
+    sep #$30
+    rts
+.done:
+    sep #$30
+    lda #$02
+    sta.l !SLst
+    rts
+
+; the cell that had the cursor gets its portrait at rest back, the new one
+; its cursor face (16 tiles, 4 map rows of 4 entries each)
+nmi_hover:
+    lda.l !SL+$06                   ; !hjob
     bne +
-    rep #$20                        ; its figure leaves BG1 (map $3000,
-    lda #$3205                      ;   tiles 5-6 x 16-18; $211C = empty)
-    sta $2116
-    lda #$211C
-    sta $2118
-    sta $2118
-    lda #$3225
-    sta $2116
-    lda #$211C
-    sta $2118
-    sta $2118
-    lda #$3245
-    sta $2116
-    lda #$211C
-    sta $2118
-    sta $2118
-    sep #$20
-+
-if !XN
-    incsrc "!XNMI"                  ; each character cell: tiles, its figure off BG1
-endif
-    lda #$01
-    sta.l !gfx
-    brl .out
-.glyphs:
-endif
-    rep #$20
-    lda.w #!GVRAM
-    sta $2116
-    lda #$1801
-    sta $4300
-    lda.w #glyph_tiles
+    clc
+    rts
++   lda.l !SL+$04                   ; !hov
+    cmp #$FF
+    beq +
+    ldx #$00
+    jsr cellswap
++   lda.l !SL+$05                   ; !hovw
+    sta.l !SL+$04
+    cmp #$FF
+    beq +
+    ldx #$02
+    jsr cellswap
++   lda #$00
+    sta.l !SL+$06
+    sec
+    rts
+
+; A = cell, X = 0 at rest / 2 cursor face
+cellswap:
+    rep #$30
+    and #$00FF
+    sta.l !nt0
+    txy
+    xba                             ; tiles: 512 bytes per cell
+    asl a
+    clc
+    adc.l swaptab,x                 ; rest / cursor tiles
     sta $4302
-    lda.w #12*32
+    lda.l !nt0
+    xba                             ; 256 words per cell
+    clc
+    adc.w #!PTILE*16
+    sta $2116
+    lda #$0200
     sta $4305
     sep #$20
-    lda.b #glyph_tiles>>16
-    sta $4304
     lda #$01
     sta $420B
-    lda #$FF
-    sta.l !gfx
+    rep #$20
+    lda.l !nt0                      ; map: 16 words per cell
+    asl a
+    asl a
+    asl a
+    asl a
+    asl a
+    tyx
+    clc
+    adc.l swaptab+4,x
+    sta $4302
+    lda.l !nt0
+    asl a
+    tax
+    lda.l !PK_CELLV,x
+    ldy #$0004
+-   sta $2116
+    pha
+    lda #$0008
+    sta $4305
+    sep #$20
+    lda #$01
+    sta $420B
+    rep #$20
+    pla
+    clc
+    adc #$0020
+    dey
+    bne -
+    sep #$30
+    rts
+
+swaptab:
+    dw !PK_RTILES, !PK_HTILES, !PK_RMAP, !PK_HMAP
+
+; poses: into the hidden half of the seat's VRAM, one per NMI
+nmi_poses:
+    lda #$00
+    sta.l !SL+$60                   ; !lim
+    ldx #$00
+.seat:
+    lda.l !SL+$30,x                 ; !want
+    cmp.l !SL+$34,x                 ; !shown
+    beq .next
+    sta.l !SL+$34,x
+    cmp #$FF
+    beq .next
+    lda.l !SL+$38,x                 ; !half
+    eor #$01
+    sta.l !SL+$38,x
+    lda.l !SL+$34,x
+    phx
+    jsr posedma
+    plx
+    lda.l !SL+$60
+    inc a
+    sta.l !SL+$60
+    cmp #$01                        ; one pose per NMI (up to 1 KB)
+    bcs .out
+.next:
+    inx
+    cpx #$04
+    bcc .seat
 .out:
-    plp
-    rtl
+    lda.b #!DBANK
+    sta $4304
+    rts
+
+; seat X, pose A, half !half: two rows of 64 * blocks bytes
+posedma:
+    sta.l !nt0
+    lda #$00
+    sta.l !nt0+1
+    txa                             ; VRAM $7000 + $400 * seat + $200 * half
+    asl a
+    ora.l !SL+$38,x
+    rep #$30
+    and #$00FF
+    xba
+    asl a
+    clc
+    adc #$7000
+    sta.l !nt1
+    lda.l !nt0
+    asl a
+    adc.l !nt0
+    tax
+    lda.l !PK_POSEP,x
+    sta.l !nt2
+    sep #$20
+    lda.l !PK_POSEP+2,x
+    sta $4304
+    rep #$20
+    lda.l !nt2
+    tax
+    sep #$20
+    lda $4304                       ; the record's first byte, in its bank
+    pha
+    plb
+    lda $0000,x                     ; blocks
+    pha
+    lda #$00
+    pha
+    plb
+    pla
+    rep #$20
+    and #$00FF
+    sta.l !nt0
+    asl a
+    inc a
+    adc.l !nt2
+    sta $4302                       ; top row after [n, n x (dx, dy)]
+    lda.l !nt0
+    xba
+    lsr a
+    lsr a                           ; 64 * n
+    sta.l !nt0
+    sta $4305
+    lda.l !nt1
+    sta $2116
+    sep #$20
+    lda #$01
+    sta $420B
+    rep #$20
+    lda.l !nt0
+    sta $4305
+    lda.l !nt1
+    clc
+    adc #$0100
+    sta $2116
+    sep #$20
+    lda #$01
+    sta $420B
+    sep #$30
+    rts
 
 chpal:
     db !CHPAL
 chcol:
     db !CHCOL
-
-if !OWN
-cell_tiles:
-    incbin "!CELL"
-endif
-if !XN
-; Cell sprites of characters 1-8 (OAM shadow, every frame the label is drawn):
-; two 16x16 sprites where cell c (= character c) shows character c.
-xcells:
-    php
-    sep #$30
-    ldx #$01
-.next:
-    lda.l xc_on,x
-    beq .skip
-    txa
-    inc a
-    cmp $62C9,x
-    bne .skip
-    dec a
-    dec a
-    asl a
-    asl a
-    asl a
-    tay                             ; 8 * (c - 1)
-    lda.l xc_x,x
-    sta !XOAM,y
-    sta !XOAM+4,y
-    lda.l xc_y,x
-    sta !XOAM+1,y
-    clc
-    adc #$10
-    sta !XOAM+5,y
-    lda.l xc_t,x
-    sta !XOAM+2,y
-    clc
-    adc #$02
-    sta !XOAM+6,y
-    txa
-    cmp.l !p4char
-    beq +
-    lda #$2E                        ; palette 7, priority 2
-    bra ++
-+   lda #$28                        ; palette 4, priority 2
-++  sta !XOAM+3,y
-    sta !XOAM+7,y
-    txa                             ; 16x16, x < 256: $0ABF + (96 + 2(c-1))/4
-    dec a
-    lsr a
-    tay
-    lda #$0A
-    bcc +
-    lda #$A0
-+   ora $0AD7,y
-    sta $0AD7,y
-.skip:
-    inx
-    cpx #$09
-    bcc .next
-    plp
-    rts
-
-; character c: 1 = its cell is a sprite; x, y of the top sprite; first tile
-xc_on:
-    db !XON
-xc_x:
-    db !XX
-xc_y:
-    db !XY
-xc_t:
-    db !XT
-    incsrc "!XDATA"
-xswap:
-    incsrc "!XSWAP"
-    rts
-endif
-glyph_tiles:
-    incbin "!GLYPHS"
 
 print "SYM end_e4 ", hex(pc())
 print "SYM script_new ", hex(script_new)
