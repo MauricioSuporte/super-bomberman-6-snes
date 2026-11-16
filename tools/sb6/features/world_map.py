@@ -46,6 +46,7 @@ loader at $0200, plus extra blocks) and the image cut in parts for the loader
 import json
 import os
 import struct
+import zlib
 
 import numpy as np
 from PIL import Image
@@ -114,6 +115,30 @@ ACCEPT = dict(name="accept SFX", extra=(), entry=0x0800, ready=(0x53, 0x36), son
 ACCEPT_DIR = 0x0900       # S-DSP sample directory page; the sample follows its one entry
 ACCEPT_MVOL, ACCEPT_VOL = 0x60, 0x7F   # as the stream driver plays the menu SFX
 DRV_ENTRY = 24            # bytes per driver in the table (asm/title_music.asm)
+
+
+# SB5's own ZONE1 / ZONE2 data, unused since apply() replaces both zones: set 3 archives $0F / $10 (island
+# tiles, LZ), set 3 palettes $10 / $11, set 4 arrangements $0F / $10 (islands, BG1). The same tiles and
+# palettes are also listed in sets 0 (archives $6E / $6F) and 6 (archives $12 / $13, palettes $3E / $3F),
+# but no script loads them there (set 6 is only selected natively at $C5:13DE, for its ids 1 / 2) and the
+# only script lines that load them are the zone lines apply() bypasses. Each block is contiguous.
+OLD_ZONE_DATA = [
+    ("free_d3", 0xD3C670, 7838, 0x121EA85B, "freed SB5 ZONE1/ZONE2 island tiles (set 3 archives $0F/$10)"),
+    ("free_e2", 0xE21371, 1952, 0x025298F6, "freed SB5 ZONE1/ZONE2 island arrangements (set 4 $0F/$10)"),
+    ("free_81", 0xC1985E, 328, 0x734615E7, "freed SB5 ZONE1/ZONE2 palettes (set 3 $10/$11), bank $81"),
+]
+
+
+def free_old_zones(rb):
+    """Fills SB5's unused ZONE1 / ZONE2 data with $FF and declares it as free regions (the table
+    entries stay: nothing loads them)."""
+    for name, start, size, crc, purpose in OLD_ZONE_DATA:
+        o = off(start)
+        old = bytes(rb.d[o:o + size])
+        if zlib.crc32(old) != crc:
+            raise BuildError(f"world map: SB5's data at ${start:06X} is not the expected one")
+        rb.patch(start, old, bytes([0xFF]) * size, f"world map: {purpose}")
+        rb.add_region(name, start, start + size, purpose)
 
 
 def _accept_sample(sound_dir, cache_dir):

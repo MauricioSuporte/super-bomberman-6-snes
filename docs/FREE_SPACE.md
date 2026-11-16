@@ -24,6 +24,9 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$F3:0000-$F3:7FFF`, `$F4:0000-$F4:7FFF` | 64 KB | `sb1_f3`, `sb1_f4`: Super Bomberman 1's sound RAM image for the ZONE1 world map music (39 KB, `tools/sb6/features/world_map.py`), then world map data (~6 KB used in `sb1_f4`). |
 | `$F5:0000-$F5:7FFF` | 32 KB | `wmap_f5`: the map's accept SFX player (4 KB sound RAM image), world map ZONE1/ZONE2 tiles, sea frames, ship light colors, set 1 arrangements (~21 KB used). |
 | `$FC:D9B0-$FC:FFFF` | ~9 KB | unassigned. |
+| `$D3:C670-$D3:E50D` | 7838 B | `free_d3`: was SB5's ZONE1/ZONE2 island tiles (set 3 archives `$0F`/`$10`), freed by `world_map.free_old_zones` (also listed as set 0 `$6E`/`$6F`, set 6 `$12`/`$13`: nothing loads them). Unused. |
+| `$E2:1371-$E2:1B10` | 1952 B | `free_e2`: was SB5's ZONE1/ZONE2 island arrangements (set 4 `$0F`/`$10`). Unused. |
+| `$C1:985E-$C1:99A5` | 328 B | `free_81`: was SB5's ZONE1/ZONE2 palettes (set 3 `$10`/`$11`, also set 6 `$3E`/`$3F`); bank `$81`, so it can hold palettes. Unused. |
 
 Budget note: streamed audio costs ~9 KB per second (16 kHz mono). The whole
 free ROM held only ~2.5 minutes of it (now mostly used by the title and the

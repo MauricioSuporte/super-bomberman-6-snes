@@ -71,6 +71,7 @@ def main():
     rb.add_region("c3", 0xC37E90, 0xC37FF0, "bank C3 code (co-op)")
     rb.add_region("c4", 0xC45A40, 0xC47F00, "bank C4 code (co-op)")
     rb.add_region("c5", 0xC56FA0, 0xC57F00, "bank C5 code (co-op)")
+    world_map.free_old_zones(rb)     # SB5's ZONE1/ZONE2 data, replaced by the SB1 / SB2 maps
 
     boot = boot_logo.convert(os.path.join(ROOT, "assets", "HU3DSON LOGO.png"))
     print(f"boot logo: {boot['count']} tiles, palette error {boot['error']:.0f}")

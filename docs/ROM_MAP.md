@@ -483,7 +483,10 @@ script accumulator (`61` = add).
   2 call a script that loads set 1 (archives = raw tiles at `$100-$1FF`
   then 1-`$40`, palette n = BG palettes 1-5 / 1-7, arrangements: ZONE1 1 sea
   on BG2 / 2 island on BG1, ZONE2 3 stars on BG2 (32x32) / 4 ships on BG1);
-  their lava cycles are skipped. ZONE1's sea is one 16x16 tile (`$101-$104`)
+  their lava cycles are skipped. SB5's own ZONE1/ZONE2 data (set 3 archives
+  `$0F`/`$10`, palettes `$10`/`$11`, set 4 arrangements `$0F`/`$10`) is
+  filled with `$FF` and free (docs/FREE_SPACE.md); the copies in sets 0 / 6
+  are table entries only, no script loads them. ZONE1's sea is one 16x16 tile (`$101-$104`)
   whose 7 frames `asm/world_map.asm` DMAs every 12 frames; ZONE2's stars
   scroll up 1 line every 2 frames (`$0321`) and the ship lights write 8 CGRAM
   entries per frame (64-frame cycle). Both from `pick_nmi` while mode 3 and
