@@ -333,7 +333,7 @@ def _insert_char(rb, base_rom, sheets, brc, cells, edited, c, ref):
                 streamed=sorted(streamed), count=count)
 
 
-def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None, chars_dir=None):
+def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None, chars_dir=None, menu_bg=None):
     """`sheets`: sb6.objsheets.ObjSheets. sheet_path alone: SB5 colors. With palette_path (one pixel per color,
     column 0 = colors painted in the sheet, columns 1.. = one bomber color
     each) the bomber palettes 1-6 are replaced by 15-color ones (columns 1-6)
@@ -410,7 +410,8 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
                                                 "CHARANIM": f"${canim:06X}", "PALTAB": f"${paltab:06X}",
                                                 "XLAT": f"${xtab:06X}", "CHARSTREAM": f"${cstab:06X}",
                                                 "PALS": str(PAL_IDS if palettes else 0),
-                                                "OWNID": f"${OWN_ID:02X}"})
+                                                "OWNID": f"${OWN_ID:02X}",
+                                                "BGTAB": f"${menu_bg['table']:06X}" if menu_bg else "0"})
     start, end = reg.cursor, syms["end_e4"]
     out = bytearray(rb.d)
     for o, d in runs:

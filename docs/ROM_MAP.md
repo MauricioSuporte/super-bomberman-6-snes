@@ -381,6 +381,15 @@ script accumulator (`61` = add).
   cartridge's id (color mod 6): its art is SB5's. Tested in Mesen: New
   Game with 1, 2 and 4 players, B and back in. Not tested: Continue (needs
   a save), Game Over -> Continue, boss stages.
+* Menu background (checkerboard + heads): palette 0 of set 3 id 14
+  (`$81:9796`, Normal menu, orange) or id 70 (`$81:A9F6`, Battle's picker,
+  green checker, grey heads, entry 6 = the grid's red X); the checker
+  scrolls by swapping entries 3-4 from cycle tables at `$81:E216` (orange,
+  18 records `[3, 2, c, c]`) and `$81:E2A6` (green). The Normal picker
+  showed Battle's green until the menu's cycle wrote orange again. Hack
+  (`tools/sb6/features/menu_bg.py`): blue copies of both, returned by
+  `pal_lookup` for id 14 in mode 3 and id 70 while `$7F:FF00` = 1; the
+  orange cycle table is recolored in place.
 * Palette lookup `$C0:01DE` (A = id, set `$0AE7`): `[$A8]` = `$81:` word of
   the set's table (`$C0:0379 + 2*set`) at `2*(id-1)`; every loader goes
   through it (`$C0:01AC`, `$C0:01C8`, the slot allocator `$C0:0295`, which

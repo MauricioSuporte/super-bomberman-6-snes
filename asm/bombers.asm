@@ -466,10 +466,42 @@ bomber_palcount:
 ; characters' palettes follow them in the table: !XLAT (byte per id 1-$50,
 ; 0 = stock) is the table entry + 1 that replaces a stock id. Replaces
 ; `LDA #$81 / STA $AA / REP #$30` at $C0:01FA; Y = id - 1, X free.
+;
+; Set 3 ids 14 (Normal menu, in mode 3) and 70 (Battle's picker, while the
+; Normal Game's picker runs: $7F:FF00 = 1) become entries 0 / 1 of !BGTAB,
+; copies with a blue background (tools/sb6/features/menu_bg.py; 0 = not built).
 pal_lookup:
     LDA #$81
     STA $AA
     LDA $0AE7
+if !BGTAB
+    CMP #$03
+    BNE .notset3
+    CPY #14-1
+    BNE .pick
+    LDA.l $7E1031
+    CMP #$03
+    BNE +
+    LDY #$00
+    BRA .bgpal
+.pick
+    CPY #70-1
+    BNE +
+    LDA.l $7FFF00
+    CMP #$01
+    BNE +
+    LDY #$01
+.bgpal
+    REP #$20
+    LDA.w #!BGTAB
+    STA $A8
+    SEP #$20
+    LDA.b #!BGTAB>>16
+    STA $AA
+    BRA +
+.notset3
+endif
+    CMP #$00
     BNE +
     CPY.b #!OWNID-1
     BCS .own

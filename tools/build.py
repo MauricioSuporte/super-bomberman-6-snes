@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, picker, title, title_music  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, picker, title, title_music  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -109,10 +109,14 @@ def main():
     sb6_sheet, sb6_pal = os.path.join(bdir, "bomber_sb6.png"), os.path.join(bdir, "BombermanPallete.png")
     own_palettes = os.path.exists(sb6_sheet) and os.path.exists(sb6_pal)
 
+    # Normal menu / picker background in blue (palettes returned by the bombers' palette hook)
+    mbg = menu_bg.apply(rb)
+    print(f"menu background: blue checker ${mbg['checker'][0]:04X} / ${mbg['checker'][1]:04X}")
     if own_palettes:
-        info = bombers.apply(rb, base_rom, sheets, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"), bdir)
+        info = bombers.apply(rb, base_rom, sheets, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"), bdir,
+                             menu_bg=mbg)
     else:
-        info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir)
+        info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir, menu_bg=mbg)
     sheets.finish()
 
     pick = picker.apply(rb, base_rom, info, tinfo["syms"])
