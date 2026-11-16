@@ -41,6 +41,11 @@ ASM_CPU = os.path.join(ROOT, "asm", "title_music.asm")
 ASM_SPC = os.path.join(ROOT, "asm", "spc", "stream.asm")
 
 RATE = 16000              # pitch $0800
+# The Normal Game's save file / character selection music: 40 s would take
+# 360 KB at 16 kHz, so it streams at 12 kHz (270 KB, in the tails of the
+# banks the title uses and banks $FD-$FF).
+SAVE_RATE = 12000
+SAVE_SET, SAVE_MODE = 0x1C, 3  # sound API group 4 id $1C, sent when mode 3 (Normal menu) starts
 CHUNK = 162               # bytes: 18 BRR blocks
 CHUNK_SAMPLES = 18 * 16
 ARAM_BASE = 0x7000        # driver page; ring right after it
@@ -125,6 +130,20 @@ def encoded_stream(wav, cache_dir):
     with open(cache, "wb") as fh:
         fh.write(data)
     return data
+
+
+def loop_pcm(wav, rate):
+    """A looping recording at `rate`, stretched (FFT resampling, which treats
+    the signal as periodic: the loop point stays seamless) to a whole number
+    of chunks; float samples, not normalized."""
+    from scipy.signal import resample
+    r, x = read_wav(wav)
+    n = max(1, round(len(x) * rate / r / CHUNK_SAMPLES)) * CHUNK_SAMPLES
+    return resample(x, n)
+
+
+def rms(pcm):
+    return float(np.sqrt(np.mean(np.asarray(pcm, dtype=np.float64) ** 2)))
 
 
 def encoded_pcm(pcm, cache_dir, name):
@@ -341,11 +360,48 @@ def _h(v, digits):
     return f"${v:0{digits}X}"
 
 
-def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=()):
+def place_chunks(rb, regions, data, label):
+    """Allocates whole chunks of `data` in the regions, in order, never across
+    a bank; returns the segments [(bank, first offset, end offset)]."""
+    segs, done = [], 0
+    for name in regions:
+        if done == len(data):
+            break
+        r = rb.regions[name]
+        o = r.cursor & 0xFFFF
+        room = (min(r.end, (r.cursor & ~0xFFFF) + 0xFFFF) - r.cursor) // CHUNK
+        k = min(room, (len(data) - done) // CHUNK)
+        if k <= 0:
+            continue
+        addr = rb.alloc(name, data[done:done + k * CHUNK], f"{label}: BRR chunks {done // CHUNK}-{done // CHUNK + k - 1}")
+        segs.append((addr >> 16, o, o + k * CHUNK))
+        done += k * CHUNK
+    if done != len(data):
+        raise RuntimeError(f"{label}: {len(data) - done} bytes do not fit in {regions}")
+    return segs
+
+
+def segment_table(tracks):
+    """tracks = [(segments, loop index)] -> (bytes, offset of each track)."""
+    out, starts = bytearray(), []
+    for segs, loop in tracks:
+        first = len(out)
+        starts.append(first)
+        for b, lo, hi in segs:
+            assert b and 0 <= lo < hi <= 0xFFFF and (hi - lo) % CHUNK == 0
+            out += struct.pack("<BHH", b, lo, hi)
+        out += struct.pack("<BHH", 0, first + 5 * loop, 0)
+    return bytes(out), starts
+
+
+def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=(), save_wav=None,
+          save_regions=()):
     """sound_dir holds title_pan.wav, title_drop.wav and the menu SFX;
     drop_frames = frames of the intro (from the pan's first) where a wave of
     characters starts to fall; game_sfx = the symbols of asm/game_sfx.asm
-    (in-game SFX, called from the hooks here)."""
+    (in-game SFX, called from the hooks here); save_wav = the save file menu
+    music, streamed at SAVE_RATE in save_regions (after the title's own
+    banks), as loud (RMS) as the title music."""
     # Hudson's loader (uploaded at boot) must hold the RET the driver hooks.
     o = off(HUDSON_LOADER)
     if rb.d[o + 3:o + 9] != bytes.fromhex("8F AA F4 8F BB F5") or rb.d[o + 0x51:o + 0x54] != bytes.fromhex("6F CD 01"):
@@ -361,6 +417,7 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
 
     # Stream data: one region per bank, filled up to the last whole chunk.
     banks = sorted({b for b, _ in pos[:n]})
+    title_segs = []
     for b in banks:
         rb.add_region(f"audio_{b:02X}", b << 16, (b + 1) << 16,
                       "streamed BRR audio (title music)")
@@ -368,18 +425,37 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
         data = stream[idx[0] * CHUNK:(idx[-1] + 1) * CHUNK]
         addr = rb.alloc(f"audio_{b:02X}", data, f"title music BRR chunks {idx[0]}-{idx[-1]}")
         assert addr == b << 16 | pos[idx[0]][1]
+        title_segs.append((b, pos[idx[0]][1], pos[idx[-1]][1] + CHUNK))
+
+    # Save file menu music: same loudness (RMS) as the title music, through
+    # the S-DSP volumes (the samples are normalized to the same peak).
+    save_vol, save_mvol, save_segs, save_seconds, save_gain = VOL, MVOL, [], 0.0, 1.0
+    if save_wav:
+        save_pcm = to_pcm(loop_pcm(save_wav, SAVE_RATE))
+        save_gain = rms(load_pcm(wav)) / rms(save_pcm)
+        level = VOL * MVOL * save_gain
+        save_mvol = min(0x7F, max(MVOL, round(level / VOL)))
+        save_vol = min(0x7F, round(level / save_mvol))
+        save = encoded_pcm(save_pcm, cache_dir, "save_music")
+        save_seconds = len(save_pcm) / SAVE_RATE
 
     # Driver image uploaded to ARAM $7000: driver pages + first chunks. The
     # driver is sized first (asar pass with a large area), then the ring
     # takes every whole chunk up to the end of the title song area.
     sfx_bin, sfx_slots, sfx_ids = sfx_tables(samples, cache_dir)
-    spc_defs = dict(BASE=_h(ARAM_BASE, 4), PREFILL=PREFILL, VOL=_h(VOL, 2), MVOL=_h(MVOL, 2),
-                    SFX_BIN=sfx_bin.replace("\\", "/"))
-    _, syms = asar.assemble_blob(ASM_SPC, 0x2000, dict(spc_defs, DRIVER_SIZE="$1000", CHUNKS=1))
+    def rate_defs(rate, vol, mvol):
+        return dict(PITCH=_h(round(rate * 4096 / 32000), 4), TIMER0=round(8000 * CHUNK_SAMPLES / rate),
+                    VOL=_h(vol, 2), MVOL=_h(mvol, 2))
+
+    spc_defs = dict(BASE=_h(ARAM_BASE, 4), PREFILL=PREFILL, SFX_BIN=sfx_bin.replace("\\", "/"))
+    _, syms = asar.assemble_blob(ASM_SPC, 0x2000, dict(spc_defs, DRIVER_SIZE="$1000", CHUNKS=1,
+                                                       **rate_defs(RATE, VOL, MVOL)))
     driver_size = (syms["end"] - ARAM_BASE + 0xFF) & ~0xFF
     ring_chunks = (RING_LIMIT - ARAM_BASE - driver_size) // CHUNK
-    driver, _ = asar.assemble_blob(ASM_SPC, driver_size,
-                                   dict(spc_defs, DRIVER_SIZE=_h(driver_size, 4), CHUNKS=ring_chunks))
+    spc_defs.update(DRIVER_SIZE=_h(driver_size, 4), CHUNKS=ring_chunks)
+    driver, _ = asar.assemble_blob(ASM_SPC, driver_size, dict(spc_defs, **rate_defs(RATE, VOL, MVOL)))
+    save_driver, _ = asar.assemble_blob(ASM_SPC, driver_size,
+                                        dict(spc_defs, **rate_defs(SAVE_RATE, save_vol, save_mvol)))
     # The prefill is silence: the stream that follows is the music or the intro's pan sound.
     silent = brr.encode(np.zeros(CHUNK_SAMPLES, dtype=np.int64))
     blob = driver + silent * PREFILL
@@ -388,13 +464,22 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
     if pan[-CHUNK:] != silent:
         raise RuntimeError("the intro sounds must end in a silent chunk")
     pan_addr = rb.alloc(PAN_REGION, pan, "title intro: pan + character drop sounds, BRR chunks (the last one is silence)")
-    if pan_addr & 0xFFFF or len(pan) > BANK_LIMIT:
+    if pan_addr & 0xFFFF or len(pan) > 0xFFFF:
         raise RuntimeError("the intro sounds must start their bank and fit in it")
+    pan_segs = [(pan_addr >> 16, 0, len(pan) - CHUNK), (pan_addr >> 16, len(pan) - CHUNK, len(pan))]
+    if save_wav:
+        save_segs = place_chunks(rb, [f"audio_{banks[-1]:02X}"] + list(save_regions), save, "save file menu music")
+    segs_bin, seg_starts = segment_table([(pan_segs, 1), (title_segs, 0), (save_segs or title_segs, 0)])
+    segs_path = os.path.join(cache_dir, "stream_segs.bin")
+    with open(segs_path, "wb") as fh:
+        fh.write(segs_bin)
     entry = ARAM_BASE + 4
-    l_stream = _list([(ARAM_BASE, blob), (0x1041, bytes([0x5F, entry & 0xFF, entry >> 8]))],
-                     struct.pack("<H", entry))
+    jmp_entry = (0x1041, bytes([0x5F, entry & 0xFF, entry >> 8]))
+    l_stream = _list([(ARAM_BASE, blob), jmp_entry], struct.pack("<H", entry))
     blob_addr = rb.alloc("bulk", l_stream, "title music: upload list = SPC stream driver + prefill (ARAM $7000), "
                          "JMP entry over the loader's RET")
+    l_save = _list([(ARAM_BASE, save_driver + silent * PREFILL), jmp_entry], struct.pack("<H", entry))
+    save_addr = rb.alloc("bulk", l_save, "save menu music: upload list = SPC stream driver at 12 kHz + prefill")
     samples_addr = rb.alloc("bulk", l_samples, "menu SFX: upload list = 3 BRR samples (ARAM $B900), directory "
                             "and tuning entries $39-$3B")
     new_addr = rb.alloc("bulk", l_new, "menu SFX: upload list = instruments 28-30 and SB6 definitions of SFX 1, 4, 3")
@@ -408,11 +493,9 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
                     ENTRY=_h(entry, 4), L_STREAM=_h(blob_addr, 6), L_SAMPLES=_h(samples_addr, 6),
                     L_NEW=_h(new_addr, 6), L_ORIG=_h(orig_addr, 6), SFX_SAFE=_h(safe_addr, 6),
                     NSONGS=N_SONGS, SONG_TABLE=_h(SONG_TABLE, 6), RTL_C0=_h(RTL_C0, 6),
-                    START_BANK=_h(pos[0][0], 2), START_OFF=_h(pos[0][1], 4),
-                    PRE_BANK=_h(pan_addr >> 16, 2), PRE_OFF=_h(0, 4), PRE_END_OFF=_h(len(pan), 4),
-                    PRE_LOOP_OFF=_h(len(pan) - CHUNK, 4),
-                    LOOP_BANK=_h(pos[0][0], 2), LOOP_OFF=_h(pos[0][1], 4),
-                    END_BANK=_h(pos[n][0], 2), END_OFF=_h(pos[n][1], 4),
+                    L_SAVE=_h(save_addr, 6), SEGS=segs_path.replace("\\", "/"),
+                    SEG_PRE=_h(seg_starts[0], 4), SEG_TITLE=_h(seg_starts[1], 4), SEG_SAVE=_h(seg_starts[2], 4),
+                    SAVE_SET=_h(SAVE_SET if save_wav else 0xFF, 2), SAVE_MODE=_h(SAVE_MODE, 2),
                     SFX_SLOTS=sfx_slots.replace("\\", "/"),
                     **{f"GS_{k.upper()}": _h(game_sfx[f"gs_{k}"], 6) for k in ("sound", "tick", "set", "song")})
     runs, syms = asar.assemble_into(rb.d, ASM_CPU, cpu_defs)
@@ -444,4 +527,6 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
     seconds = n * CHUNK_SAMPLES / RATE
     return dict(seconds=seconds, bytes=len(stream), banks=banks, code=len(code), driver=len(driver),
                 ring=ring_chunks, sfx=sfx_ids, pre_start=syms["pre_start"], pan=len(pan),
-                sfx_bytes=sample_bytes, safe=[i for i in range(N_SONGS) if safe[i] == 1])
+                sfx_bytes=sample_bytes, safe=[i for i in range(N_SONGS) if safe[i] == 1],
+                save_seconds=save_seconds, save_segs=save_segs, save_gain=save_gain,
+                save_vol=(save_vol, save_mvol))

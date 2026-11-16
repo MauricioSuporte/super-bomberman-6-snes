@@ -29,7 +29,9 @@
 ; SPC -> CPU while streaming: port 2 = free chunks in the ring, port 3 = $5B.
 ;
 ; Defines: BASE (ARAM address, page aligned), DRIVER_SIZE, CHUNKS (ring size
-; in chunks), PREFILL (chunks uploaded with the driver), VOL, MVOL, SFX_BIN
+; in chunks), PREFILL (chunks uploaded with the driver), VOL, MVOL, PITCH and
+; TIMER0 (the recording's rate: pitch = rate * 4096 / 32000, timer 0 target =
+; 8000 * 288 / rate, one tick per chunk), SFX_BIN
 ; (file: [nsrc][4 Hudson sample numbers][8 script offsets][scripts]; script =
 ; reg,value pairs, $FE n = wait n * 4 ms, $FF = end).
 
@@ -146,7 +148,7 @@ entry:
     mov !level,#!PREFILL
     mov !state,#0
     mov !sfx_on,#0
-    mov $fa,#144                    ; timer 0: 8 kHz / 144 = one tick per chunk
+    mov $fa,#!TIMER0                ; timer 0: 8 kHz / TIMER0 = one tick per chunk (144 at 16 kHz)
     mov $fc,#0                      ; timer 2: 64 kHz / 256 = 4 ms (SFX)
     mov a,!HUDSON_TIMERS
     and a,#$ca                      ; timers 0/2 off, no port clear
@@ -370,7 +372,7 @@ dsp_init:
     db $2c,$00, $3c,$00, $0d,$00    ; echo volume, feedback
     db $5d,dir>>8
     db !SV+0,!VOL, !SV+1,!VOL       ; stream voice volume
-    db !SV+2,$00, !SV+3,$08         ; pitch $0800 = 16 kHz
+    db !SV+2,(!PITCH)&$ff, !SV+3,(!PITCH)>>8 ; pitch $0800 = 16 kHz, $0600 = 12 kHz
     db !SV+4,$00                    ; source 0
     db !SV+5,$00, !SV+7,$7f         ; GAIN mode, direct full
     db $0c,!MVOL, $1c,!MVOL

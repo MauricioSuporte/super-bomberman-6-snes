@@ -32,14 +32,21 @@
 ; WRAM: $0100-$0109 (bottom of the stack page; the stack never went below
 ; $01B3 in a 12000-frame run, see docs/ROM_MAP.md).
 ;
-; Defines: CODE (address), L_STREAM (upload list: driver + prefill, JMP entry
-; over the loader's RET; then the entry address), ENTRY (ARAM entry),
-; L_SAMPLES / L_NEW / L_ORIG (upload lists: SFX samples, SB6 and SB5 SFX
-; definitions), SFX_SAFE, NSONGS, SONG_TABLE, RTL_C0,
-; START_BANK/START_OFF (first chunk sent by the feeder),
-; LOOP_BANK/LOOP_OFF, END_BANK/END_OFF (address after the last chunk),
-; SFX_SLOTS (file), PRE_BANK/PRE_OFF/PRE_END_OFF/PRE_LOOP_OFF (the intro's
-; sounds: their own bank, the last chunk is silence and repeats).
+; Tracks: 0 = the title intro's sounds (the last chunk is silence and
+; repeats until the music replaces it), 1 = the title music, 2 = the save
+; file / character selection music of the Normal Game. The save music starts
+; on the main-loop pass after the menu's sample set request (group 4, id
+; SAVE_SET) in mode SAVE_MODE ($1031), and plays through the picker until
+; the stage's stop request releases it. Each track is a run of segments
+; (SEGS file: bank, first chunk offset, end offset; a 0 bank ends the run,
+; its word is the segment to loop to), so a track can use bank tails.
+;
+; Defines: CODE (address), L_STREAM / L_SAVE (upload lists: driver at the
+; track's rate + prefill, JMP entry over the loader's RET; then the entry
+; address), ENTRY (ARAM entry), L_SAMPLES / L_NEW / L_ORIG (upload lists:
+; SFX samples, SB6 and SB5 SFX definitions), SFX_SAFE, NSONGS, SONG_TABLE,
+; RTL_C0, SEGS (file), SEG_PRE / SEG_TITLE / SEG_SAVE (offsets of each
+; track's first segment), SAVE_SET, SAVE_MODE, SFX_SLOTS (file).
 
 asar 1.90
 hirom
@@ -54,7 +61,11 @@ org !CODE
 !sfxtog = $000107       ; bit 6 toggles so repeated SFX commands differ
 !sfxok  = $000108       ; 1 = the SB6 menu SFX samples are in ARAM
 !sfxnew = $000109       ; 1 = Hudson's SFX 1/3/4 are the SB6 definitions
+!track  = $00010A       ; track streaming (0 intro, 1 title, 2 save menu)
+!seg    = $00010B       ; word: offset in segs of the segment being sent
+!pend   = $00010D       ; 1 = start the save music on the next main-loop pass
 !NMI_FRAMES = $000068   ; incremented by the NMI handler ($C0:F431)
+!MODE   = $7E1031       ; game mode (3 = Normal Game menu)
 !song   = $0003CD       ; Hudson song currently in ARAM ($FF = none)
 
 APUIO0 = $002140
@@ -125,14 +136,30 @@ sound_hook:
     bne .other
     lda.l !active
     beq +
-    lda.l !bank             ; the title's pan sound is still streaming (the
-    cmp #!PRE_BANK          ; intro ended or was skipped): the music replaces it
-    bne .swallow
+    lda.l !track            ; the title's pan sound (the intro ended or was
+    cmp #$01                ; skipped) or the save music: the title music
+    beq .swallow            ; replaces it
     jsr release
-+   jsr start_stream
++   lda #$00
+    sta.l !pend
+    lda #$01
+    jsr start_stream
     bra .swallow
 .other:
-    lda.l !active
+    lda #$00                ; any other request cancels a pending save music
+    sta.l !pend
+    lda $06,s
+    cmp #$04
+    bne +
+    lda $05,s
+    cmp #!SAVE_SET
+    bne +
+    lda.l !MODE
+    cmp #!SAVE_MODE
+    bne +
+    lda #$01                ; Normal Game menu: the save music once the set is in
+    sta.l !pend
++   lda.l !active
     beq .original
     jsr release
 .original:
@@ -176,8 +203,16 @@ loop_hook:
     php
     sep #$20
     lda.l !active
-    beq +
+    beq .idle
     jsr feed
+    bra +
+.idle:
+    lda.l !pend
+    beq +
+    lda #$00
+    sta.l !pend
+    lda #$02
+    jsr start_stream
 +   jsl !GS_TICK
     plp
     lda $03BF               ; replaced instructions
@@ -192,22 +227,19 @@ pre_start:
     sep #$20
     lda.l !active
     bne +
+    lda #$00
     jsr start_stream
-    rep #$20
-    lda #!PRE_OFF
-    sta.l !ptr
-    sep #$20
-    lda #!PRE_BANK
-    sta.l !bank
 +   plp
     rtl
 
-; Hudson's loader (port 1 = $10) <- the SFX samples (when they are not in
-; ARAM), the SB6 SFX definitions, the driver + prefill and a JMP entry over
-; the loader's final RET at $1041, so the end of the upload runs the driver.
+; A = track. Hudson's loader (port 1 = $10) <- the SFX samples (when they
+; are not in ARAM), the SB6 SFX definitions, the driver at the track's rate +
+; prefill and a JMP entry over the loader's final RET at $1041, so the end of
+; the upload runs the driver.
 start_stream:
     php
     sep #$30
+    pha
     %c0call($C00F13)
     lda.l !sfxok
     bne +
@@ -217,19 +249,35 @@ start_stream:
 +   %sendlist(!L_NEW)
     lda #$01
     sta.l !sfxnew
+    lda $01,s
+    cmp #$02
+    beq .save
     %sendlist(!L_STREAM)
+    bra .sent
+.save:
+    %sendlist(!L_SAVE)
+.sent:
     %c0call($C00F35)        ; end of upload: the loader "returns" into the driver
     lda $4B                 ; the session's last kick
     sta.l !kick
     inc a
     and #$7F
     sta.l !seq
-    rep #$20
-    lda #!START_OFF
+    pla
+    sta.l !track
+    rep #$30
+    and #$00FF
+    asl
+    tax
+    lda.l seg_start,x
+    sta.l !seg
+    tax
+    lda.l segs+1,x
     sta.l !ptr
     sep #$20
-    lda #!START_BANK
+    lda.l segs,x
     sta.l !bank
+    sep #$30
     lda.l !NMI_FRAMES
     sta.l !frame
     lda #$01
@@ -399,43 +447,32 @@ feed:
     bne .triple
     xba
     sta.l !seq
-    rep #$20
+    rep #$30                ; Y = offset after the chunk: end of the segment?
+    lda.l !seg
+    tax
     tya
-    cmp #$FF5F              ; next chunk would cross the bank
-    bcc +
-    lda #$0000
-    sta.l !ptr
+    cmp.l segs+3,x
+    bne .store
+    txa
+    clc
+    adc #$0005
+    tax
     sep #$20
-    lda.l !bank
-    inc a
-    sta.l !bank
-    bra ++
-+   sta.l !ptr
-    sep #$20
-++  lda.l !bank
-    cmp #!PRE_BANK
+    lda.l segs,x
     bne +
-    rep #$20
-    lda.l !ptr
-    cmp #!PRE_END_OFF
-    bne ++
-    lda #!PRE_LOOP_OFF
-    sta.l !ptr
-++  sep #$20
-    bra .next
-+   cmp #!END_BANK
-    bne .next
-    rep #$20
-    lda.l !ptr
-    cmp #!END_OFF
+    rep #$20                ; end of the run: the segment it loops to
+    lda.l segs+1,x
+    tax
     sep #$20
-    bne .next
+    lda.l segs,x
++   sta.l !bank
     rep #$20
-    lda #!LOOP_OFF
+    txa
+    sta.l !seg
+    lda.l segs+1,x
+.store:
     sta.l !ptr
     sep #$20
-    lda #!LOOP_BANK
-    sta.l !bank
 .next:
     pla
     dec a
@@ -448,6 +485,13 @@ feed:
     plb
     plp
     rts
+
+; Segments of every track: bank, offset of the first chunk, offset after the
+; last; a 0 bank ends a track, followed by the offset of its loop segment.
+segs:
+    incbin "!SEGS"
+seg_start:
+    dw !SEG_PRE, !SEG_TITLE, !SEG_SAVE
 
 assert pc() <= !CODE_END, "title music code overflows its allocation"
 

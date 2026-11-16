@@ -48,7 +48,10 @@ def main():
         rb.add_region(f"obj_f{bank & 15}", bank << 16, (bank + 1) << 16, "OBJ sheets: raw 4bpp strips (bombers)")
     for bank in range(0xEC, 0xF0):
         rb.add_region(f"stream_{bank:02x}", bank << 16, (bank + 1) << 16, "bomber poses streamed one by one (DMA source)")
-    rb.add_region("title_fc", 0xFC0000, 0xFD0000, "title intro: pan and drop sounds (streamed BRR, one bank)")
+    rb.add_region("title_fc", 0xFC0000, 0xFD0000, "title intro: pan and drop sounds (streamed BRR, one bank); "
+                  "save menu music after them")
+    for bank in range(0xFD, 0x100):
+        rb.add_region(f"music_{bank:02x}", bank << 16, (bank + 1) << 16, "streamed BRR audio (save menu music)")
     for bank in (0xFA, 0xFB):
         rb.add_region(f"title_f{bank & 15:x}", bank << 16, (bank + 1) << 16,
                       "animated title: tiles, maps, tables, code (DMA sources)")
@@ -76,11 +79,16 @@ def main():
     # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),
                               os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"), gsfx["syms"],
-                              drop_frames=title.drop_frames(os.path.join(ROOT, "assets", "title")))
+                              drop_frames=title.drop_frames(os.path.join(ROOT, "assets", "title")),
+                              save_wav=os.path.join(ROOT, "assets", "sound", "save_menu_music.wav"),
+                              save_regions=["music_fd", "music_fe", "music_ff", "title_fc"])
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
           f"CPU code {music['code']} B; intro sounds {music['pan']} bytes; SB6 menu SFX {music['sfx']} in "
           f"{music['sfx_bytes']} bytes of ARAM, kept by songs {music['safe']}")
+    print(f"save menu music: {music['save_seconds']:.1f} s at 12 kHz in "
+          f"{', '.join(f'${b:02X}:{lo:04X}-{hi:04X}' for b, lo, hi in music['save_segs'])}; "
+          f"RMS gain x{music['save_gain']:.2f} -> VOL ${music['save_vol'][0]:02X}, MVOL ${music['save_vol'][1]:02X}")
 
     tinfo = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot,
                         os.path.join(args.out, "cache"), music["pre_start"])

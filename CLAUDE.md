@@ -79,7 +79,9 @@ shows at frames ~56-410, then the hack goes straight to the title (mode 2,
 SB5's intro is skipped; the title's own intro runs at frames ~540-755,
 music and pads from ~760); an attract demo starts ~36 s later. Old scripts that
 wait for frame ~5650 still work (the title is already up). Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), Options →
-back restarts it, Normal Game releases it (Hudson PC `$08xx`, stage music).
+back restarts it, Normal Game switches to the save menu music (`$010A` = 2,
+voice 7 pitch `$0600`, through the picker), the stage releases it (Hudson PC
+`$08xx`, stage music).
 
 The testrunner ignores the multitap setting (every port lands on P1), so
 P3/P4 input is injected by Lua with `emu.write` to `$2C/$31/$36+seat` from an

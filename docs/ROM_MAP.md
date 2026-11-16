@@ -208,6 +208,13 @@ script accumulator (`61` = add).
 * Script music load `$C0:1171` uploads its song unconditionally.
 * Title flow: `0401` (sets), `$C0:1171` song 1, `0002` = play title music.
   Options: `0204` → `1001` → `0401` → song 1 → `0002`.
+* Normal Game menu (mode 3, file lists and the picker): `1001` then `041C`
+  (sets) and no music in SB5; the stage then sends `1001`, `0004`. Hack:
+  `041C` in mode 3 arms the save menu music (`$010D`), which the main-loop
+  hook starts once the set is in (stream track 2, 12 kHz; the next non-SFX
+  request releases it). Tracks are segment runs (`segs` in
+  `asm/title_music.asm`), so the save music fills the tails of `$EB` / `$FC`
+  and banks `$FD-$FF`.
 * All APU port accesses are in `$C0:0DC0-$C0:1130`.
 
 * Menu SFX (group 2): `1` cursor move, `4` accept, `3` back. SB5 plays
