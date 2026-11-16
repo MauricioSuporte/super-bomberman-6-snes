@@ -306,6 +306,10 @@ script accumulator (`61` = add).
 | `$C2:069B` | `7C 46 C1` | script op `FF 1A nn`: nn >= `$F0` runs `pick_op` |
 | `$C0:F421` | `22 E0 04 C0` | NMI: the SB6 picker's VRAM loads, portrait swaps and poses (`pick_nmi`), which first calls `title_nmi` |
 | `$C0:01FA` | `A9 81 85 AA C2 30` | palette lookup: ids `$80+` of set 0 = bomber palettes (`pal_lookup`, `asm/bombers.asm`) |
+| `$C7:1481` | zone setup script (19 bytes) | calls a copy that runs `FF 1A F5` first (`wmap_op`: map animation, `$0314`, `$0321`, map music driver) |
+| `$C7:14A9`, `$C7:14B9` | zone 1 map script | ZONE1 world map = SB1's (`tools/sb6/features/world_map.py`, below) |
+| `$C7:14D2`, `$C7:14EB` | zone 2 map script | ZONE2 world map = SB2's |
+| `$C0:1C98`, `$C0:037B`, `$C0:8003` | set 1 (null) | world map archive / palette / arrangement tables |
 
 ## Script VM details, pads, OAM (found for the character selection)
 
@@ -443,6 +447,105 @@ script accumulator (`61` = add).
   two-pass transfers (`$2115` = 00 then 80): the top box shows garbage that
   looks like a blinking cursor. The picker only sets `$0351` when
   `$0355` = `$0357` (`palflush`, flag `$7F:FF69`).
+
+## World map (Normal Game, mode 3)
+
+* Script `$C7:1440` in task 9 (idle loop around `$C7:13AC`; `$0CB8`/`$0CE0`
+  = task 9's script pointer high byte / bank). Every zone: set 3, archive
+  `$0E` (lava tiles, VRAM `$0000`) + arrangement `$0E` of set 4 on BG2, BG3
+  archives `$4C`, `$4D`, `$0D`, palette `$0F` (CGRAM 0-15: lava palette 0,
+  whose entries 1-11 are also the BG3 text colors), then `5D 36 10` /
+  `FF A6 00 06` jump on the zone `$1036` (word table `$C7:149B`, entries
+  0-6). Zone 1 (`$C7:14A9`): archive `$0F` (island, VRAM `$1000`), palette
+  `$10` (CGRAM 16-95), arrangement `$0F` on BG1, `FD 0E 01 00 00`,
+  `2C 02 01` / `2C 03 01` (lava palette cycles: set `$0D` palettes `$06-$14`
+  -> CGRAM `$11-$15`, `$15-$23` -> `$16-$1A`, every ~4 frames),
+  `2C 09 01` (stage marker blink, palettes `$4C-$4F` -> OBJ CGRAM `$92-$95`),
+  `FF 8D 48 04 03 00 00` (ZONE text, BG3). Map music: request group 0 id 4,
+  after `1001`.
+* Screen: mode 1, BG1 map `$3000`, BG2 map `$3800` (64x32, 8x8 tiles, chr
+  `$0000`), BG3 map `$4000` chr `$5000` (ZONE n - m, the "R" arrow), V scroll
+  0 (screen line y = map line y + 1). Stage markers and the zone badge are
+  OBJ. CGADSUB shadow `$0314` = `$C2` (BG2 subtract-half with COLDATA
+  `$0315-$0317` = 10/10/10: the dark lava); the PPU shadows `$0300+` are
+  copied by the NMI at `$C0:F6xx` with D = `$0300`.
+* `$1036` = zone - 1 here. L / R re-run the script from `$C7:1481` (lava,
+  BG3, then the zone jump) while the screen is dark; no music request is
+  sent on a zone change. SB5 reloads per zone only tiles 0-`$40` (lava,
+  archive `$0E`) and from `$100` (the island archive); tiles `$41-$FF`
+  (archive `$0C` and others) and `$200+` are loaded once per map. The lava
+  arrangement (`FF 8D 0E 04 02`) is drawn relative to BG2's V scroll
+  `$0321`: it must be 0 first. The stages do not reload tiles 0-`$40` and
+  their BG3 map is mostly tile 0: it must stay blank.
+* Hack: `$C7:1481` calls a copy of the setup that first runs `FF 1A F5`
+  (`wmap_op`, `asm/world_map.asm`): per zone the animation, `$0314` (0 on
+  ZONE1/ZONE2), `$0321` = 0 and the music driver (`map_music`). Zones 1 and
+  2 call a script that loads set 1 (archives = raw tiles at `$100-$1FF`
+  then 1-`$40`, palette n = BG palettes 1-5 / 1-7, arrangements: ZONE1 1 sea
+  on BG2 / 2 island on BG1, ZONE2 3 stars on BG2 (32x32) / 4 ships on BG1);
+  their lava cycles are skipped. ZONE1's sea is one 16x16 tile (`$101-$104`)
+  whose 7 frames `asm/world_map.asm` DMAs every 12 frames; ZONE2's stars
+  scroll up 1 line every 2 frames (`$0321`) and the ship lights write 8 CGRAM
+  entries per frame (64-frame cycle). Both from `pick_nmi` while mode 3 and
+  task 9 is in `$C7:1300-$C7:17FF`.
+* SB1's map (for reference): BG1 map `$5000` (island, clouds; 16x16 tiles),
+  BG2 map `$5400` (tile `$200` everywhere, palette 1), V scroll -1, the
+  center tower is OBJ (tiles `$180-$1C2`, palette 4); only the sea tile
+  changes (VRAM `$2000-$211F`), the clouds do not move. Shown ~250 frames,
+  then the stage.
+
+## Super Bomberman 1's sound driver (ZONE1 map music)
+
+* Boot: IPL upload to `$0800`, a second stage loader, then cold start
+  `$0812` (clears `$0000-$07FF`, inits, writes `$68`/`$09` to ports 2/3,
+  main loop `$0846`). All songs and samples stay in ARAM (`$0800-$A1BB`; SB1
+  never writes above, Mesen fills it with power-on garbage); per-stage data
+  is uploaded later. No echo on the map song (EDL 0, FLG `$20`).
+* Port 0 = music / control, port 1 = SFX: a command is new when its bit 7
+  differs from the last one; the driver echoes it. Port 0 `$37`-`$3F`: table
+  `$0890` (`$37` = stop, IPL ROM on, `JMP $FFC0`; `$3A` / `$3B` fade in /
+  out; `$3E` cold restart); lower values = songs (`$87`: world map song,
+  ~60 s loop). Port 1: SFX 0 = cursor move, 1 = accept.
+* Hack (`asm/title_music.asm` `sb1_*`, data from `world_map.sound`): on the
+  ZONE1 map's music request Hudson's loader gets a stub at `$1100` (FLG
+  `$E0`, `$F1` = `$B0`, `JMP $FFC0`) and `JMP $1100` over its `RET` at
+  `$1041`; the IPL ROM gets a loader at `$0200` that takes 3 bytes per
+  handshake (~1 s for the 39 KB, limited by the SPC loop) and jumps to
+  `$0812`; then `$87`. The next non-SFX request sends `$37` and calls
+  `$C0:0CCF` (SB5's own power-on sound init: sets `$58`, `$56`, `$03CD` /
+  `$03CE` = `$FF`); the in-game SFX state `$0188-$018C` is cleared.
+  Checked in Mesen: the key-on sequence and timing equal SB1's; stage
+  music and in-game SFX after the map.
+* Research: `tools/spc_render.py --voices all --echo` renders a DSP log
+  (several logs joined with `+`); the map song capture needed the CPU
+  frozen (the map lasts ~4 s in SB1) and runs of < 100 s per Mesen call.
+
+* Super Bomberman 2's map (frames ~1170-1500 after Start at 300 and 1150):
+  stars on BG1 (256x512 map repeating every 256 lines, V scroll +1 every 2
+  frames), ships all OBJ (chr `$C000`, palettes 1-5; Bomberman palette 0),
+  lights = CGRAM 156-158, 172-173, 220-222 cycled with a 64-frame period.
+
+## Super Bomberman 2's sound driver (ZONE2 map music)
+
+* Cold start `$0800`; ready = ports 2/3 `$AA`/`$AA`. Port 0: values
+  1-`$40` = song value-1 (map: 2), `$41+` = SFX (move `$51`, accept `$52`);
+  a command is new when it differs from the last, echoed xor `$80`. Port 1
+  command 6 = FLG `$E0`, `JMP $FFC0`; SB2 turns the IPL ROM off (`$F1` =
+  `$33`), so the hack uploads a copy of the IPL ROM to RAM `$FFC0` (with the
+  `$FF00-$FF38` PCALL routines). Image: ARAM `$0800-$E6DF` taken on the map
+  (`tools/extract_world_map.py zone2`, `tools/mesen/sb2_world_map.lua`).
+* Hack: `asm/title_music.asm` `fd_*` handles both foreign drivers through a
+  table per driver (`world_map.sound`): upload list, image parts, ready
+  values, song, echo, SFX. A zone change switches drivers in `map_music`
+  (SB1 <-> SB2 directly through the IPL ROM, ~1-1.5 s; back to Hudson's via
+  `$C0:0CCF` and SB5's map song request). Accept (SFX 4, a stage is
+  chosen) uploads "driver 3" instead (`ACCEPT` in `world_map.sound`, ~4 KB,
+  ~7 frames): a program at `$0800` keys SB6's accept recording on voice 0
+  (directory `$0900`), sets ports 2/3 = `$53`/`$36` and jumps to the IPL ROM;
+  the voice plays on until the stage's set request brings Hudson's driver
+  back (`$C0:0CCF`). Reloading Hudson's driver there instead blocks ~2 s and
+  its SFX 4 does not sound before a set/song is loaded. Move stays the
+  foreign driver's own SFX.
 
 ## Normal Game co-op (3-4 players)
 

@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, picker, title, title_music  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, picker, title, title_music, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -60,6 +60,10 @@ def main():
     rb.add_region("objmap3", 0xF58000, 0xF60000, "sprite mappings of more characters (bank $B5)")
     for bank in range(0xF6, 0xFA):
         rb.add_region(f"obj_f{bank & 15}", bank << 16, (bank + 1) << 16, "OBJ sheets: raw 4bpp strips (other characters)")
+    # lower halves of $F3-$F5 (the upper halves are the sprite mappings)
+    rb.add_region("sb1_f3", 0xF30000, 0xF38000, "SB1's sound RAM image (world map music), part 1")
+    rb.add_region("sb1_f4", 0xF40000, 0xF48000, "SB1's sound RAM image, part 2; world map graphics")
+    rb.add_region("wmap_f5", 0xF50000, 0xF58000, "world map graphics (ZONE1, ZONE2)")
     # $FF padding inside the code banks: code reached by JSR/JMP from the bank's own routines.
     rb.add_region("c0", 0xC04D70, 0xC05F00, "bank C0 code (co-op)")
     rb.add_region("c1", 0xC177F0, 0xC17F00, "bank C1 code (co-op)")
@@ -76,12 +80,16 @@ def main():
     print(f"game SFX: R = {gsfx['r_bytes']} bytes of ARAM $5900 (SB1 death {gsfx['death']}, enemy {gsfx['enemy']}); "
           f"cornered {gsfx['corner_seconds']:.2f} s at {gsfx['corner_rate']:.0f} Hz = {gsfx['a']} + {gsfx['b']} bytes "
           f"(B at ${gsfx['b1']:04X} / ${gsfx['b2']:04X}), cut short in songs {gsfx['short']}")
+    # world map music: SB1's / SB2's own drivers and songs (switched by title_music's sound hook)
+    maps = world_map.sound(rb, os.path.join(ROOT, "assets", "sound"), [["sb1_f3", "sb1_f4"], ["stream_ef"],
+                                                                         ["wmap_f5"]], os.path.join(args.out, "cache"))
+    print("world map music: " + ", ".join(f"{n}'s sound RAM ({b} bytes, {p} parts)" for n, b, p in maps["drivers"]))
     # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),
                               os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"), gsfx["syms"],
                               drop_frames=title.drop_frames(os.path.join(ROOT, "assets", "title")),
                               save_wav=os.path.join(ROOT, "assets", "sound", "save_menu_music.wav"),
-                              save_regions=["music_fd", "music_fe", "music_ff", "title_fc"])
+                              save_regions=["music_fd", "music_fe", "music_ff", "title_fc"], sb1=maps)
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
           f"CPU code {music['code']} B; intro sounds {music['pan']} bytes; SB6 menu SFX {music['sfx']} in "
@@ -119,7 +127,13 @@ def main():
         info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir, menu_bg=mbg)
     sheets.finish()
 
-    pick = picker.apply(rb, base_rom, info, tinfo["syms"])
+    wmap = world_map.apply(rb, os.path.join(ROOT, "assets", "world_map"), args.out, ["wmap_f5", "sb1_f4"],
+                           music["map_music"])
+    print("world map: ZONE1 = SB1's World 1 map + SB5's START sign, ZONE2 = SB2's map: "
+          + ", ".join(f"ZONE{i + 1} {t} tiles / {p} BG palettes" for i, (t, p) in enumerate(wmap["zones"]))
+          + f"; sea in {wmap['frames']} frames, {wmap['lights']} light colors (preview build/world_map_preview.png)")
+
+    pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"])
     print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")
 
     coop.apply(rb, louie["louie_tick"], pick)

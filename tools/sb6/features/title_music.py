@@ -405,7 +405,7 @@ def segment_table(tracks):
 
 
 def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=(), save_wav=None,
-          save_regions=()):
+          save_regions=(), sb1=None):
     """sound_dir holds title_pan.wav, title_drop.wav and the menu SFX;
     drop_frames = frames of the intro (from the pan's first) where a wave of
     characters starts to fall; game_sfx = the symbols of asm/game_sfx.asm
@@ -507,6 +507,7 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
                     SEG_PRE=_h(seg_starts[0], 4), SEG_TITLE=_h(seg_starts[1], 4), SEG_SAVE=_h(seg_starts[2], 4),
                     SAVE_SET=_h(SAVE_SET if save_wav else 0xFF, 2), SAVE_MODE=_h(SAVE_MODE, 2),
                     SFX_SLOTS=sfx_slots.replace("\\", "/"),
+                    **((sb1 or {}).get("defs") or {"FD": "0"}),
                     **{f"GS_{k.upper()}": _h(game_sfx[f"gs_{k}"], 6) for k in ("sound", "tick", "set", "song")})
     runs, syms = asar.assemble_into(rb.d, ASM_CPU, cpu_defs)
     lo, hi = off(code_addr), off(syms["end"])
@@ -539,4 +540,4 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
                 ring=ring_chunks, sfx=sfx_ids, pre_start=syms["pre_start"], pan=len(pan),
                 sfx_bytes=sample_bytes, safe=[i for i in range(N_SONGS) if safe[i] == 1],
                 save_seconds=save_seconds, save_segs=save_segs, save_gain=save_gain,
-                save_vol=(save_vol, save_mvol))
+                save_vol=(save_vol, save_mvol), map_music=syms.get("map_music", 0))

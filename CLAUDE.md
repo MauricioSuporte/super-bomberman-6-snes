@@ -22,8 +22,8 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 
 * `tools/sb6/features/<feature>.py` — one feature per module, `apply(rb, …)`.
 * Native code called from a script: op `FF 1A nn` with nn >= `$F0`
-  (`pick_op` in `asm/picker.asm`, `$F0-$F4` its own); add new values there (`$F8-$FB` are the
-  animated title's). Scripts cannot wait: a native op that must wait puts
+  (`pick_op` in `asm/picker.asm`, `$F0-$F4` its own); add new values there (`$F5` is the
+  world map's, `$F8-$FB` the animated title's). Scripts cannot wait: a native op that must wait puts
   its task to sleep (`title_op` `.again`, docs/ROM_MAP.md "Script tasks").
 * Title scene (BG1/BG2): `features/title_anim.py` builds pictures, palettes,
   tile slots and per-frame job tables from `assets/title/layout.json`

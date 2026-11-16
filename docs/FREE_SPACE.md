@@ -14,14 +14,16 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$E4:0000-$E4:FFFF` | 64 KB | `bulk`: hack code (65816), scripts, arrangements, title tiles. |
 | `$E5:0000-$EB:176A` | 390 KB | streamed BRR (title music), 404 chunks of 162 bytes per bank. |
 | `$EB:176A-$EB:FFA7`, `$FC:A200-$FC:D9AF`, `$FD:0000-$FF:FFA7` | ~270 KB | save file menu music (Normal Game file lists + picker), streamed BRR at 12 kHz (`music_fd`..`music_ff` and the tails of `audio_EB` / `title_fc`; segments in `asm/title_music.asm`). |
-| `$EC:0000-$EF:FFFF` | 256 KB | `stream_ec`..`stream_ef`: bomber poses streamed one by one (DMA sources, `asm/bombers.asm`). |
+| `$EC:0000-$EF:FFFF` | 256 KB | `stream_ec`..`stream_ef`: bomber poses streamed one by one (DMA sources, `asm/bombers.asm`). `stream_ef` currently holds Super Bomberman 2's sound RAM image for the ZONE2 world map music (57 KB, `world_map.sound`). |
 | `$F0:0000-$F2:FFFF` | 192 KB | `obj_f0`..`obj_f2`: OBJ sheets (raw 4bpp, 1 KB strips aligned to `$400`: bomber, Louie sheets recolored for palette entries 1-7) and the relocated OBJ sheet table (`tools/sb6/objsheets.py`). |
 | `$F3:8000-$F3:FFFF` | 32 KB | `objmap`: sprite mappings and bomber animation scripts, addressed as bank `$B3` (the OAM builder needs WRAM in the data bank). |
 | `$F4:8000-$F4:FFFF`, `$F5:8000-$F5:FFFF` | 64 KB | `objmap2`, `objmap3`: mappings/scripts of characters 1-9 (banks `$B4`, `$B5`), used when `objmap` is full. |
 | `$F6:0000-$F9:FFFF` | 256 KB | `obj_f6`..`obj_f9`: OBJ sheets of edited characters 1-9 (after `obj_f0`..`obj_f2`). |
 | `$FA:0000-$FB:FFFF` | 128 KB | `title_fa`, `title_fb`: animated title (`tools/sb6/features/title_anim.py`): raw tiles and map rows sent by DMA, job/frame tables, `asm/title_anim.asm` (~94 KB used). |
 | `$FC:0000-$FC:A1FF` | 41 KB | `title_fc`: the title intro's sounds (pan + character drops) as streamed BRR chunks (must start the bank; the rest holds save menu music). |
-| `$F3:0000-$F5:7FFF` (lower halves), `$FC:D9B0-$FC:FFFF` | ~105 KB | unassigned. |
+| `$F3:0000-$F3:7FFF`, `$F4:0000-$F4:7FFF` | 64 KB | `sb1_f3`, `sb1_f4`: Super Bomberman 1's sound RAM image for the ZONE1 world map music (39 KB, `tools/sb6/features/world_map.py`), then world map data (~6 KB used in `sb1_f4`). |
+| `$F5:0000-$F5:7FFF` | 32 KB | `wmap_f5`: the map's accept SFX player (4 KB sound RAM image), world map ZONE1/ZONE2 tiles, sea frames, ship light colors, set 1 arrangements (~21 KB used). |
+| `$FC:D9B0-$FC:FFFF` | ~9 KB | unassigned. |
 
 Budget note: streamed audio costs ~9 KB per second (16 kHz mono). The whole
 free ROM held only ~2.5 minutes of it (now mostly used by the title and the
@@ -40,9 +42,20 @@ sequenced driver).
 | `$7F:FC00-$7F:FC7F` | SB6 character selection screen (`asm/picker.asm`, names `!st`...): `+$00` state (0 waiting for SB5's setup, 1 loading, 2 choosing, 3 all chosen, 4 leaving), `+$01` next VRAM job, `+$03` seat choosing, `+$04`/`+$05`/`+$06` cell with its cursor face / next / swap pending, `+$07`/`+$08` hover palettes' character / color, `+$09` cursor timer, `+$0A` exit wait, `+$0B` cursor tint, `+$10`-`+$47` per seat (4 bytes each: confirmed, cursor cell, chosen character, chosen color, row animation, its character, step, frames left, pose wanted, pose in VRAM, VRAM half, OBJ palette id, dimmed, victory held), `+$50-$60` OAM builder / scratch of the main loop, `+$70-$75` NMI scratch, `+$76` NMI count, `+$77` count at the last tick, `+$78` row steps left. Cleared by the open op. |
 | `$7F:FD00-$7F:FD3C` | animated title (`asm/title_anim.asm`): `+$00` `$5AA5` once started, `+$02` state (0 off, 1 loading, 2 waiting for the fade-in, 3 intro, 4 idle), `+$03` intro seen, `+$04` logo landed, `+$05` main screen layers, `+$06` list/frame offset, `+$08` loading the finished scene, `+$0A`/`+$0C` BG1/BG2 V scroll, `+$0E` pad held, `+$0F`-`+$15` idle counters and RNG, `+$16`-`+$1D` the two alternate-pose areas, `+$1E` 7 character timers, `+$26`-`+$2D` scratch, `+$2E`-`+$39` menu cursor (frames without input, animation 0 rest / 1-4 look around / 5 confirming / 6 confirmed, its frame and face, pose and sprite frame in VRAM, refresh counter, scratch, the cursor Y / menu `$1036` / menu Y `$1034` when the confirmation began), `+$3A` cursor visible last frame, `+$3B` forced resend, `+$3C` `FF 1A FC` frame wait). Only read after the signature matches. |
 | `$0188-$018C` | in-game SFX (`asm/game_sfx.asm`): `$0188` R in ARAM, `$0189` restore state, `$018A` restore wait, `$018B` song last uploaded, `$018C` command waiting for the next main-loop pass (cornered / enemy hit). Zero after reset (0 = song 0, whose samples cover R). |
+| `$018D-$0195` | world map music (`asm/title_music.asm`): `$018D` foreign driver running (0 Hudson's, 1 SB1's, 2 SB2's, 3 the accept SFX player, the SPC waiting in the IPL ROM), `$018E` the map's driver (set by `map_music`), `$018F` last port-0 command sent to it, `$0191` last port-1 command, `$0192` scratch (also `asm/world_map.asm`), `$0193` the map music was requested and plays, `$0194` upload part counter, `$0195` upload sequence; `$0190` map animation 0 off / 1-2 sea / 3-4 stars (`asm/world_map.asm`). Zero after reset. |
+| `$7F:FB00-$7F:FB03` | world map animation (`asm/world_map.asm`): sea frames left, sea frame, ship light frame, star half-line. |
 | `$0160-$0187` | Louie palettes (`asm/louies.asm`): `$0160` half of each actor (24 bytes, 0 = none), `$0178` users of the 3 halves, `$017B` palette id in each half, `$017E` OBJ slot of the main / spare palette (0 = none), `$0180-$0187` scratch. Zero after reset; forgotten when the slot table loses the `$FF` mark (new stage). |
 
 ## ARAM (sound RAM)
+
+On the ZONE1 / ZONE2 world map the whole SPC belongs to Super Bomberman 1's
+driver (sound RAM `$0800-$A1BB`) or Super Bomberman 2's (`$0800-$E6DF`,
+`$FF00-$FF38`, a copy of the IPL ROM at `$FFC0`; echo buffer `$E700-$FEFF`),
+uploaded through the IPL ROM with a loader at `$0200` (docs/ROM_MAP.md "World
+map"); Hudson's driver is uploaded again, as at power-on, by the next non-SFX
+request or on a zone without foreign music. Choosing a stage there uploads a
+small player at `$0800-$1864` (SB6's accept recording on voice 0) that
+returns to the IPL ROM. Nothing below survives that.
 
 SB6 menu SFX: samples at `$B900-$DCFF` (~9 KB used), directory entries
 `$39-$3B` (`$FDE4-$FDEF`) and `$3E` (`$FDF8`, the picker's color change,

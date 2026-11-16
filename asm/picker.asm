@@ -149,6 +149,12 @@ if !TITLE_OP
     jml !TITLE_OP
 +
 endif
+if !WMAP_OP
+    cmp #$F5                        ; F5: world map zone setup (asm/world_map.asm)
+    bne +
+    jml !WMAP_OP
++
+endif
     cmp #$F4
     bne +
     brl .wait
@@ -1621,6 +1627,9 @@ pick_nmi:
     jsl $C004E0
 if !TITLE_NMI
     jsl !TITLE_NMI                  ; the animated title's transfers and scroll
+endif
+if !WMAP_NMI
+    jsl !WMAP_NMI                   ; the ZONE1 world map's sea (asm/world_map.asm)
 endif
     php
     sep #$30

@@ -104,6 +104,12 @@ sound_hook:
     phx
     phy
     sep #$20
+if !FD
+    jsr fd_sound            ; SB1's / SB2's drivers (world map music)
+    bcc +
+    brl .swallow
++
+endif
     lda.l !active
     bne +
     lda $06,s               ; in-game SFX (asm/game_sfx.asm) while Hudson's driver runs
@@ -369,6 +375,392 @@ release:
     sta.l !song
     plp
     rts
+
+if !FD
+; ---- Super Bomberman 1's / 2's sound drivers on the world map ---------------
+; ZONE1 plays SB1's map song with SB1's own driver, ZONE2 SB2's with SB2's
+; (tools/sb6/features/world_map.py). The map's zone setup calls map_music
+; (asm/world_map.asm wmap_op) with the zone's driver (0 = Hudson's, SB5's map
+; song); SB5's map music request (group 0, id !MAP_REQ) then starts it, or,
+; when the map song already plays (an L/R zone change), map_music switches
+; drivers itself. Starting a driver: when Hudson's runs, its loader gets a
+; stub at $1100 (mute, IPL ROM on, JMP $FFC0) and a JMP to it over the
+; loader's final RET; the IPL ROM gets the driver's list (a loader at $0200,
+; extra blocks) and the loader takes the sound RAM image from $0800, 3 bytes
+; per handshake (SB1 39 KB ~1 s, SB2 57 KB ~1.5 s), then jumps to the
+; driver's cold start; then its song command. Leaving: SB1 port 0 $37, SB2
+; port 1 command 6 make them jump back to the IPL ROM; then either the next
+; driver or Hudson's ($C0:0CCF, SB5's own sound init at power-on: sets $58
+; and $56). While a foreign driver runs, SB5's menu SFX 1 (move) and 4
+; (accept) become its own (table), other SFX, data streams and driver
+; commands (group $10) are dropped, and any other request first brings
+; Hudson's driver back, then runs normally.
+;
+; fd_table, per driver (24 bytes): upload list (3), 3 x (image part (3),
+; triples (2)), ready values of ports 2 / 3, song command, echo xor of port 0,
+; SFX move / accept.
+!fdon   = $00018D           ; foreign driver running (0 = Hudson's)
+!fdreq  = $00018E           ; the map's driver (set by map_music)
+!fdcmd  = $00018F           ; last command on port 0
+!fdp1   = $000191           ; last command on port 1
+!fdtmp  = $000192           ; scratch
+!mapon  = $000193           ; 1 = the map music was requested (and plays)
+!fdpart = $000194           ; part counter
+!fdseq  = $000195           ; upload sequence
+
+; In: [$07,s]/[$08,s] = id / group (sound_hook's frame, +2 for the JSR).
+; C set = request consumed.
+fd_sound:
+    lda $08,s               ; group
+    bne .notmap
+    lda $07,s
+    cmp #!MAP_REQ
+    bne .notmap
+    lda #$01                ; ---- the map music
+    sta.l !mapon
+    lda.l !fdreq
+    cmp.l !fdon
+    beq .same
+    lda.l !fdon
+    beq .from_hudson
+    jsr fd_leave            ; foreign -> IPL ROM
+    lda.l !fdreq
+    bne +
+    jsr fd_hudson           ; -> Hudson's driver, which plays the request
+    clc
+    rts
++   jsr fd_upload
+    sec
+    rts
+.from_hudson:
+    lda #$00
+    sta.l !pend
+    lda.l !active
+    beq +
+    jsr release
++   jsr fd_start
+    sec
+    rts
+.same:
+    lda.l !fdon             ; the same music again: Hudson's plays it, a foreign one is kept
+    beq .pass
+    sec
+    rts
+.notmap:
+    lda.l !fdon
+    bne .foreign
+    lda $08,s
+    bne .pass
+    lda #$00                ; another song: the map is left
+    sta.l !mapon
+    sta.l !fdreq
+.pass:
+    clc
+    rts
+.foreign:
+    lda $08,s
+    cmp #$02
+    beq .sfx
+    cmp #$03
+    beq .eat
+    cmp #$10
+    beq .eat
+    jsr fd_leave            ; anything else: Hudson's driver back first
+    jsr fd_hudson
+    lda #$00
+    sta.l !mapon
+    sta.l !fdreq
+    clc
+    rts
+.sfx:
+    lda.l !fdon
+    cmp #$03                ; driver 3 (the SPC waits in the IPL ROM): dropped
+    beq .eat
+    lda $07,s
+    cmp #$04
+    beq .accept
+    cmp #$01
+    bne .eat
+    lda.l !fdon
+    jsr fd_x                ; X = table offset
+    lda.l fd_table+22,x     ; move: the driver's own SFX
+    sta.l !fdtmp
+    lda.l !fdon
+    cmp #$01
+    bne .sfx2
+    lda.l !fdp1             ; SB1: port 1, new when bit 7 changes, echoed
+    and #$80
+    eor #$80
+    ora.l !fdtmp
+    sta.l !fdp1
+    sta.l APUIO1
+-   cmp.l APUIO1
+    bne -
+    bra .eat
+.sfx2:
+    lda.l !fdcmd            ; SB2: port 0 (with the songs), new when it changes, echoed xor $80
+    and #$80
+    eor #$80
+    ora.l !fdtmp
+    sta.l !fdcmd
+    sta.l APUIO0
+    eor #$80
+-   cmp.l APUIO0
+    bne -
+.eat:
+    sec
+    rts
+.accept:                    ; accept (a stage is chosen): SB6's own recording, played
+    lda.l !fdreq            ; by driver 3 (one voice, then the IPL ROM: the sample
+    pha                     ; keeps playing until the next request brings Hudson's
+    lda #$03                ; driver back); the map's driver stays !fdreq for L/R
+    sta.l !fdreq
+    jsr fd_leave
+    jsr fd_upload
+    pla
+    sta.l !fdreq
+    sec
+    rts
+
+; X = (A - 1) * 24: the driver's entry in fd_table. M 8-bit.
+fd_x:
+    dec a
+    sta.l !fdtmp
+    asl a
+    clc
+    adc.l !fdtmp            ; * 3
+    asl a
+    asl a
+    asl a                   ; * 24
+    sta.l !fdtmp
+    lda #$00
+    xba
+    lda.l !fdtmp
+    tax                     ; (X may be 16-bit: B = 0)
+    rts
+
+; Hudson's driver (or the stream driver) -> IPL ROM -> !fdreq.
+fd_start:
+    php
+    sep #$30
+    %c0call($C00F13)        ; Hudson's loader
+    %sendlist(!FD_STUB)
+    %c0call($C00F35)        ; its RET is a JMP to the stub now: SPC -> IPL ROM
+    jsr fd_upload
+    plp
+    rts
+
+; IPL ROM -> driver !fdreq, playing its song.
+fd_upload:
+    php
+    sep #$30
+    lda.l !fdreq
+    jsr fd_x
+    %c0call($C00F13)        ; the IPL ROM ($AA/$BB)
+    lda.l !fdreq
+    jsr fd_x
+    lda.l fd_table+0,x
+    sta $48
+    lda.l fd_table+1,x
+    sta $49
+    lda.l fd_table+2,x
+    sta $4A
+    stz $03D1
+    %c0call($C00F62)        ; loader at $0200 (+ extra blocks)
+    %c0call($C00F35)        ; run it
+    lda #$03
+    sta.l !fdpart
+    lda.l !fdreq
+    jsr fd_x                ; X = entry, then + 5 per part
+    lda #$00
+    sta.l !fdseq
+.part:
+    rep #$30
+    phx
+    lda.l fd_table+6,x      ; triples
+    tay
+    lda.l fd_table+3,x      ; source offset
+    pha
+    sep #$20
+    lda.l fd_table+5,x      ; source bank
+    plx
+    cpy.w #$0000
+    beq +
+    pha
+    lda.l !fdseq
+    xba
+    pla                     ; A = bank, B = sequence
+    jsr fd_send
+    xba
+    sta.l !fdseq
++   rep #$20
+    pla                     ; table position
+    clc
+    adc.w #5
+    tax
+    sep #$20
+    lda.l !fdpart
+    dec a
+    sta.l !fdpart
+    bne .part
+    sep #$10
+    lda #$00                ; final kick: ports 1-3 = 0, then port 0 = 0
+    sta.l APUIO1
+    sta.l APUIO2
+    sta.l APUIO3
+    lda.l !fdseq
+    sta.l APUIO0
+-   cmp.l APUIO0
+    bne -
+    lda #$00
+    sta.l APUIO0
+    lda.l !fdreq
+    jsr fd_x
+-   lda.l APUIO2            ; ready: the driver's init writes these
+    cmp.l fd_table+18,x
+    bne -
+    lda.l APUIO3
+    cmp.l fd_table+19,x
+    bne -
+    lda #$00
+    sta.l !fdp1
+    lda.l fd_table+20,x     ; the song
+    sta.l !fdcmd
+    sta.l APUIO0
+    eor.l fd_table+21,x
+-   cmp.l APUIO0            ; echoed when taken
+    bne -
+    lda.l !fdreq
+    sta.l !fdon
+    lda #$FF
+    sta.l !song             ; nothing of Hudson's is left in ARAM
+    sta.l $0003CE
+    lda #$00
+    sta.l !sfxok
+    sta.l !sfxnew
+    sta.l $000188           ; asm/game_sfx.asm: R not in ARAM, idle
+    sta.l $000189
+    sta.l $00018B
+    sta.l $00018C
+    plp
+    rts
+
+; A = source bank, X = offset, Y = triples, B = sequence (kept, next); M 8-bit, X 16-bit.
+fd_send:
+    phb
+    pha
+    plb
+.triple:
+    lda.w $0000,x
+    sta.l APUIO1
+    lda.w $0001,x
+    sta.l APUIO2
+    lda.w $0002,x
+    sta.l APUIO3
+    xba
+    sta.l APUIO0
+-   cmp.l APUIO0
+    bne -
+    inc a
+    xba
+    inx
+    inx
+    inx
+    dey
+    bne .triple
+    plb
+    rts
+
+; Foreign driver -> IPL ROM (it jumps to $FFC0 after muting).
+fd_leave:
+    php
+    sep #$30
+    lda.l !fdon
+    cmp #$03                ; driver 3 is already back in the IPL ROM
+    beq ++
+    cmp #$01
+    bne +
+    lda.l !fdcmd            ; SB1: port 0 command $37
+    and #$80
+    eor #$80
+    ora #$37
+    sta.l APUIO0
+    bra ++
++   lda.l !fdp1             ; SB2: port 1 command 6 (its RAM copy of the IPL ROM)
+    and #$80
+    eor #$80
+    ora #$06
+    sta.l APUIO1
+    eor #$80
+-   cmp.l APUIO1            ; taken (the handshake below writes port 1)
+    bne -
+++  lda #$00
+    sta.l !fdon
+    plp
+    rts
+
+; IPL ROM -> Hudson's driver (SB5's power-on sound init, waits for $AA/$BB).
+fd_hudson:
+    php
+    sep #$30
+    jsl $C00CCF
+    lda #$00
+    sta.l $000188
+    sta.l $000189
+    sta.l $00018B
+    sta.l $00018C
+    plp
+    rts
+
+; JSL, A = the map's driver (asm/world_map.asm wmap_op, a script op: the
+; screen is dark). Switches now when the map music already plays.
+map_music:
+    php
+    phb
+    phd
+    sep #$30
+    pha
+    lda #$80
+    pha
+    plb
+    pea $0000
+    pld
+    pla
+    sta.l !fdreq
+    lda.l !mapon
+    beq .done               ; the map music request will do it
+    lda.l !fdreq
+    cmp.l !fdon
+    beq .done
+    lda.l !fdon
+    beq .from_hudson
+    jsr fd_leave
+    lda.l !fdreq
+    bne +
+    jsr fd_hudson           ; back to SB5's map song
+    lda #$00
+    xba
+    lda #!MAP_REQ
+    jsl $C00CED
+    bra .done
++   jsr fd_upload
+    bra .done
+.from_hudson:
+    lda #$00
+    sta.l !pend
+    lda.l !active
+    beq +
+    jsr release
++   jsr fd_start
+.done:
+    pld
+    plb
+    plp
+    rtl
+
+fd_table = !FD_TABLE
+print "SYM map_music ", hex(map_music)
+endif
 
 ; Sends 162-byte chunks if the ring has room: one per frame elapsed since the
 ; last call (the main loop runs at 60 or 30 Hz depending on the screen), plus

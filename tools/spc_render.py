@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Renders S-DSP voices to a WAV from a Mesen log of DSP writes (research tool).
 
-    python tools/spc_render.py LOG ARAM DSP OUT.wav [--voices 0,1] [--from C] [--seconds S]
+    python tools/spc_render.py LOG[+LOG2...] ARAM DSP OUT.wav [--voices 0,1|all] [--from C] [--seconds S] [--echo]
 
 LOG lines: "START <spc cycle>" (when ARAM and DSP were dumped), "W <spc cycle>
 <dsp reg> <value>" for every S-DSP write and "C <spc cycle> ..." for the sound
 request (rendering starts there unless --from is given). ARAM / DSP are the
 64 KB / 128-byte dumps taken at START. Only the listed voices are mixed (the
-others are the music), dry (no echo), mono, 32 kHz. Used to turn the
+others are the music), dry unless --echo, mono, 32 kHz. Logs of consecutive
+runs can be joined with "+" (the ARAM / DSP dumps are those of the first). Used to turn the
 Super Bomberman (USA) player / enemy death sounds into WAVs
 (tools/mesen/sb1_sfx.lua makes the log).
 
@@ -89,8 +90,10 @@ class Voice:
         return out
 
 
-def render(log, aram, dsp, voices, start=None, seconds=None):
-    lines = open(log).read().split("\n")
+def render(log, aram, dsp, voices, start=None, seconds=None, echo=False):
+    lines = []
+    for name in log.split("+"):
+        lines += open(name).read().split("\n")
     t0 = next(int(l.split()[1]) for l in lines if l.startswith("START"))
     req = [int(l.split()[1]) for l in lines if l.startswith("C ")]
     writes = []
@@ -104,6 +107,7 @@ def render(log, aram, dsp, voices, start=None, seconds=None):
     first = ((start if start is not None else (req[0] if req else t0)) - t0) // CYC_PER_SAMPLE
     total = writes[-1][0] + RATE if seconds is None else first + int(seconds * RATE)
     noise, counter, wi, out = 0x4000, 0, 0, []
+    ebuf, epos, fir_l, fir_r = [0] * 0x10000, 0, [0] * 8, [0] * 8
     for t in range(total):
         while wi < len(writes) and writes[wi][0] <= t:
             _, r, v = writes[wi]
@@ -122,6 +126,7 @@ def render(log, aram, dsp, voices, start=None, seconds=None):
         if nr and counter % PERIODS[nr] == 0:
             noise = (noise >> 1) | (((noise << 14) ^ (noise << 13)) & 0x4000)
         mix = 0
+        mix_l = mix_r = ein_l = ein_r = 0
         prev_out = 0
         for v in vs:
             base = v.n * 16
@@ -187,7 +192,36 @@ def render(log, aram, dsp, voices, start=None, seconds=None):
             if v.n in voices and t >= first:
                 vl, vr = s16(regs[base] << 8) >> 8, s16(regs[base + 1] << 8) >> 8
                 mix += (o * vl >> 7) + (o * vr >> 7)
-        if t >= first:
+                mix_l += o * vl >> 7
+                mix_r += o * vr >> 7
+                if regs[0x4D] >> v.n & 1:
+                    ein_l += o * vl >> 7
+                    ein_r += o * vr >> 7
+        if echo:
+            # echo: ring of EDL * 2 KB at ESA * 256, 8-tap FIR, feedback EFB, output EVOL (stereo samples)
+            size = max(1, (regs[0x7D] & 15) * 512)
+            base = regs[0x6D] << 6      # ESA * 256 bytes, in stereo samples of 4 bytes
+            k = (base + epos) & 0x3FFF
+            el, er = ebuf[2 * k], ebuf[2 * k + 1]
+            fir_l = fir_l[1:] + [el]
+            fir_r = fir_r[1:] + [er]
+            fl = fr_ = 0
+            for tap in range(8):
+                c = s16(regs[tap * 16 + 0x0F] << 8) >> 8
+                fl += fir_l[tap] * c >> 6
+                fr_ += fir_r[tap] * c >> 6
+            fb = s16(regs[0x0D] << 8) >> 8
+            if not regs[0x6C] & 0x20:
+                ebuf[2 * k] = clamp16(ein_l + (fl * fb >> 7)) & ~1
+                ebuf[2 * k + 1] = clamp16(ein_r + (fr_ * fb >> 7)) & ~1
+            epos = (epos + 1) % size
+            mvl, mvr = s16(regs[0x0C] << 8) >> 8, s16(regs[0x1C] << 8) >> 8
+            evl, evr = s16(regs[0x2C] << 8) >> 8, s16(regs[0x3C] << 8) >> 8
+            l = (mix_l * mvl >> 7) + (fl * evl >> 7)
+            r = (mix_r * mvr >> 7) + (fr_ * evr >> 7)
+            if t >= first:
+                out.append((l + r) / 2)
+        elif t >= first:
             out.append(mix / 2)
     return out
 
@@ -201,9 +235,10 @@ def main():
     ap.add_argument("--voices", default="0,1,2")
     ap.add_argument("--from", dest="start", type=int)
     ap.add_argument("--seconds", type=float)
+    ap.add_argument("--echo", action="store_true", help="mix the echo (master/echo volumes, FIR, feedback)")
     a = ap.parse_args()
-    out = render(a.log, open(a.aram, "rb").read(), open(a.dsp, "rb").read(),
-                 {int(v) for v in a.voices.split(",")}, a.start, a.seconds)
+    voices = set(range(8)) if a.voices == "all" else {int(v) for v in a.voices.split(",")}
+    out = render(a.log, open(a.aram, "rb").read(), open(a.dsp, "rb").read(), voices, a.start, a.seconds, a.echo)
     # trim trailing silence, normalise to -1 dBFS
     while out and abs(out[-1]) < 1:
         out.pop()

@@ -320,7 +320,7 @@ class Blob:
         return self.labels[label]
 
 
-def apply(rb, base_rom, bomber, title=None):
+def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0):
     """`bomber`: result of features/bombers.py. Returns the asm symbols + `bomber_colors`."""
     own = bool(bomber and bomber.get("paltab"))
     if not own or not bomber.get("pick_anims"):
@@ -511,6 +511,8 @@ def apply(rb, base_rom, bomber, title=None):
         "SCLR": f"${bomber.get('stream_clear', 0):06X}",
         "TITLE_OP": f"${(title or {}).get('title_op', 0):06X}",
         "TITLE_NMI": f"${(title or {}).get('title_nmi', 0):06X}",
+        "WMAP_NMI": f"${wmap_nmi:06X}",
+        "WMAP_OP": f"${wmap_op:06X}",
         "CHPAL": ",".join(f"${v:02X}" for v in chpal), "CHCOL": ",".join(str(v) for v in chcol)})
     for c in range(n):
         if chcol[c] > 64:
