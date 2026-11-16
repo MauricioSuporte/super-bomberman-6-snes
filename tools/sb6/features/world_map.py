@@ -108,7 +108,7 @@ DRIVERS = [
     dict(name="SB2", image="sb2_world_map.bin", extra=((0xFF00, "sb2_world_map_ff00.bin"), (0xFFC0, IPL_ROM)), entry=0x0800,
          ready=(0xAA, 0xAA), song=0x02, echo=0x80, sfx=(0x51, 0x52)),
 ]
-# driver 3: SB6's menu accept recording when a stage is chosen on ZONE1 / ZONE2 (asm/title_music.asm
+# driver 3: SB6's menu accept recording when a stage is chosen on ZONE2 (asm/title_music.asm
 # fd_sound .accept): one S-DSP voice, then back to the IPL ROM, whose $AA on port 0 is the "echo"
 ACCEPT = dict(name="accept SFX", extra=(), entry=0x0800, ready=(0x53, 0x36), song=0x00, echo=0xAA, sfx=(0, 0))
 ACCEPT_DIR = 0x0900       # S-DSP sample directory page; the sample follows its one entry
@@ -116,11 +116,60 @@ ACCEPT_MVOL, ACCEPT_VOL = 0x60, 0x7F   # as the stream driver plays the menu SFX
 DRV_ENTRY = 24            # bytes per driver in the table (asm/title_music.asm)
 
 
+def _accept_sample(sound_dir, cache_dir):
+    """SB6's menu accept recording: (BRR ending in END without loop, S-DSP pitch)."""
+    from .title_music import menu_samples
+    return next((d, p) for sid, d, p, *_ in menu_samples(sound_dir, cache_dir) if sid == 4)
+
+
+# SB1's sound RAM ($0800 header: instrument table $2200, directory $2300 (DIR $23), SFX $89F0,
+# SFX map $A03C, instrument map $A0BC, sample map $A13C). SFX n: sequence = word $89F2 +
+# 2 * [$A03C + n]: 8B instrument, 86 vol L R, 89 ADSR2 ADSR1, 80 raw pitch, 8D key on, 91 wait
+# (ticks, ~22 ms), 8E key off, 92 end; SFX 1 (accept) plays on voice 0, the map song on 1-7.
+SB1_ACCEPT_SEQ = 0x8A14
+SB1_ACCEPT_TICKS = 34
+
+
+def _sb1_accept(image, sound_dir, cache_dir):
+    """SB1's accept SFX (port 1 command 1) plays SB6's recording, so the map song goes on: a new
+    instrument 6 (instrument table moved to $A200, record $A210 = instrument 4's with sample 8),
+    the directory moved to $A300 with entry 8 = the recording at $A330; SFX 1 = one note."""
+    brr, pitch = _accept_sample(sound_dir, cache_dir)
+    base = 0x0800
+    img = bytearray(image)
+
+    def at(a):
+        return a - base
+
+    def put(a, b, expect=None):
+        if expect is not None and bytes(img[at(a):at(a) + len(expect)]) != expect:
+            raise BuildError(f"world map: SB1's sound RAM at ${a:04X} is not as expected")
+        img[at(a):at(a) + len(b)] = b
+
+    if len(img) > at(0xA200):
+        raise BuildError("world map: SB1's sound RAM reaches $A200")
+    put(0x0E09, bytes([0xF6, 0x00, 0xA2]), bytes([0xF6, 0x00, 0x22]))      # instrument table
+    put(0x0E0E, bytes([0xF6, 0x01, 0xA2]), bytes([0xF6, 0x01, 0x22]))
+    put(0x1FA6, bytes([0xE8, 0xA3]), bytes([0xE8, 0x23]))                  # DIR
+    put(0xA0BC + 6, b"\x06", bytes([0xFF]))                                     # instrument 6
+    put(0xA13C + 8, b"\x08", bytes([0xFF]))                                     # sample 8
+    record = bytearray(img[at(0x227C):at(0x227C) + 16])
+    record[12] = 8
+    seq = bytes([0xF5, 0x07, 0x8B, 0x06, 0x86, 0x7F, 0x7F, 0x89, 0xE0, 0xFF, 0x80, pitch & 0xFF, pitch >> 8,
+                 0x8D, 0x91, SB1_ACCEPT_TICKS, 0x8E, 0x91, 0x02, 0x92])
+    put(SB1_ACCEPT_SEQ, seq, bytes.fromhex("F5 07 8B 04 86 7F 7F 89 94 DD"))
+    img += bytes(at(0xA200) - len(img))
+    table = bytes(img[at(0x2200):at(0x2200) + 12]) + struct.pack("<H", 0xA210)
+    directory = bytes(img[at(0x2300):at(0x2300) + 32]) + struct.pack("<HH", 0xA330, 0xA330)
+    img += table.ljust(16, b"\x00") + bytes(record)
+    img += bytes(at(0xA300) - len(img)) + directory.ljust(0x30, b"\x00") + brr
+    return bytes(img)
+
+
 def _accept_image(sound_dir, cache_dir):
     """SPC program at $0800 + directory + BRR: keys SB6's accept recording on voice 0 (pitch and
     sample as asm/spc/stream.asm plays it), sets the ready ports and jumps to the IPL ROM."""
-    from .title_music import menu_samples
-    sid, brr, pitch = next((sid, d, p) for sid, d, p, *_ in menu_samples(sound_dir, cache_dir) if sid == 4)
+    brr, pitch = _accept_sample(sound_dir, cache_dir)
     dsp = [(0x5C, 0xFF), (0x6C, 0x20), (0x0C, ACCEPT_MVOL), (0x1C, ACCEPT_MVOL), (0x2C, 0), (0x3C, 0),
            (0x4D, 0), (0x3D, 0), (0x2D, 0), (0x5D, ACCEPT_DIR >> 8),
            (0x00, ACCEPT_VOL), (0x01, ACCEPT_VOL), (0x02, pitch & 0xFF), (0x03, pitch >> 8), (0x04, 0),
@@ -179,6 +228,8 @@ def sound(rb, snd_dir, regions, cache_dir):
     for drv, regs in zip(DRIVERS + [ACCEPT], regions):
         image = (open(os.path.join(snd_dir, drv["image"]), "rb").read() if "image" in drv
                  else _accept_image(snd_dir, cache_dir))
+        if drv["name"] == "SB1":
+            image = _sb1_accept(image, snd_dir, cache_dir)
         size = len(image)
         image += bytes(-len(image) % 3)
         n = len(image) // 3

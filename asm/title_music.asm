@@ -462,9 +462,9 @@ fd_sound:
     cmp #$02
     beq .sfx
     cmp #$03
-    beq .eat
+    beq .eat_far
     cmp #$10
-    beq .eat
+    beq .eat_far
     jsr fd_leave            ; anything else: Hudson's driver back first
     jsr fd_hudson
     lda #$00
@@ -472,18 +472,28 @@ fd_sound:
     sta.l !fdreq
     clc
     rts
+.eat_far:
+    sec
+    rts
 .sfx:
     lda.l !fdon
     cmp #$03                ; driver 3 (the SPC waits in the IPL ROM): dropped
     beq .eat
     lda $07,s
     cmp #$04
-    beq .accept
-    cmp #$01
-    bne .eat
-    lda.l !fdon
+    bne +
+    lda.l !fdon             ; accept: SB1's own SFX 1 plays SB6's recording
+    cmp #$02                ; (tools/sb6/features/world_map.py _sb1_accept); SB2's
+    beq .accept             ; driver gives way to driver 3
++   lda.l !fdon
     jsr fd_x                ; X = table offset
-    lda.l fd_table+22,x     ; move: the driver's own SFX
+    lda $07,s
+    cmp #$01
+    beq +
+    cmp #$04
+    bne .eat
+    inx
++   lda.l fd_table+22,x     ; the driver's own SFX
     sta.l !fdtmp
     lda.l !fdon
     cmp #$01
@@ -510,7 +520,7 @@ fd_sound:
 .eat:
     sec
     rts
-.accept:                    ; accept (a stage is chosen): SB6's own recording, played
+.accept:                    ; accept on ZONE2 (a stage is chosen): SB6's recording, played
     lda.l !fdreq            ; by driver 3 (one voice, then the IPL ROM: the sample
     pha                     ; keeps playing until the next request brings Hudson's
     lda #$03                ; driver back); the map's driver stays !fdreq for L/R

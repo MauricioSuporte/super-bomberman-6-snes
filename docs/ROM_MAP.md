@@ -525,6 +525,17 @@ script accumulator (`61` = add).
   frames), ships all OBJ (chr `$C000`, palettes 1-5; Bomberman palette 0),
   lights = CGRAM 156-158, 172-173, 220-222 cycled with a 64-frame period.
 
+* SB1's sound RAM layout: header at `$0800` = instrument table `$2200`
+  (6 words -> 16-byte records, byte 12 = sample index), directory `$2300`
+  (DIR `$23`, set at `$1FA6`), SFX `$89F0`, SFX map `$A03C`, instrument map
+  `$A0BC`, sample map `$A13C`. Port 1 command -> `$0202`; SFX n = sequence
+  at word `$89F2 + 2*[$A03C+n]`: `8B` instrument, `86` volume L R, `89`
+  ADSR2 ADSR1, `80` raw pitch, `8D` key on, `91 n` wait (~22 ms ticks), `8E`
+  key off, `92` end. SFX 0/1 play on voice 0, the map song on 1-7.
+* Hack (`world_map._sb1_accept`): instrument table moved to `$A200` (+
+  instrument 6 = record `$A210`, sample 8), directory moved to `$A300`
+  (+ entry 8 = SB6's accept recording at `$A330`), SFX 1 = one note of it.
+
 ## Super Bomberman 2's sound driver (ZONE2 map music)
 
 * Cold start `$0800`; ready = ports 2/3 `$AA`/`$AA`. Port 0: values
@@ -539,7 +550,8 @@ script accumulator (`61` = add).
   values, song, echo, SFX. A zone change switches drivers in `map_music`
   (SB1 <-> SB2 directly through the IPL ROM, ~1-1.5 s; back to Hudson's via
   `$C0:0CCF` and SB5's map song request). Accept (SFX 4, a stage is
-  chosen) uploads "driver 3" instead (`ACCEPT` in `world_map.sound`, ~4 KB,
+  chosen): on ZONE1 SB1's own SFX 1, which the build makes play SB6's
+  recording (below), so the map song goes on; on ZONE2 it uploads "driver 3" (`ACCEPT` in `world_map.sound`, ~4 KB,
   ~7 frames): a program at `$0800` keys SB6's accept recording on voice 0
   (directory `$0900`), sets ports 2/3 = `$53`/`$36` and jumps to the IPL ROM;
   the voice plays on until the stage's set request brings Hudson's driver

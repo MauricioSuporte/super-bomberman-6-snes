@@ -49,11 +49,12 @@ sequenced driver).
 ## ARAM (sound RAM)
 
 On the ZONE1 / ZONE2 world map the whole SPC belongs to Super Bomberman 1's
-driver (sound RAM `$0800-$A1BB`) or Super Bomberman 2's (`$0800-$E6DF`,
+driver (sound RAM `$0800-$A1BB`, plus the hack's tables and SB6's accept
+recording at `$A200-$B283`) or Super Bomberman 2's (`$0800-$E6DF`,
 `$FF00-$FF38`, a copy of the IPL ROM at `$FFC0`; echo buffer `$E700-$FEFF`),
 uploaded through the IPL ROM with a loader at `$0200` (docs/ROM_MAP.md "World
 map"); Hudson's driver is uploaded again, as at power-on, by the next non-SFX
-request or on a zone without foreign music. Choosing a stage there uploads a
+request or on a zone without foreign music. Choosing a stage on ZONE2 uploads a
 small player at `$0800-$1864` (SB6's accept recording on voice 0) that
 returns to the IPL ROM. Nothing below survives that.
 
