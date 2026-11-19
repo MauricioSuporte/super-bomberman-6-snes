@@ -38,6 +38,28 @@ logo; palettes 1 title, 2 boot logo; arrangements 3 version, 4 1-4 PLAYER
 GAME, 5 boot logo; 1-2 are unused copies of 3). Sets 1 and 2 are also
 null. The archive set table ends at `$C0:1CAF` (13 sets).
 
+### Finding who loads a graphics item (checked when freeing SB5 data)
+
+* Archives are one array of 8-byte entries, `$E3:BE60-$E3:C82F` (314 entries); every set is a window
+  of up to 255 ids into it (set 0 from `$BE60`, 8 `$BF80`, 6 `$C140`, 3 `$C158`, 4 `$C608`), so one
+  entry has several names (set 3 `$46` = set 0 `$A5` = set 6 `$49` = set 8 `$81`). The stock OBJ sheet
+  table `$85:E22D` (291 entries, read only by `$C5:6B8C`) is another copy of the same entries (the
+  first 106 identical). Script ops: `27 n`, `28 n` (`$C0:18F6`, OBJ), `29 n vram16` (`$C0:17F3`);
+  native `JSL $C0:180F` / `$C0:18F6` with `LDA #n` (set 3: `$47` at `$C0:329D`; `$49`-`$4F` in
+  `$C5:0555-$C5:3C1D`).
+* Palette word tables (bank `$81`) exist for sets 0, 3, 4, 6, 8 and 12-15 (`$C0:0379` holds 16
+  words: 12 `$C6A8`, 13 `$D55E`, 14 `$E4D8`, 15 `$F8A4`); windows overlap like the archives (set 6 id
+  `$3E` = set 3 id `$10`). Loads: `2A n`, native `JSL $C0:01AC` / `$C0:01C8`, and object palettes
+  through the slot allocator `$C0:0295` with ids from object data (the title's `$3B`/`$3C` come that
+  way: no `2A` names them), which is why unreferenced-looking palettes are hard to prove unused.
+* Arrangements name their set in the op: `FF 8D/8E/8F/90 id set ...` (`$C1:74E5-$C1:7511`; drawer
+  entries `$C0:0000` / `$0009` / `$0012` / `$001B`, set in `$0340`), `FF 49 ... set base` (numbers:
+  ids base + digit). Native callers pass set 4 ids `$15`, `$1B`+, `$D4`, `$DC-$E3`, `$E7-$EA`+ and
+  set 6 digit ids `$0B`+.
+* Raw byte searches give many false hits (`2A 2B` appears 40 times, mostly in data): decode the script
+  around a hit (`tools/scriptdis.py`; valid ops are `00-$A9`, `FE`, `FF`) and find its `26 n`.
+  `tools/mesen/loads.lua` logs every load (kind, set, id, mode) and CPU reads of given ROM ranges.
+
 ## Script VM
 
 Dispatch `$C2:0230`; op table `$C2:04F8 + 2*op`; operand lengths
@@ -63,7 +85,15 @@ script accumulator (`61` = add).
   during the intro goes to mode 2 (title without intro).
 * The hack loads the new logo from set 5 (archive 3, palette 2 with 128
   colors, arrangement 5) and changes `0F A9` to `0F 02`, so the intro is
-  skipped (`tools/sb6/features/boot_logo.py`, `title.py`).
+  skipped (`tools/sb6/features/boot_logo.py`, `title.py`). The Hudson logo's
+  tiles (set 3 archive `$46`, `$D5:9993`) and arrangement (set 4 `$D3`,
+  `$E2:CAF3`) are freed (docs/FREE_SPACE.md); its palette `$2B` stays.
+* Mode `$A9` is SB5's story intro (frames ~526-5900 of a base-ROM boot, then
+  the title with its intro), only reached from the boot script. Its graphics
+  (set 3 archives 3-6, `$57-$5F`; palettes 4-7, `$32-$3A`; sets 13/14 fade
+  palettes; set 4 arrangement 1, set 6 `$EB-$EF`) are also loaded by the
+  scripts at `$C6:6Cxx-$C6:6Fxx` and `$C6:EAxx-$C6:EFxx` (another scene,
+  probably the ending), so they are kept.
 * Script pointer of the running script: `[$0A]` (fetch at `$C2:0397`).
 
 ## Title screen
@@ -148,6 +178,9 @@ script accumulator (`61` = add).
   (`5B A0 60 34 10` at `$C6:FE6F` intro path, `$C7:184C` mode 2) and
   recomputed as item * 16 + `$A0` on each move (`$C7:1ABF`). The hack moves
   all three up with the text.
+* SB5's title arrangements set 4 #2 (scene), #3 (logo) and #6 (© line) are
+  no longer drawn and are freed (`title.free_old`, docs/FREE_SPACE.md); #4, #5
+  and #7 stay.
 * SB5 extras removed by the hack: palette-cycling tasks `2C 12/13/14 02`
   (`$C6:FCBB`, `$C7:1832`) and the two characters (`$C6:FD7C`, `$C6:FDC9`,
   `$C7:1821`). Details in `tools/sb6/features/title.py`.
@@ -180,7 +213,9 @@ script accumulator (`61` = add).
   Every set targets ARAM `$5900` (the voice buffer, up to `$70F1`). Id 1 =
   player death (set `$48`, `$7CE` bytes, SFX `$4F`; callers `$C4:3674`
   Battle, `$C4:3684` Normal): ~32 frames of transfer before the sound, the
-  "late" death sound. Ids 2 (`$C4:2FA3`), 3 (`$C4:33F6`, Battle), 4
+  "late" death sound (the hack points set `$48` at its R list and frees the
+  original list `$D9:E464-$D9:EC39`; no other request, group-4 entry or music
+  id names set `$48`). Ids 2 (`$C4:2FA3`), 3 (`$C4:33F6`, Battle), 4
   (`$C5:08C8`); 5-13 = SFX `$26-$2E`, 14-17 = SFX `$68`.
 * SFX command c (port 0, `$C0:0E7F`) = entry c - `$21` of Hudson's pointer
   table `$4410` (priority `$4550 + entry`). Group 2 id `$33` = enemy death
@@ -207,7 +242,12 @@ script accumulator (`61` = add).
   ~1011 * 2^((n-24)/12).
 * Script music load `$C0:1171` uploads its song unconditionally.
 * Title flow: `0401` (sets), `$C0:1171` song 1, `0002` = play title music.
-  Options: `0204` → `1001` → `0401` → song 1 → `0002`.
+  Options: `0204` → `1001` → `0401` → song 1 → `0002`. The song 1 load is
+  script `FF A0 02` (op `$A0` = `$C0:1171`, music id 2 = set `$28` + song 1;
+  table `$80:8655` + 3 * id: [set, song, ?]) at `$C7:17B8` (title, also after
+  Options) and `$C6:FCFF` (intro path); the hack turns both into `45 01`
+  (skip) and frees the song (`title_music.free_old`), so the title comes up
+  ~88 frames sooner.
 * Normal Game menu (mode 3, file lists and the picker): `1001` then `041C`
   (sets) and no music in SB5; the stage then sends `1001`, `0004`. Hack:
   `041C` in mode 3 arms the save menu music (`$010D`), which the main-loop
@@ -244,8 +284,8 @@ script accumulator (`61` = add).
   protocol, but the final "jump" command just returns (`RET` at `$1041`) to
   the driver. The ROM image of `$0FF0` is at `$DF:2B3A`.
 * `$0ADC` `JMP $FFC0` (real IPL) is a different, full-reset path.
-* ARAM while the title is up: sets `$3000-$5924`, title song 1 at
-  `$7000-$CFDF`.
+* ARAM while the title is up (SB5): sets `$3000-$5924`, title song 1 at
+  `$7000-$CFDF` (the hack no longer uploads song 1; the stream owns ARAM).
 * ARAM map from the upload lists: song sequences `$3000-$4240` (sets
   `$27-$3F`); SFX tables and sequences `$4400-$554C` (common set 1: header
   `$4400` = pointers to the SFX pointer table `$4410`, the instruments
@@ -674,7 +714,11 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
 * OBJ sheet table `$85:E22D`, 8 bytes per sheet (1-based): `[0, 0, size16,
   source24, $85]`. White bomber = character 0 = sheets 1/2 (`$C7:4000`
   `$2000` bytes, `$C7:6000` `$1800`, raw 4bpp); characters 1-9 use sheets
-  3-20. Louies: `$C4:5442`, table `$80:C415`.
+  3-20. Louies: `$C4:5442`, table `$80:C415`. In the hack every character's
+  `[sheet, row]` table (`$80:BB66` + 2 * char) names SB6 sheets only, and
+  sheets 1-20 (`$C7:4000-$C9:7FFF`) are freed (`bombers.free_stock_sheets`).
+  Boss rivals (`$C4:3C60`, tables `$C0:B9A5`) use the same per-character
+  tables.
 * Bomber type `$10`: animations 1-`$4D`, mappings 1-`$A3` (none shared
   between animations), groups of four animations = right, down, left, up.
   Art uses colors 1-8 only (9-15 of the slot are the ridden Louie's).
@@ -695,7 +739,8 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   `bomber_palcount` loads 16 colors for redirected ids. Tested in Mesen:
   characters 1, 2 and 5 with recolored art / changed palettes, 1 player.
 * Hack (`tools/sb6/objsheets.py`, `features/bombers.py`): the sheet table
-  is copied to `$F0` with new sheets from id 97 (`$C5:6B86`, `$C5:6B8C`;
+  is copied to `$F0` with new sheets from id 97 (`$C5:6B86`, `$C5:6B8C`, its
+  only reader; the stock table `$85:E22D-$85:EB44` is then freed;
   Louie copies first, then the bomber's), `$80:BB7A` is
   rewritten, and `bomber_map` (hook at `$C0:12A4`) gives seat bombers of
   character 0 a new mapping table in `$B3:8000+`.
@@ -789,7 +834,8 @@ The full list with sizes is generated in `build/sb6.map`.
 
 * Archive table `$85:E22D + (n-1)*8`: VRAM word, size, src24, flags (`$85`
   raw OBJ for `$01-$22`, compressed from `$23`). Bomberman's art is raw
-  archives `$01` (`$C7:4000`, `$2000`) and `$02` (`$C7:6000`, `$1800`); bomber
+  archives `$01` (`$C7:4000`, `$2000`) and `$02` (`$C7:6000`, `$1800`), no
+  longer drawn and freed: edit `assets/bombers` instead of `sheet.png`; bomber
   pages hold (archive, half) per animation (`$1CCC/$1CEA`, upload `$C5:6B77`).
   Louies `$15-$22` (table `$C0:C415`). Frame pieces: count + 7 bytes
   (dx, dy, tile, attr; attr bit 0 = 16x16, `$40/$80` flips); sets `$C0:16CC`,

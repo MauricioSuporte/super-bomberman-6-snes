@@ -17,6 +17,13 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   its allocation; symbols come from `print "SYM name ", hex(label)` lines.
 * New WRAM/ARAM usage goes in docs/FREE_SPACE.md; new findings in
   docs/ROM_MAP.md.
+* When SB6 replaces an SB5 resource (graphics, palette, arrangement, song,
+  sample, table), free the old data in the same change: prove nothing reads
+  it (every set's tables, script ops, native callers, sound lists), list it
+  in the feature's `OLD_DATA` and call `rb.free_old` (CRC32 check, `$FF`,
+  region), then run `tools/mesen/loads.lua` with `LOADS_WATCH` = the freed
+  ranges (0 reads). In doubt, keep it and note why under "Not freed" in
+  docs/FREE_SPACE.md.
 
 ## Layout
 
@@ -83,8 +90,8 @@ Lua: `emu.read(a, emu.memType.snesDebug | spcRam | spcDspRegisters)`,
 `emu.getState()["spc.pc"]`, write callbacks on WRAM use bank-00 addresses,
 input via `emu.setInput` in the `inputPolled` event. The boot logo (mode 1)
 shows at frames ~56-410, then the hack goes straight to the title (mode 2,
-SB5's intro is skipped; the title's own intro runs at frames ~540-755,
-music and pads from ~760); an attract demo starts ~36 s later. Old scripts that
+SB5's intro is skipped; the title's own intro runs at frames ~450-670,
+music and pads from ~730); an attract demo starts ~36 s later. Old scripts that
 wait for frame ~5650 still work (the title is already up). Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), Options →
 back restarts it, Normal Game switches to the save menu music (`$010A` = 2,
 voice 7 pitch `$0600`, through the picker), the stage releases it (Hudson PC

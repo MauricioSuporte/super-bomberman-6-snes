@@ -46,6 +46,27 @@ VERSION_ATTR = 0x2000     # priority, palette 0 (like the old copyright line)
 MENU_ATTR = 0x2100        # tile words of SB5's menu text (tiles $1xx)
 PLAYERS_ARR = 4           # set 5 arrangement: 1-4 PLAYER GAME (see coop.py)
 
+# SB5's title arrangements that apply() stops drawing: set 4 #2 (scene, BG2) and #3 (logo, BG1), one
+# block, and #6 (the (c) HUDSON line, BG3). Arrangements name their set in the op (FF 8D-90 id set), and
+# the only ones naming these are the title lines patched or skipped below ($C6:FCA1/$C6:FCA8 inside the
+# intro path's skip, $C7:17E6/$C7:17ED inside handler 6's skip, $C6:FE50/$C7:1802 now the version); no
+# native caller of the drawer ($C0:0000/0009/001B) passes them. #4, #5, #7 (PUSH START, menus) stay.
+OLD_DATA = [
+    ("free_e2_title", 0xE20264, 1104, 0x65BD5A4D, "freed SB5 title scene and logo arrangements (set 4 #2, #3)"),
+    ("free_e2_copy", 0xE207A2, 82, 0xEF9D0BB9, "freed SB5 title (c) HUDSON arrangement (set 4 #6)"),
+    # SB5's two title characters (set 3 OBJ archives $61, $62, LZ, one block): loaded only by `28 61 28 62`
+    # at $C6:FC9D (intro path, skipped) and $C7:17DE (handler 4, patched); every other "28 61" / "28 62"
+    # in the ROM is an operand or data. The first byte stays: the decompressor reads one byte past
+    # archive $60 (the menu cursor, still loaded), which ends right there.
+    ("free_d6", 0xD6A3ED, 10426, 0x8B7961A0, "freed SB5 title characters (set 3 archives $61, $62)"),
+]
+
+
+def free_old(rb):
+    """Fills SB5's unused title arrangements with $FF and declares them as free regions."""
+    for name, start, size, crc, purpose in OLD_DATA:
+        rb.free_old(name, start, size, crc, purpose)
+
 # Script VM helpers (see docs/ROM_MAP.md).
 def call(addr):
     return bytes([0x24, addr & 0xFF, addr >> 8 & 0xFF, addr >> 16])

@@ -464,3 +464,31 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
             result["pick_anims"] = _pick_anims(br, cells)
             result["palettes"] = palettes
     return result
+
+
+# SB5's playable characters' OBJ sheets 1-20 ($C7:4000-$C9:7FFF: character n = sheets 2n+1 / 2n+2, raw
+# 4bpp, with zero padding between some of them; also set 0 archives 1-$14). Once every character's
+# [sheet, row] table ($80:BB66 + 2 * char) names only the SB6 sheets (ids from 97), nothing draws them:
+# Battle, the attract demo and the boss rivals (same per-character tables) use the new sheets too. Louie
+# sheets $15-$22 follow at $C9:8000 and stay. One region per bank.
+STOCK_SHEETS = [
+    ("free_c7_sheets", 0xC74000, 0xC000, 0x27457CEC),
+    ("free_c8_sheets", 0xC80000, 0x10000, 0xDD694454),
+    ("free_c9_sheets", 0xC90000, 0x8000, 0xC66F31B8),
+]
+STOCK_SHEET_IDS = range(1, 21)
+
+
+def free_stock_sheets(rb, base_rom):
+    """After apply(): fills SB5's character sheets with $FF and declares them as free regions."""
+    for c in range(10):
+        t = 0x800000 | rb.rw(0x80BB66 + 2 * c)
+        used = sorted({rb.rb(t + 2 * a) for a in range(bomber.ANIMS)} & set(STOCK_SHEET_IDS))
+        if used:
+            raise BuildError(f"character {c} still uses SB5's sheets {used}: give it a char<n>_sb6.png")
+    for name, start, size, crc in STOCK_SHEETS:
+        o = off(start)
+        if rb.d[o:o + size] != base_rom[o:o + size]:
+            raise BuildError(f"{name}: SB5's sheets were edited (assets/bomberman/sheet.png?), but they are no "
+                             "longer drawn: edit assets/bombers instead")
+        rb.free_old(name, start, size, crc, f"freed SB5 character OBJ sheets (${start >> 16:02X})")

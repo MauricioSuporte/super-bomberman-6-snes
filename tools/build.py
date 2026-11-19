@@ -71,13 +71,17 @@ def main():
     rb.add_region("c3", 0xC37E90, 0xC37FF0, "bank C3 code (co-op)")
     rb.add_region("c4", 0xC45A40, 0xC47F00, "bank C4 code (co-op)")
     rb.add_region("c5", 0xC56FA0, 0xC57F00, "bank C5 code (co-op)")
+    # SB5 data nothing reads any more (docs/FREE_SPACE.md); more is freed below once its pointers move
     world_map.free_old_zones(rb)     # SB5's ZONE1/ZONE2 data, replaced by the SB1 / SB2 maps
+    boot_logo.free_old(rb)           # the Hudson logo's tiles and arrangement (boot logo in set 5)
+    title.free_old(rb)               # SB5's title scene / logo / (c) arrangements (animated title)
 
     boot = boot_logo.convert(os.path.join(ROOT, "assets", "HU3DSON LOGO.png"))
     print(f"boot logo: {boot['count']} tiles, palette error {boot['error']:.0f}")
     boot["preview"].save(os.path.join(args.out, "boot_logo_preview.png"))
     # in-game SFX (cornered, deaths): code called from the sound hooks of title_music
     gsfx = game_sfx.apply(rb, os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"))
+    game_sfx.free_old(rb)            # SB5's death voice (set $48 now uploads R)
     print(f"game SFX: R = {gsfx['r_bytes']} bytes of ARAM $5900 (SB1 death {gsfx['death']}, enemy {gsfx['enemy']}); "
           f"cornered {gsfx['corner_seconds']:.2f} s at {gsfx['corner_rate']:.0f} Hz = {gsfx['a']} + {gsfx['b']} bytes "
           f"(B at ${gsfx['b1']:04X} / ${gsfx['b2']:04X}), cut short in songs {gsfx['short']}")
@@ -91,6 +95,7 @@ def main():
                               drop_frames=title.drop_frames(os.path.join(ROOT, "assets", "title")),
                               save_wav=os.path.join(ROOT, "assets", "sound", "save_menu_music.wav"),
                               save_regions=["music_fd", "music_fe", "music_ff", "title_fc"], sb1=maps)
+    title_music.free_old(rb)         # SB5's title song: no longer uploaded (set $28, song 1, its own samples)
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
           f"CPU code {music['code']} B; intro sounds {music['pan']} bytes; SB6 menu SFX {music['sfx']} in "
@@ -126,7 +131,8 @@ def main():
                              menu_bg=mbg)
     else:
         info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir, menu_bg=mbg)
-    sheets.finish()
+    sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
+    bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
 
     wmap = world_map.apply(rb, os.path.join(ROOT, "assets", "world_map"), args.out, ["wmap_f5", "sb1_f4"],
                            music["map_music"])

@@ -4,11 +4,18 @@ The cartridge's table has no room for new sheets, so the features that add
 dynamic sprite tiles (bombers, Louies) register them here; `finish()` writes
 one copy of the table with the new entries and points the loader at it.
 Sheet ids are bytes; a tile page is 1 KB at `source + row * $200`.
+
+Once the loader reads the copy, the cartridge's table (291 entries; a copy of the archive entries
+of `$E3:BE60`, the first 106 identical) has no reader left: `finish()` frees it (region
+`free_c5_sheets`, addressable as `$85:E22D` too, i.e. usable for data that must sit in `$80-$BF`).
+Build-time readers (`bomberman_sprites`, `bomber.BomberRom` on the base ROM) run before that.
 """
 from .romlib import off
 
 SHEET_TABLE = 0x85E22D
 COPIED_SHEETS = 96           # stock ids kept (bombers use 1-20, Louies $15-$22)
+STOCK_TABLE = ("free_c5_sheets", 0xC5E22D, 291 * 8, 0x25FD61ED,
+               "freed stock OBJ sheet table ($85:E22D; the loader reads the copy in the OBJ banks)")
 OBJ = ["obj_f0", "obj_f1", "obj_f2", "obj_f6", "obj_f7", "obj_f8", "obj_f9"]
 
 
@@ -39,3 +46,4 @@ class ObjSheets:
         rb.patch(0xC56B86, bytes.fromhex("A9 85"), bytes([0xA9, table >> 16]), "OBJ sheet table bank")
         rb.patch(0xC56B8C, bytes.fromhex("A9 2D E2"), bytes([0xA9, table & 0xFF, table >> 8 & 0xFF]),
                  "OBJ sheet table address")
+        rb.free_old(*STOCK_TABLE)   # $C5:6B8C was its only reader

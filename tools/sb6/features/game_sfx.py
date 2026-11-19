@@ -324,3 +324,19 @@ def apply(rb, sound_dir, cache_dir):
     rb.patch(t, bytes(rb.d[off(t):off(t) + 3]), lr.to_bytes(3, "little"), "game SFX: set $48 = R (group-3 stream)")
     info["syms"] = syms
     return info
+
+
+# SB5's death voice (upload list of set $48: one block of 1998 bytes for ARAM $5900, the end mark and the
+# jump word; the next set's list starts right after). Its only pointer is the set table entry apply()
+# moves to R; group 3 id 1 is the only request naming set $48 ($80:8765), no group-4 or music entry does,
+# and no native set upload passes it.
+OLD_DATA = [("free_d9", 0xD9E464, 2006, 0xEED80FAA, "freed SB5 death voice (sound set $48 upload list)")]
+
+
+def free_old(rb):
+    """After apply(): fills SB5's death voice with $FF and declares it as a free region."""
+    t = off(tm.SET_TABLE + 3 * STREAM_SET)
+    if int.from_bytes(rb.d[t:t + 3], "little") == OLD_DATA[0][1]:
+        raise BuildError("game SFX: set $48 still points at SB5's death voice")
+    for name, start, size, crc, purpose in OLD_DATA:
+        rb.free_old(name, start, size, crc, purpose)

@@ -5,6 +5,7 @@ original bytes first, so a wrong address or a ROM revision mismatch fails the
 build instead of silently corrupting the game.
 """
 import hashlib
+import zlib
 
 from .romlib import Rom, off
 
@@ -47,6 +48,16 @@ class RomBuild(Rom):
         if any(b != fill for b in self.d[o0:o1]):
             raise BuildError(f"region {name} ${start:06X}-${end - 1:06X} is not free in the base ROM")
         self.regions[name] = Region(name, start, end, purpose)
+
+    def free_old(self, name, start, size, crc, purpose):
+        """Original data nothing reads any more: checks its CRC32, fills it with $FF and declares it as
+        the free region `name` (docs/FREE_SPACE.md)."""
+        o = off(start)
+        old = bytes(self.d[o:o + size])
+        if zlib.crc32(old) != crc:
+            raise BuildError(f"{name}: the original data at ${start:06X} is not the expected one")
+        self.patch(start, old, b"\xFF" * size, f"freed: {purpose}")
+        self.add_region(name, start, start + size, purpose)
 
     def alloc(self, region, data, label, align=1):
         """Places `data` in a region (never across a bank) and returns its address."""

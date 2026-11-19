@@ -46,7 +46,6 @@ loader at $0200, plus extra blocks) and the image cut in parts for the loader
 import json
 import os
 import struct
-import zlib
 
 import numpy as np
 from PIL import Image
@@ -133,12 +132,7 @@ def free_old_zones(rb):
     """Fills SB5's unused ZONE1 / ZONE2 data with $FF and declares it as free regions (the table
     entries stay: nothing loads them)."""
     for name, start, size, crc, purpose in OLD_ZONE_DATA:
-        o = off(start)
-        old = bytes(rb.d[o:o + size])
-        if zlib.crc32(old) != crc:
-            raise BuildError(f"world map: SB5's data at ${start:06X} is not the expected one")
-        rb.patch(start, old, bytes([0xFF]) * size, f"world map: {purpose}")
-        rb.add_region(name, start, start + size, purpose)
+        rb.free_old(name, start, size, crc, purpose)
 
 
 def _accept_sample(sound_dir, cache_dir):

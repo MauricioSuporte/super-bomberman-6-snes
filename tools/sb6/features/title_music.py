@@ -541,3 +541,26 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
                 sfx_bytes=sample_bytes, safe=[i for i in range(N_SONGS) if safe[i] == 1],
                 save_seconds=save_seconds, save_segs=save_segs, save_gain=save_gain,
                 save_vol=(save_vol, save_mvol), map_music=syms.get("map_music", 0))
+
+
+# SB5's title song (music id 2 = set $28, its sequence, + song 1). The title scripts still loaded it with
+# FF A0 02 ($C0:1171: set and song upload) before the stream replaced it; free_old() turns those lines into
+# a skip (45 01: the operand byte is jumped over), so nothing reads it: the stream start sets $03CD = $FF
+# and $03CE keeps naming the set that really is in ARAM. Samples 4, 5, 9, $0A belong to song 1 alone;
+# its other samples are shared and stay. The table entries (set $28, song record, sample pointers) stay.
+TITLE_SONG_LOADS = (0xC717B8, 0xC6FCFF)   # mode 2 title (also after Options), intro path
+OLD_DATA = [
+    ("free_d8", 0xD8FB02, 1258, 0x584888D6, "freed SB5 title song sequence (sound set $28 upload list)"),
+    ("free_da", 0xDAC512, 116, 0x5AEE4F85, "freed SB5 title song upload list (song 1: directory / tuning)"),
+    ("free_db_a", 0xDB43FA, 4005, 0x7D028EB7, "freed SB5 title song samples 4, 5"),
+    ("free_db_b", 0xDB66EC, 7605, 0x1642C593, "freed SB5 title song samples 9, $0A"),
+]
+
+
+def free_old(rb):
+    """After apply() (and game_sfx, whose song / set tables read the lists): the title no longer loads
+    SB5's title song; its data is filled with $FF and declared as free regions."""
+    for a in TITLE_SONG_LOADS:
+        rb.patch(a, bytes.fromhex("FF A0 02"), bytes.fromhex("45 01"), "title: no SB5 title song upload (stream)")
+    for name, start, size, crc, purpose in OLD_DATA:
+        rb.free_old(name, start, size, crc, purpose)

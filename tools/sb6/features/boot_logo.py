@@ -13,6 +13,22 @@ from ..snesgfx import Layer, PaletteSlot, TileSet, best_palettes, build_layer_ma
 
 TILE_LIMIT = 0x300  # BG1 map at VRAM word $3000
 
+# The Hudson logo's own data, unused since title.py points the boot script at set 5: archive $46 of
+# set 3 (BG1 tiles, LZ; the same entry is set 0 $A5, set 6 $49, set 8 $81, and OBJ sheet 165 of the
+# stock sheet table, which objsheets.py replaces) and arrangement $D3 of set 4. The only script line that
+# loads them is the boot script ($C7:0ACE / $C7:0AD9, patched); no native code passes these ids (palette
+# $2B, 68 bytes, stays: object palettes come from data tables that were not traced).
+OLD_DATA = [
+    ("free_d5", 0xD59993, 2994, 0x9D332C3A, "freed SB5 Hudson logo tiles (set 3 archive $46)"),
+    ("free_e2_boot", 0xE2CAF3, 245, 0x4964FE0E, "freed SB5 Hudson logo arrangement (set 4 $D3)"),
+]
+
+
+def free_old(rb):
+    """Fills the Hudson logo's unused data with $FF and declares it as free regions."""
+    for name, start, size, crc, purpose in OLD_DATA:
+        rb.free_old(name, start, size, crc, purpose)
+
 
 def convert(path, starts=((1, "mean"), (1, "hist"), (2, "mean"))):
     img = Image.open(path).convert("RGBA")
