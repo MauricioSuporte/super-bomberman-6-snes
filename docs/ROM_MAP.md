@@ -239,9 +239,7 @@ script accumulator (`61` = add).
   Every set targets ARAM `$5900` (the voice buffer, up to `$70F1`). Id 1 =
   player death (set `$48`, `$7CE` bytes, SFX `$4F`; callers `$C4:3674`
   Battle, `$C4:3684` Normal): ~32 frames of transfer before the sound, the
-  "late" death sound (the hack points set `$48` at its R list and frees the
-  original list `$D9:E464-$D9:EC39`; no other request, group-4 entry or music
-  id names set `$48`). Ids 2 (`$C4:2FA3`), 3 (`$C4:33F6`, Battle), 4
+  "late" death sound (the hack keeps it: SB5's own death voice). Ids 2 (`$C4:2FA3`), 3 (`$C4:33F6`, Battle), 4
   (`$C5:08C8`); 5-13 = SFX `$26-$2E`, 14-17 = SFX `$68`.
 * SFX command c (port 0, `$C0:0E7F`) = entry c - `$21` of Hudson's pointer
   table `$4410` (priority `$4550 + entry`). Group 2 id `$33` = enemy death
@@ -251,21 +249,20 @@ script accumulator (`61` = add).
 * Stage music: script ops `42 id 00` with ids 6-`$0E` (worlds), `$0F`,
   `$14`, `$15` (songs 5-14, 19, 20).
 * Hack, in-game SFX (`tools/sb6/features/game_sfx.py`, `asm/game_sfx.asm`):
-  SFX `$5E` cornered (recording), `$5F` enemy death and `$60` player death
-  (Super Bomberman 1's samples and notes: its sound commands `$16` / `$1F`
-  via `$C4:8522`, voice 0, ADSR `$DF/$94`; death = 8 key-ons alternating
-  pitch `$09C4` / `$05DC`, enemy = one at `$04B0`). Group 3 id 1 is answered
-  by `gs_sound` (the death sound now starts with animation `$16`), animation
-  `$21` of a seat bomber by `gs_anim`. The object code never talks to the
-  SPC: `gs_anim`/`gs_enemy` leave the command in `$018C` and `gs_tick`
-  (main loop) sends it; waiting for the SPC inside the setter delayed the
-  frame and characters 1/4 lost the tile DMA of animation `$21`. Enemy hit: `$C3:4D41` (the enemy object becomes type 0 with
-  its death "puff", animation from `$C3:B930`) calls `gs_enemy`; SB5's own
-  enemy sound, group 2 id `$33` (`$C5:3BD6`), comes ~70 frames later with
-  the score and is now silent. Set `$48`
-  now uploads R (used to restore it after another group-3 voice). Hudson
-  note n (12 * octave + note) with tuning `04 0C 00 CE` plays at
-  ~1011 * 2^((n-24)/12).
+  SFX `$5E` cornered (recording) and `$5F` enemy death (Super Bomberman 1's
+  sample and note: its sound command `$16`, voice 0, ADSR `$DF/$94`, one
+  key-on at `$04B0`); every other stage sound (bomb, explosion, Louie,
+  player death voice) is SB5's own. Animation `$21` of a seat bomber plays
+  `$5E` (`gs_anim`). The object code never talks to the SPC: `gs_anim` /
+  `gs_enemy` leave the command in `$018C` and `gs_tick` (main loop) sends
+  it; waiting for the SPC inside the setter delayed the frame and
+  characters 1/4 lost the tile DMA of animation `$21`. Enemy hit:
+  `$C3:4D41` (the enemy object becomes type 0 with its death "puff",
+  animation from `$C3:B930`) calls `gs_enemy`; SB5's own enemy sound,
+  group 2 id `$33` (`$C5:3BD6`), comes ~70 frames later with the score and
+  is now silent. A group-3 voice (the player's death, set `$48`) overwrites
+  R; R comes back through SB5's group-3 queue with set `$41` (SB5's freed
+  Password music), whose list pointer now names R's upload list.
 * Script music load `$C0:1171` uploads its song unconditionally.
 * Title flow: `0401` (sets), `$C0:1171` song 1, `0002` = play title music.
   SB5's Options (gone): `0204` → `1001` → `0401` → song 1 → `0002`. The song 1 load is
@@ -364,7 +361,7 @@ script accumulator (`61` = add).
 | `$C0:0F0A` | `20 35 0F 9C D1 03` | song upload: SB6 menu SFX samples + definitions, or SB5's back (`song_hook`) |
 | `$C0:11EC` | `99 9F 07 A9 00` | animation setter: cornered `$21` of a seat bomber plays SFX `$5E` (`gs_anim`, `asm/game_sfx.asm`) |
 | `$C3:4D41` | `BD C2 16 8D 51 1D` | enemy hit: SB1's enemy death SFX `$5F` (`gs_enemy`) |
-| `$85:F69B + 3*$48` | set `$48` pointer | group-3 set of SB5's death voice -> upload list of R (in-game SFX) |
+| `$85:F69B + 3*$41` | set `$41` pointer | group-3 set of SB5's freed Password music -> upload list of R (in-game SFX) |
 | title scripts | see `tools/sb6/features/title.py` | SB6 title graphics |
 | `$C7:1847` | `06 04 42 02 00 5B A0 60 34 10` | title: music and PUSH START wait for the intro |
 | `$C7:18D5`, `$C7:19AD` | OPTIONS -> mode `$0B`; B test of menu 2 | OPTIONS submenu / DISCORD QR (`tools/sb6/features/options.py`) |
@@ -767,23 +764,57 @@ script accumulator (`61` = add).
   `$03CE` = `$FF`); the in-game SFX state `$0188-$018C` is cleared.
   Checked in Mesen: the key-on sequence and timing equal SB1's; stage
   music and in-game SFX after the map.
-* World 1 stages (`features/world1.py` `SB1_STAGE` / `STAGE_MUSIC`,
-  `asm/title_music.asm` `fd_stage`): SB1 restarts its driver at every
-  stage (port 0 `$3E`) and uploads ~54 KB from `$0800` (driver, the world's
-  songs, the game SFX); then the start jingle (`$8D` World 1, `$9E` 2, `$A0`
-  3, `$A2` 4, `$A4` 5, `$A6` 6; bosses none) and ~3 s later the song
-  (`$02`, `$04`, `$06`, `$0B`, `$14`, `$08`; bosses `$0A`). The images
-  (`assets/sound/sb1_stage_*.bin`, Mesen snapshot at the first command,
-  `tools/mesen/sb1_stages.lua FIRSTCMD`) of worlds 1, 2, 4, 6 differ only in
-  `$0800-$22FF` and from `$CD7C`. Driver entry, ready ports and DIR as the
-  map's (`$0812`, `$68`/`$09`). In the hack SB5's stage set request (group
-  4) uploads the stage's image (driver 4+ of `fd_table`), group 0 `$20`
-  sends the jingle, `$06`/`$0F` the song, `$23` (death) fades out (`$3B`,
-  the driver stays for the restart), other songs bring Hudson's back. SFX:
-  port 1 (bit 7 toggles, echoed, no wait in SB1's own `$09:8522`): `$1E`
-  bomb set, `$15` explosion, `$1F` player death, `$16` enemy death; other
-  SB5 stage SFX are dropped. The script op `$C0:1171` (set + song) is
-  skipped meanwhile.
+* World 1 stages play on Hudson's driver with SB5's stage SFX. 1-1
+  (stage `$0D`) plays SB1's World 1 song converted to a Hudson song
+  (`tools/sb6/features/sb1_music.py`, see "Hudson songs"): `sound_hook`
+  (`asm/title_music.asm`) answers music id 6 on that stage with `sb1m_play`
+  (sets `$03CC` = 6, `$03CD`/`$03CE` = `$FF` so the next request uploads
+  its own song, `gs_song` = `SB1M_SONG`; session `$C0:0F13`, the list,
+  game_sfx's `L_DIR0`, `$C0:0F35`, then song command 1 twice). SB5's start
+  jingle plays first, as for any SB5 stage. The other World 1 stages keep
+  SB5's ZONE1 song. SB1's per-world sound RAM images
+  (`assets/sound/sb1_stage_*.bin`, Mesen snapshot at SB1's first stage
+  command) stay as the source of SB1's samples and of future conversions.
+* Hudson songs (measured in Mesen on SB5's driver):
+  * Song table at ARAM `$3000`: word -> table of header pointers (command
+    1 = entry 0). Header ops: `01 mask` + a track pointer per channel,
+    `02 shift` timebase, `03 n` + n instruments `[dir, ADSR1, ADSR2,
+    release GAIN]`, `04` percussion, `07 0 EVOL-L EVOL-R EDL EFB FIR EON`,
+    `08 0` no velocity byte, `00` end. The release GAIN must have bit 7
+    set: the key-on code (`$1E61`) reads an instrument whose byte 3 is
+    below `$80` as a 2-byte record and loads garbage SRCN/ADSR.
+  * Notes: `key << 4 | tie 8 | length index` (index 0: a length byte
+    follows; key 0 = rest); note = 12 * octave (`D2`) + key - 1. Ops
+    (table at `$17D9`, `op - $D0`): `D1` tempo, `D5` quantize (8 = full),
+    `D6` instrument, `D9` volume, `DA` pan (0-30), `DD n`..`DE` repeat,
+    `DF addr` call / `FF` return, `EB` loop point, `EC` jump to it, `E1`
+    detune, `E7` transpose. `FE n` (sub-op table `$1839`): 3 / 4 set /
+    clear bit 3 of `$AE+x` (percussion mode), 0 clears bit 7, 1 / `E6`
+    clear / set the voice in mask `$8D`. These survive a new song: a track
+    that does not use them must reset them (`FE 04`, `FE 01`).
+  * Time: the 4 ms timer adds `$38` / 256 ticks per period;
+    `$38` = t - `[$12AD + t / 10]` - (t % 10 >= 5) for `D1 t` (table `00
+    02 04 05 07 09 0B 0D 0E 10 12 14 16 17 19 1B 1D 1F 21 22 24 26 28 2A
+    2B 2D`), >> timebase. t = 224 -> 5.565 ms per unit. A busy driver loses
+    ticks (SB1's song runs 0.1-0.9 % slow).
+  * Pitch with tuning entry `04 0C 00 CE` (`$FE00 + 4 * dir`): note 24 =
+    `$0430`, linear in the big-endian multiplier (bytes 0-1); fine byte
+    `00` vs `CE` ~0.75 %.
+  * Volume `D9 v` (0-`$50`) at full pan on one side gives S-DSP VOL
+    0,0,0,1,1,1,1,1,1,1,1,2,2,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,6,6,7,7,8,8,9,9,
+    10,10,11,12,13,13,14,15,16,17,18,19,20,22,23,25,26,28,29,31,33,35,37,
+    39,42,44,47,50,53,56,60,63,67,71,75,80,85,90,95,101,107,113,120,127,127;
+    pan p: R = VOL * PT[p] / 127, L = VOL * PT[30 - p] / 127, PT = 00 07 0D
+    14 1A 21 27 2E 34 3A 40 45 4B 50 55 5A 5E 63 67 6B 6E 71 74 77 79 7B 7C
+    7D 7E 7F 7F. MVOL `$60` (as SB1).
+* SB1's World 1 song (`tools/sb1_song.py`, from a DSP log of a .spc of
+  SB1 restarted at the song: port 0's toggle bit flipped): music on voices
+  3-7, every note ends with ADSR1 = 0 and its release GAIN (`$B4`; 0 for
+  the drum samples 3-5). Rows of 133.547 ms (key-ons jitter +-11 ms around
+  them on SB1's 12 ms timer), an intro of 128 rows (17.09 s) then 512 rows
+  (68.38 s) looped. The converter regroups the notes into musical lines
+  (by sample, simultaneous notes split by pitch) on 6 channels, bars
+  repeated anywhere become subroutines, runs of one bar `DD`/`DE`.
 * Research: `tools/spc_render.py --voices all --echo` renders a DSP log
   (several logs joined with `+`); the map song capture needed the CPU
   frozen (the map lasts ~4 s in SB1) and runs of < 100 s per Mesen call.

@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, sb1_enemies, sb1_stages, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -83,16 +83,18 @@ def main():
     boot["preview"].save(os.path.join(args.out, "boot_logo_preview.png"))
     # in-game SFX (cornered, deaths): code called from the sound hooks of title_music
     gsfx = game_sfx.apply(rb, os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"))
-    game_sfx.free_old(rb)            # SB5's death voice (set $48 now uploads R)
-    print(f"game SFX: R = {gsfx['r_bytes']} bytes of ARAM $5900 (SB1 death {gsfx['death']}, enemy {gsfx['enemy']}); "
+    print(f"game SFX: R = {gsfx['r_bytes']} bytes of ARAM $5900 (SB1 enemy death {gsfx['enemy']}); "
           f"cornered {gsfx['corner_seconds']:.2f} s at {gsfx['corner_rate']:.0f} Hz = {gsfx['a']} + {gsfx['b']} bytes "
           f"(B at ${gsfx['b1']:04X} / ${gsfx['b2']:04X}), cut short in songs {gsfx['short']}")
     # world map music: SB1's / SB2's own drivers and songs (switched by title_music's sound hook)
-    st_drv, st_index = world1.stage_drivers(os.path.join(ROOT, "assets", "sound"))
     maps = world_map.sound(rb, os.path.join(ROOT, "assets", "sound"), [["sb1_f3", "sb1_f4"], ["stream_ef"],
-                                                                         ["wmap_f5"]], os.path.join(args.out, "cache"),
-                           stages=st_drv)
-    maps["defs"].update(world1.stage_tables(rb, len(maps["drivers"]) - len(st_drv) + 1, st_index))
+                                                                         ["wmap_f5"]], os.path.join(args.out, "cache"))
+    # World 1's 1-1: SB1's music as a Hudson song (uploaded by title_music's sound hook)
+    sb1m_defs, sb1m = sb1_music.apply(rb, os.path.join(ROOT, "assets", "sound"))
+    maps["defs"].update(sb1m_defs, L_DIR0=gsfx["l_dir0"], SB1M_SONG=gsfx["sb1m_song"])
+    print(f"1-1 music (SB1's, Hudson song): {sb1m['notes']} notes, sequence {sb1m['seq']} bytes "
+          f"({sb1m['subs']} subroutines), samples {sb1m['samples']} bytes, tempo {sb1m['tempo']} "
+          f"({sb1m['unit_ms'] * 24:.2f} ms rows, SB1 {sb1m['row_ms']:.2f}), pitch within {sb1m['cents']:.1f} cents")
     print("world map music: " + ", ".join(f"{n}'s sound RAM ({b} bytes, {p} parts)" for n, b, p in maps["drivers"]))
     # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),
@@ -147,7 +149,6 @@ def main():
                              enemies=en_defs)
     sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
     bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
-    maps["finish"]()                 # World 1 stage music: SB1's sound RAM images (freed sheet banks, streams)
 
     wmap = world_map.apply(rb, os.path.join(ROOT, "assets", "world_map"), args.out, ["wmap_f5", "sb1_f4"],
                            music["map_music"])

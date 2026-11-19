@@ -1,6 +1,5 @@
-; In-game SFX (tools/sb6/features/game_sfx.py): cornered bomber, player death
-; and enemy death as Hudson SFX commands !CMD_CORNER / !CMD_DEATH /
-; !CMD_ENEMY, whose sequences and samples live in ARAM R = $5900-$657F (SB5's
+; In-game SFX (tools/sb6/features/game_sfx.py): cornered bomber and enemy
+; death as Hudson SFX commands !CMD_CORNER / !CMD_ENEMY, whose sequences and samples live in ARAM R = $5900-$657F (SB5's
 ; group-3 voice buffer) plus, for the cornered recording, a part B below the
 ; song's echo buffer or menu SFX samples.
 ;
@@ -12,9 +11,9 @@
 ;             (cornered) plays !CMD_CORNER.
 ;   gs_sound  JSL from sound_hook (asm/title_music.asm) while Hudson's driver
 ;             runs: A = id, B = group. Group 2 id $33 (score of a dead enemy) plays
-;             nothing (the score of a dead enemy), group 3 id 1 (SB5's death voice stream) plays
-;             !CMD_DEATH at once; C = 1 = handled. Any other group-3 voice is
-;             streamed over R: R is marked missing and gs_tick brings it back.
+;             nothing (the score of a dead enemy); C = 1 = handled. A group-3
+;             voice (id 1 = the player's death) is streamed over R: R is
+;             marked missing and gs_tick brings it back.
 ;   gs_set    JSL from set_hook, inside the upload session ($9F = set).
 ;   gs_song   JSL from song_hook, inside the upload session (X = song).
 ;   gs_tick   JSL from loop_hook, once per main-loop pass: sends the command
@@ -105,19 +104,6 @@ gs_anim:
 ; An enemy hit by a flame turns into its "puff" effect here: SB1's enemy
 ; death sound starts now (SB5 only played group 2 id $33 with the score).
 gs_enemy:
-    lda.l $00018D           ; asm/title_music.asm !fdon: an SB1 stage driver (World 1)
-    cmp #$04                ; plays its own enemy death sound ($16, port 1)
-    bcc .hudson
-    lda.l $000191           ; !fdp1: new when bit 7 changes, echoed
-    and #$80
-    eor #$80
-    ora #$16
-    sta.l $000191
-    sta.l $002141
--   cmp.l $002141
-    bne -
-    bra +
-.hudson:
     lda.l !gs_pend
     bne +                   ; the cornered sound goes first
     lda #!CMD_ENEMY
@@ -164,13 +150,6 @@ gs_sound:
     beq .no
     bra .yes
 .stream:
-    xba
-    cmp #$01                ; SB5's death voice: never streamed (its set is R now)
-    bne .clobber
-    lda #!CMD_DEATH
-    jsr play
-    bra .yes
-.clobber:
     lda #$00
     sta.l !gs_valid
     lda #$01

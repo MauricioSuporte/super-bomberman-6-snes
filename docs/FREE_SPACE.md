@@ -15,7 +15,7 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$E4:0000-$E4:FFFF` | 64 KB | `bulk`: hack code (65816), scripts, arrangements, title tiles. |
 | `$E5:0000-$EB:176A` | 390 KB | streamed BRR (title music), 404 chunks of 162 bytes per bank. |
 | `$EB:176A-$EB:FFA7`, `$FC:A200-$FC:D9AF`, `$FD:0000-$FF:FFA7` | ~270 KB | save file menu music (Normal Game file lists + picker), streamed BRR at 12 kHz (`music_fd`..`music_ff` and the tails of `audio_EB` / `title_fc`; segments in `asm/title_music.asm`). |
-| `$EC:0000-$EF:FFFF` | 256 KB | `stream_ec`..`stream_ef`: bomber poses streamed one by one (DMA sources, `asm/bombers.asm`). `stream_ef` currently holds Super Bomberman 2's sound RAM image for the ZONE2 world map music (57 KB, `world_map.sound`). |
+| `$EC:0000-$EF:FFFF` | 256 KB | `stream_ec`..`stream_ef`: bomber poses streamed one by one (DMA sources, `asm/bombers.asm`). `stream_ef` currently holds Super Bomberman 2's sound RAM image for the ZONE2 world map music (57 KB, `world_map.sound`), `stream_ed` the Hudson upload list of World 1's 1-1 music (SB1's song, 27.7 KB: sequence + samples, `sb1_music.py`). |
 | `$F0:0000-$F2:FFFF` | 192 KB | `obj_f0`..`obj_f2`: OBJ sheets (raw 4bpp, 1 KB strips aligned to `$400`: bomber, Louie sheets recolored for palette entries 1-7) and the relocated OBJ sheet table (`tools/sb6/objsheets.py`). |
 | `$F3:8000-$F3:FFFF` | 32 KB | `objmap`: sprite mappings and bomber animation scripts, addressed as bank `$B3` (the OAM builder needs WRAM in the data bank). |
 | `$F4:8000-$F4:FFFF`, `$F5:8000-$F5:FFFF` | 64 KB | `objmap2`, `objmap3`: mappings/scripts of characters 1-9 (banks `$B4`, `$B5`), used when `objmap` is full. |
@@ -30,11 +30,10 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$C1:985E-$C1:99A5` | 328 B | `free_81`: was SB5's ZONE1/ZONE2 palettes (set 3 `$10`/`$11`, also set 6 `$3E`/`$3F`); bank `$81`, so it can hold palettes. Unused. |
 | `$C5:E22D-$C5:EB44` | 2328 B | `free_c5_sheets`: was the stock OBJ sheet table (`$85:E22D`, 291 entries); its only reader `$C5:6B8C` reads the copy in the OBJ banks (`tools/sb6/objsheets.py` frees it in `finish()`, so it is declared after the bomber features have allocated). Also addressable as `$85:E22D`, i.e. fit for data that must sit in a `$80-$BF` bank (sprite mappings). Unused. |
 | `$D5:9993-$D5:A544` | 2994 B | `free_d5`: was the Hudson boot logo's tiles (set 3 archive `$46`, LZ; same entry as set 0 `$A5`, set 6 `$49`, set 8 `$81`, stock OBJ sheet 165), freed by `boot_logo.free_old`. Unused. |
-| `$D9:E464-$D9:EC39` | 2006 B | `free_d9`: was SB5's death voice (sound set `$48` upload list + end mark + jump word), freed by `game_sfx.free_old` once set `$48` points at R. Unused. |
 | `$E2:0264-$E2:06B3` | 1104 B | `free_e2_title`: was SB5's title scene and logo arrangements (set 4 #2, #3), freed by `title.free_old`. Unused. |
 | `$E2:07A2-$E2:07F3` | 82 B | `free_e2_copy`: was SB5's "(c) 1997 HUDSON SOFT" arrangement (set 4 #6). Unused. |
 | `$E2:CAF3-$E2:CBE7` | 245 B | `free_e2_boot`: was the Hudson boot logo's arrangement (set 4 `$D3`). Unused. |
-| `$C7:4000-$C7:FFFF`, `$C8:0000-$C8:FFFF`, `$C9:0000-$C9:7FFF` | 144 KB | `free_c7_sheets`, `free_c8_sheets`, `free_c9_sheets`: were SB5's playable characters' OBJ sheets 1-20 (raw 4bpp, set 0 archives 1-`$14`), freed by `bombers.free_stock_sheets` once every character's `[sheet, row]` table names only SB6 sheets (it fails the build otherwise, or if `assets/bomberman/sheet.png` edits them). Boss rivals use the same per-character tables. Louie sheets follow at `$C9:8000`. Now SB1's World 1 stage sound RAM images (`world1.stage_drivers`, see build/sb6.map). |
+| `$C7:4000-$C7:FFFF`, `$C8:0000-$C8:FFFF`, `$C9:0000-$C9:7FFF` | 144 KB | `free_c7_sheets`, `free_c8_sheets`, `free_c9_sheets`: were SB5's playable characters' OBJ sheets 1-20 (raw 4bpp, set 0 archives 1-`$14`), freed by `bombers.free_stock_sheets` once every character's `[sheet, row]` table names only SB6 sheets (it fails the build otherwise, or if `assets/bomberman/sheet.png` edits them). Boss rivals use the same per-character tables. Louie sheets follow at `$C9:8000`. Free again (they held SB1's World 1 stage sound RAM images while SB1's driver played the stages). |
 | `$D6:A3ED-$D6:CAA6` | 9914 B | `free_d6`: was SB5's two title characters (set 3 OBJ archives `$61`/`$62`, LZ), freed by `title.free_old`; the byte at `$D6:A3EC` stays (the decompressor of archive `$60`, the menu cursor, reads it). Archive `$63` (the exit portal's beam, `$D6:CAA7`) follows and is kept (it used to be freed too: portals were invisible). Unused. |
 | `$C7:00DE-$C7:0AB1` | 2516 B | `free_c7_options`: were SB5's Options (mode `$0B`), Sound / Sound Test and Password (mode 7) scripts and tables, freed by `options.free_old` (the mode table entries now point at the title's record). Bank `$C7`: fit for scripts. Unused. |
 | `$E3:0000-$E3:127F` | 4736 B | `free_e3_options`: was the Options screen's tiles (set 3 archive `$92`, raw). Bank `$E3`, so it can also hold archive tables. Unused. |
@@ -118,13 +117,19 @@ only played by the stream driver: no instrument or Hudson definition), tuning `$
 leaves `$B900-$DCFF` alone is loaded (docs/ROM_MAP.md, "Sound").
 
 In-game SFX (`tools/sb6/features/game_sfx.py`): R = `$5900-$6579`
-(SB5's group-3 voice buffer; sequences of SFX `$5E-$60`, a silent END block,
-the SB1 death and enemy samples, part A of the cornered recording) while the
+(SB5's group-3 voice buffer; sequences of SFX `$5E-$5F`, a silent END block,
+the SB1 enemy death sample, part A of the cornered recording) while the
 current song leaves it alone; part B of the recording (1359 bytes) right
 below `$DD00` (echo buffer), or below `$B900` for songs that keep the menu
-SFX. Pointer table entries `$448A-$448F`, priorities `$458D-$458F`,
-instruments 2-3 (`$44D8`) and 31 (`$454C`), directory / tuning entries `$1F`,
-`$3C`, `$3D`. Sizes are printed by the build.
+SFX. Pointer table entries `$448A-$448D`, priorities `$458D-$458E`,
+instruments 3 (`$44DC`) and 31 (`$454C`), directory / tuning entries `$1F`,
+`$3D`. Sizes are printed by the build.
+
+World 1's 1-1 music (`tools/sb6/features/sb1_music.py`, SB1's World 1 song as a Hudson song): sequence
+`$3000-$422A` (song table, header, 6 tracks, 41 subroutines; must end below the SFX tables at `$4400`),
+samples `$8000-$D99C` (7 SB1 samples; must end below the echo buffer at `$DD00`), directory / tuning entries
+0-6. It covers part B of the cornered recording (`$D841`), so while it plays `gs_song` = `SB1M_SONG`
+(R kept, no B: the cornered sound is cut short, as in songs 15, 16, 21, 23-26).
 
 While the title music streams, the stream driver owns `$7000-$B8FF`
 (driver + SFX scripts `$7000-$72FF`, ring `$7300-$B89B`,

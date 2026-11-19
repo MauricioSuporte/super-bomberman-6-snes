@@ -233,10 +233,8 @@ def _loader(dest, n, entry):
     return code
 
 
-def sound(rb, snd_dir, regions, cache_dir, stages=()):
-    """Driver table + upload data for asm/title_music.asm. regions: one list of regions per driver.
-    stages: more drivers after these (features/world1.py stage_drivers), given as pieces (key, data,
-    regions) uploaded one after the other from $0800 (a key already placed is reused) + IPL extra blocks."""
+def sound(rb, snd_dir, regions, cache_dir):
+    """Driver table + upload data for asm/title_music.asm. regions: one list of regions per driver."""
     stub = bytes([0x8F, 0x6C, 0xF2,      # MOV $F2,#$6C
                   0x8F, 0xE0, 0xF3,      # MOV $F3,#$E0: FLG soft reset, mute, no echo writes
                   0x8F, 0xB0, 0xF1,      # MOV $F1,#$B0: IPL ROM on, input ports cleared
@@ -282,39 +280,10 @@ def sound(rb, snd_dir, regions, cache_dir, stages=()):
         assert len(e) == DRV_ENTRY
         table += e
         info.append((drv["name"], size, len([p for p in parts if p[1]])))
-    first_stage = len(table)
-    for drv in stages:     # pointers filled by finish() at the end of the build (the stream banks first)
-        if any(len(d) % 3 for _, d, _ in drv["pieces"]) or len(drv["pieces"]) > 3:
-            raise BuildError(f"{drv['name']}: pieces must be whole triples, at most 3")
-        table += bytes(18) + bytes([drv["ready"][0], drv["ready"][1], drv["song"], drv["echo"],
-                                    drv["sfx"][0], drv["sfx"][1]])
-        info.append((drv["name"], sum(len(d) for _, d, _ in drv["pieces"]) + sum(len(d) for _, d in drv["extra"]),
-                     len(drv["pieces"])))
-    t = rb.alloc("bulk", bytes(table), "map music: driver table (asm/title_music.asm fd_table; World 1 stages from 4)")
+    t = rb.alloc("bulk", bytes(table), "map music: driver table (asm/title_music.asm fd_table)")
     defs = {"FD": "1", "FD_TABLE": f"${t:06X}", "FD_STUB": f"${stub_at:06X}", "MAP_REQ": f"${MAP_REQ:02X}"}
 
-    def finish():
-        placed = {}
-        for i, drv in enumerate(stages):
-            n = sum(len(d) for _, d, _ in drv["pieces"]) // 3
-            lst = _list([(LOADER_AT, _loader(0x0800, n, drv["entry"]))] + list(drv["extra"]),
-                        struct.pack("<H", LOADER_AT))
-            load = rb.alloc(["bulk"] if len(lst) < 256 else ["stream_ec", "stream_ef", "obj_f8", "obj_f9"], lst,
-                            f"stage music: {drv['name']} upload list = loader at $0200"
-                            + "".join(f" + ${a:04X} ({len(d)} bytes)" for a, d in drv["extra"]))
-            parts = []
-            for key, data, regs in drv["pieces"]:
-                if key not in placed:
-                    placed[key] = rb.alloc(regs, data, f"stage music: {key} ({len(data)} bytes)")
-                parts.append((placed[key], len(data) // 3))
-            parts += [(0, 0)] * (3 - len(parts))
-            e = load.to_bytes(3, "little")
-            for a, k in parts:
-                e += a.to_bytes(3, "little") + struct.pack("<H", k)
-            o = off(t) + first_stage + DRV_ENTRY * i
-            rb.d[o:o + 18] = e
-
-    return {"defs": defs, "drivers": info, "finish": finish}
+    return {"defs": defs, "drivers": info}
 
 
 def _dist(c, d):
