@@ -28,7 +28,9 @@ from .bombers import _table
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 ASSETS = os.path.join(ROOT, "assets", "enemies")
+ASM = os.path.join(ROOT, "asm", "sb1_enemies.asm")
 RECORDS = 0xC3005C
+HIT = 0xC34D41                   # enemy hit (JSL gs_enemy, features/game_sfx.py)
 BASE_TYPE = 0x01                 # records copied from type 01's
 ANIM_FIRST, MAP_FIRST = 0x60, 0xE0
 CW, CH, AX, AY = 32, 48, 8, 28   # sheet cell, anchor (top left of the lowest 16x16 piece)
@@ -39,10 +41,16 @@ KINDS = {
     "spring": dict(type=0x02, sheet="sb1_2-1_spring", anims=[[(c + 3 * d, n) for c, n in SPRING] for d in range(4)]),
     "pot": dict(type=0x03, sheet="sb1_2-1_pot", anims=[[(c, 8) for c in range(8)]] * 4),
     "clown": dict(type=0x06, sheet="sb1_2-1_clown", anims=[[(2, 8), (3, 8)], [(0, 8), (1, 8)]] * 2),
+    # SB1 3-6's chameleon: a frog that becomes a copy of a live player's bomber (asm/sb1_enemies.asm)
+    "frog": dict(type=0x05, sheet="sb1_3-6_frog", routine="chameleon",
+                 anims=[[(0, 12), (1, 12), (2, 12), (1, 12), (3, 6), (4, 6), (5, 12), (4, 6), (3, 6)]] * 4),
 }
 # 1-2 (stage $11): SB1 2-1 has 4 spring heads, 2 pots, 2 clown faces (`A2 x y type` roots, world1.chain)
 STAGE_ENEMIES = {0x11: [(7, 3, "spring"), (5, 5, "spring"), (9, 5, "pot"), (5, 7, "clown"), (9, 7, "spring"),
-                        (7, 9, "pot"), (11, 9, "clown"), (13, 5, "spring")]}
+                        (7, 9, "pot"), (11, 9, "clown"), (13, 5, "spring")],
+                 # 1-3 (stage $18): SB1 3-6's 7 chameleons
+                 0x18: [(13, 8, "frog"), (9, 5, "frog"), (9, 9, "frog"), (5, 7, "frog"), (1, 8, "frog"),
+                        (7, 3, "frog"), (11, 11, "frog")]}
 
 
 def _w(rb, a):
@@ -102,12 +110,37 @@ def _kind(rb, name, k, map_id):
 # first byte of each run stays, SB5's LZ reader reads one byte past the archive before it (3: type 01, 1-1's)
 OLD_DATA = [
     ("free_cb_enemies1", 0xCB0462, 2340, 0xA8AC4EF6, "freed SB5 enemy tiles (set 8 archives 4, 5: types 02, 03)"),
-    ("free_cb_enemies2", 0xCB1654, 1139, 0x0F17C3BD, "freed SB5 enemy tiles (set 8 archive 8: type 06)"),
+    ("free_cb_enemies2", 0xCB12E6, 2017, 0x73FD56C8, "freed SB5 enemy tiles (set 8 archives 7, 8: types 05, 06)"),
 ]
+
+
+def code(rb):
+    from .. import asar
+    region = rb.regions["bulk"]
+    hit = bytes(rb.d[off(HIT):off(HIT) + 6])          # JSL gs_enemy (features/game_sfx.py) : NOP NOP
+    if hit[0] != 0x22 or hit[4:] != bytes.fromhex("EA EA"):
+        raise BuildError(f"SB1 enemies: ${HIT:06X} is not game_sfx's JSL ({hit.hex()})")
+    gs = int.from_bytes(hit[1:4], "little")
+    runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}", "GS_ENEMY": f"${gs:06X}",
+                                                "CHAM_TYPE": f"${KINDS['frog']['type']:02X}"})
+    start, end = region.cursor, syms["end"]
+    out = bytearray(rb.d)
+    for o, d in runs:
+        if not (off(start) <= o and o + len(d) <= off(end)):
+            raise BuildError(f"sb1_enemies.asm wrote outside its section at file offset {o:06X}")
+        out[o:o + len(d)] = d
+    rb.alloc("bulk", bytes(out[off(start):off(end)]), "SB1 enemies: chameleon routine (asm/sb1_enemies.asm)")
+    c = syms["cham_hit"]
+    rb.patch(HIT, hit, bytes([0x22, c & 0xFF, c >> 8 & 0xFF, c >> 16]) + hit[4:],
+             "enemy hit: a chameleon's own palette slot back first (asm/sb1_enemies.asm cham_hit)")
+    return syms
 
 
 def apply(rb):
     """Archives, palettes, records, tables; returns the asm defines for asm/bombers.asm."""
+    syms = code(rb)
+    for name, start, size, crc, purpose in OLD_DATA:      # (the new archives go there first)
+        rb.free_old(name, start, size, crc, purpose)
     arc_tab = 0xE30000 + _w(rb, 0xC01C96 + 2 * 8)
     pal_tab = 0x810000 + _w(rb, 0xC00379 + 2 * 8)
     base_rec = bytes(rb.d[off(RECORDS + 16 * (BASE_TYPE - 1)):off(RECORDS + 16 * (BASE_TYPE - 1)) + 15])
@@ -119,7 +152,7 @@ def apply(rb):
         arc_id, pal_id = old[0], old[1]
         # archive (set 8): same VRAM / flags, new size and source
         e = arc_tab + 8 * (arc_id - 1)
-        a = rb.alloc("bulk", lz.compress(built["arc"]),
+        a = rb.alloc([n for n, *_ in OLD_DATA] + ["bulk"], lz.compress(built["arc"]),
                      f"SB1 enemy {name}: OBJ tiles (set 8 archive {arc_id}, LZ)")
         rb.patch(e + 2, bytes(rb.d[off(e + 2):off(e + 7)]), struct.pack("<H", len(built["arc"])) + a.to_bytes(3, "little"),
                  f"SB1 enemy {name}: set 8 archive {arc_id}")
@@ -135,14 +168,15 @@ def apply(rb):
         # record: type 01's, with this kind's archive, palette, animations
         anim = ANIM_FIRST + len(all_scripts)
         new = bytes([arc_id, pal_id]) + base_rec[2:4] + bytes([anim]) + base_rec[5:]
+        if "routine" in k:                                   # own actor routine (it runs $C3:4B5A itself)
+            r = syms[k["routine"]]
+            new = new[:9] + bytes([r & 0xFF, r >> 8 & 0xFF, r >> 16]) + new[12:]
         rb.patch(rec, old, new, f"SB1 enemy {name}: type ${k['type']:02X} record (type 01's walk, own pictures)")
         all_maps += built["maps"]
         all_scripts += built["scripts"]
         info[name] = dict(type=k["type"], tiles=built["tiles"], frames=len(built["maps"]), colors=len(built["colors"]))
     if MAP_FIRST + len(all_maps) > 0x100 or ANIM_FIRST + len(all_scripts) > MAP_FIRST:
         raise BuildError("SB1 enemies: too many mappings / animations")
-    for name, start, size, crc, purpose in OLD_DATA:
-        rb.free_old(name, start, size, crc, purpose)
     mt = _table(rb, all_maps, "SB1 enemies: T 7 mappings from $E0")
     at = _table(rb, all_scripts, "SB1 enemies: T 7 animations from $60")
     defs = {"ENMAP": f"${mt >> 16:02X}", "ENMAPBASE": f"${(mt - 2 * (MAP_FIRST - 1)) & 0xFFFF:04X}",

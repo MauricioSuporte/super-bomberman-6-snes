@@ -625,7 +625,16 @@ script accumulator (`61` = add).
   (archives 4, 5, 8 and palettes 2, 3, 6 of set 8 rewritten; T 7
   animations `$60+` and mappings `$E0+` in `objmap`, read through
   `enemy_anim` / `enemy_map` in `asm/bombers.asm`); 1-2 (`$11`) places 4
-  springs, 2 pots, 2 clowns (`STAGE_ENEMIES`).
+  springs, 2 pots, 2 clowns (`STAGE_ENEMIES`). Type 05 = SB1 3-6's
+  chameleon (1-3 = `$18`, 7 of them): record routine `chameleon`
+  (`asm/sb1_enemies.asm`) runs `$C3:4B5A`, then alternates frog (150
+  frames) / copy of a live player (240): the object gets the player
+  object's resolved mapping (`$7E:2EEA`/`$2F4A` + obj), tile base `$073F`
+  and slot `$06DF`, its own script held (`$07A0` = `$FF`). The hit at
+  `$C3:4D41` can come from outside the actor routine and releases
+  `$06DF`'s slot: `cham_hit` (JSL there, then `gs_enemy`) puts the own slot
+  back first. Actor routine pointer = record bytes 9-11 (called through
+  `JML [$A5]`, X = actor, M/X 8-bit, RTL).
 * Stage field (BG2), type `02` script `2A n 27 n 0A map theme` (set 4):
   op `0A` (`$C2:0BED`, `$1B7E` map, `$1B7D` theme; `$C0:3550`/`$357B`).
   Map m = 16 x 13 metatile ids (LZ, row 13 = 0) at the first 24-bit
