@@ -260,5 +260,24 @@ def build(rb, name, spec):
     return dict(metatiles=count, tiles=used, palettes=len(pals), approx=approx, bytes=len(packed))
 
 
+# SB5's ZONE1 stage data nothing reads any more: set 4 archives 2 (themes 2: stages $0F/$10, rebuilt above), 4
+# (theme 4: $13/$14, not played) and 5 (theme 5: $15-$17, rebuilt) and their palettes 2, 4, 5 (also named set
+# 0 archives $F7/$F9/$FA, set 3 $98/$9A/$9B, set 6 $9B/$9D/$9E, set 8 $D3/$D5/$D6: no script or native load
+# names them), maps 2-4 and 6-11 (stages $0E/$0F/$10/$12-$17; map 5 is 1-2's, 1 is 1-1's; each map is named
+# only by its list entry at $D0:A29A+). The first byte of the archive and map ranges stays: SB5's LZ
+# reader ($C0:1D46) reads one command byte past the stream before it (1-1's / 1-2's data).
+OLD_DATA = [
+    ("free_cd_stage2", 0xCD0885, 3400, 0x89DCE6C4, "freed SB5 stage tiles (set 4 archive 2, LZ)"),
+    ("free_cd_stage45", 0xCD1F39, 4802, 0x00A7340C, "freed SB5 stage tiles (set 4 archives 4, 5, LZ)"),
+    ("free_81_stage2", 0xC1ACE8, 164, 0x6070E93D, "freed SB5 stage palette (set 4 palette 2), bank $81"),
+    ("free_81_stage45", 0xC1AE10, 264, 0xDDD55F25, "freed SB5 stage palettes (set 4 palettes 4, 5), bank $81"),
+    ("free_d0_maps1", 0xD0A550, 167, 0x753E61CC, "freed SB5 stage maps 2-4 (LZ)"),
+    ("free_d0_maps2", 0xD0A627, 261, 0x0A052514, "freed SB5 stage maps 6-11 (LZ)"),
+]
+
+
 def apply(rb):
-    return {name: build(rb, name, spec) for name, spec in STAGES.items()}
+    out = {name: build(rb, name, spec) for name, spec in STAGES.items()}
+    for name, start, size, crc, purpose in OLD_DATA:
+        rb.free_old(name, start, size, crc, purpose)
+    return out
