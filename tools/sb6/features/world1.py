@@ -323,7 +323,7 @@ def code(rb, arena, anim_start=0, clown=None):
 KNIGHT_STAGE = 0x17      # 1-5 (SB1's 6-4): its knights (enemy type $08) take no hit from the front
 # enemies kept (stage: types; the other type 04 roots that place an enemy `A2 x y type` go): 1-5 = SB1's 6-4,
 # its two knights only
-KEEP_ENEMIES = {0x17: {0x08}}
+KEEP_ENEMIES = {0x17: {0x08}, 0x10: {0x04}}      # 1-5: SB1 6-4's knights; 1-4: SB5's tanks (SB1 4-4 has them)
 
 
 # script ops left out (stage: {type: [op prefixes]}): 1-4 is SB1's 4-4 now (features/sb1_stages.py), without
@@ -367,7 +367,8 @@ def chain(rb):
         for r, entries in roots:
             if any(t == 0x0D for t, _ in entries):
                 continue
-            if sb1_enemies.stage_enemies(stage) is not None and any(t == 0x04 and rb.d[off(a)] == 0xA2
+            if sb1_enemies.stage_enemies(stage) is not None and any(t == 0x04 and rb.d[off(a)] == 0xA2 and rb.d[off(a) + 3]
+                                                                   not in KEEP_ENEMIES.get(stage, ())
                                                                    for t, a in entries):
                 continue                      # replaced below
             if stage in KEEP_ENEMIES and any(t == 0x04 and rb.d[off(a)] == 0xA2 and rb.d[off(a) + 3]

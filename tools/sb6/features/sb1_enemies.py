@@ -32,7 +32,7 @@ ASM = os.path.join(ROOT, "asm", "sb1_enemies.asm")
 RECORDS = 0xC3005C
 HIT = 0xC34D41                   # enemy hit (JSL gs_enemy, features/game_sfx.py)
 BASE_TYPE = 0x01                 # records copied from type 01's
-ANIM_FIRST, MAP_FIRST = 0x60, 0xE0
+ANIM_FIRST, MAP_FIRST = 0x60, 0xD6   # (stock T 7: animations 1-$27, mappings 1-$D5)
 CW, CH, AX, AY = 32, 48, 8, 28   # sheet cell, anchor (top left of the lowest 16x16 piece)
 PIECE_X, PIECE_Y = -8, -9        # where SB5 draws a 16x16 enemy (type 05) relative to the object
 # kind: SB5 type slot, sheet, animations right / down / left / up as [(cell, frames), ...]
@@ -48,6 +48,11 @@ KINDS = {
     # on BG2 from assets/enemies/sb1_2-8_clown.png (asm/sb1_enemies.asm `clown`); type 07 was only in SB5
     # stages $18-$1B (1-3's enemies are SB1's now)
     "clownbody": dict(type=0x07, sheet="sb1_2-8_body", routine="clown", anims=[[(0, 60)]] * 4),
+    # SB1 4-4's UFO and bomb robot (1-4, next to SB5's tanks): types $35 / $36, placed by no SB5 stage, which
+    # share set 8 archive and palette $31 (so do the two kinds: one sheet, its colors merged to 15)
+    "ufo": dict(type=0x35, sheet="sb1_4-4_ufobot", anims=[[(0, 8), (1, 8), (2, 8), (3, 8)]] * 4),
+    "robot": dict(type=0x36, sheet="sb1_4-4_ufobot", anims=[[(4, 10), (5, 10)], [(6, 10), (7, 10)],
+                                                              [(4, 10), (5, 10)], [(4, 10), (5, 10)]]),
 }
 CLOWN = ("sb1_2-8_clown", "sb1_2-8_clown_closed")   # BG2 pictures, mouth open / closed (112 x 92, same box)
 CLOWN_CENTER = (56, 44)          # the body's cell center in the picture
@@ -58,6 +63,8 @@ STAGE_ENEMIES = {0x11: [(7, 3, "spring"), (5, 5, "spring"), (9, 5, "pot"), (5, 7
                  # 1-3 (stage $18): SB1 3-6's 7 chameleons
                  0x18: [(13, 8, "frog"), (9, 5, "frog"), (9, 9, "frog"), (5, 7, "frog"), (1, 8, "frog"),
                         (7, 3, "frog"), (11, 11, "frog")],
+                 # 1-4 (stage $10): SB1 4-4's 4 UFOs and its robot, with SB5's 2 tanks (world1.KEEP_ENEMIES)
+                 0x10: [(3, 5, "ufo"), (11, 5, "ufo"), (3, 9, "ufo"), (11, 11, "ufo"), (7, 6, "robot")],
                  # 1-7 (stage $68, boss): the clown instead of SB5's rival
                  0x68: [(7, 4, "clownbody")]}
 
@@ -260,11 +267,24 @@ def apply(rb):
     pal_tab = 0x810000 + _w(rb, 0xC00379 + 2 * 8)
     base_rec = bytes(rb.d[off(RECORDS + 16 * (BASE_TYPE - 1)):off(RECORDS + 16 * (BASE_TYPE - 1)) + 15])
     all_maps, all_scripts, info = [], [], {}
+    sheets = {}                                          # sheet -> (its first mapping, archive, palette)
     for name, k in KINDS.items():
-        built = _kind(rb, name, k, MAP_FIRST + len(all_maps))
         rec = RECORDS + 16 * (k["type"] - 1)
         old = bytes(rb.d[off(rec):off(rec) + 15])
         arc_id, pal_id = old[0], old[1]
+        if k["sheet"] in sheets:                         # a second kind on the same sheet: its maps, archive, palette
+            first, a0, p0 = sheets[k["sheet"]]
+            if (a0, p0) != (arc_id, pal_id):
+                raise BuildError(f"SB1 enemy {name}: shares {k['sheet']} but not its archive / palette")
+            built = _kind(rb, name, k, first)
+            anim = ANIM_FIRST + len(all_scripts)
+            new = bytes([arc_id, pal_id]) + base_rec[2:4] + bytes([anim]) + base_rec[5:]
+            rb.patch(rec, old, new, f"SB1 enemy {name}: type ${k['type']:02X} record (type 01's walk, {k['sheet']})")
+            all_scripts += built["scripts"]
+            info[name] = dict(type=k["type"], tiles=built["tiles"], frames=0, colors=len(built["colors"]))
+            continue
+        sheets[k["sheet"]] = (MAP_FIRST + len(all_maps), arc_id, pal_id)
+        built = _kind(rb, name, k, MAP_FIRST + len(all_maps))
         # archive (set 8): same VRAM / flags, new size and source
         e = arc_tab + 8 * (arc_id - 1)
         a = rb.alloc([n for n, *_ in OLD_DATA] + ["bulk"], lz.compress(built["arc"]),

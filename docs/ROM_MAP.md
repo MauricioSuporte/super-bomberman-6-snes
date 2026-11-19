@@ -687,9 +687,12 @@ script accumulator (`61` = add).
 * Hack (`features/sb1_enemies.py`, `tools/sb1_enemy_assets.py`): types 02,
   03, 06 = type 01's record with SB1 2-1's spring head / pot / clown face
   (archives 4, 5, 8 and palettes 2, 3, 6 of set 8 rewritten; T 7
-  animations `$60+` and mappings `$E0+` in `objmap`, read through
+  animations `$60+` and mappings `$D6+` in `objmap`, read through
   `enemy_anim` / `enemy_map` in `asm/bombers.asm`); 1-2 (`$11`) places 4
-  springs, 2 pots, 2 clowns (`STAGE_ENEMIES`). Type 05 = SB1 3-6's
+  springs, 2 pots, 2 clowns (`STAGE_ENEMIES`). 1-4 (`$10`) keeps SB5's 2
+  tanks (type 04, as SB1 4-4) and adds SB1 4-4's 4 UFOs and bomb robot:
+  types `$35` / `$36` (placed by no SB5 stage; they share set 8 archive and
+  palette `$31`, so the two kinds share one sheet, colors merged to 15). Type 05 = SB1 3-6's
   chameleon (1-3 = `$18`, 7 of them): record routine `chameleon`
   (`asm/sb1_enemies.asm`) runs `$C3:4B5A`, then alternates frog (150
   frames) / copy of a live player (240): the object gets the player
