@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, picker, title, title_music, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, title, title_music, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -75,6 +75,7 @@ def main():
     world_map.free_old_zones(rb)     # SB5's ZONE1/ZONE2 data, replaced by the SB1 / SB2 maps
     boot_logo.free_old(rb)           # the Hudson logo's tiles and arrangement (boot logo in set 5)
     title.free_old(rb)               # SB5's title scene / logo / (c) arrangements (animated title)
+    options.free_old(rb)             # SB5's Options screen tiles / arrangements (OPTIONS is a title submenu)
 
     boot = boot_logo.convert(os.path.join(ROOT, "assets", "HU3DSON LOGO.png"))
     print(f"boot logo: {boot['count']} tiles, palette error {boot['error']:.0f}")
@@ -145,6 +146,8 @@ def main():
 
     coop.apply(rb, louie["louie_tick"], pick)
     print("co-op: Normal Game for 1-4 players (multitap on port 2)")
+    options.apply(rb, title.SET)
+    print("options: title submenu (DISCORD -> QR code); SB5's Options, Sound Test and Password screens freed")
     for ch in info["chars"] if info else []:
         n = ch["notes"]
         print(f"char{ch['char']}: Bomberman's layout, {n['edited']} animations redrawn in {ch['strips']} KB of tiles, "

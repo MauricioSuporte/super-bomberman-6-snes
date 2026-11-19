@@ -25,6 +25,7 @@ from ..romlib import off
 from .. import asar
 from ..rombuild import BuildError
 from . import title_anim
+from . import options
 from .title_text import text_tiles
 
 ASM = os.path.join(os.path.dirname(__file__), "..", "..", "..", "asm", "title_anim.asm")
@@ -223,6 +224,12 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None, cache_dir=Non
     dig_tiles, dig_top, dig_bottom = text_tiles("34", VERSION_TILE + len(ver_tiles) // 16,
                                                 MENU_ATTR, art=True)
     ver_tiles += dig_tiles
+    # OPTIONS submenu: DISCORD and the QR code's 16 tiles (features/options.py), after them.
+    opt_tiles, discord, qr = options.glyphs(os.path.join(asset_dir, "..", "options"),
+                                            VERSION_TILE + len(ver_tiles) // 16)
+    ver_tiles += opt_tiles
+    if VERSION_TILE + len(ver_tiles) // 16 > 0x180:
+        raise BuildError("title: BG3 glyphs pass tile $17F (VRAM $5C00)")
     ver_addr = rb.alloc("bulk", ver_tiles, f"title: BG3 glyphs for '{version_text}' and 3/4 (2bpp)")
 
     # Archive table for set 5 (bank $E3): [vram, size, src24, flags]; flag $80 = raw,
@@ -252,12 +259,13 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None, cache_dir=Non
     # 1 and 2 were the static logo and scene (kept as copies of 3: scripts use
     # the numbers of 3-5).
     arr3 = arrangement(len(text), 2, (32 - len(text)) // 2, VERSION_ROW, ver_top + ver_bottom)
-    arrs = [arr3, arr3, arr3, players_menu(rb, dig_top, dig_bottom)]
-    if boot:
-        arrs.append(arrangement(32, 28, 0, 0, boot["words"]))
+    arrs = [arr3, arr3, arr3, players_menu(rb, dig_top, dig_bottom),
+            arrangement(32, 28, 0, 0, boot["words"]) if boot else arr3]
+    arrs += options.arrangements(arrangement, discord, qr)       # 6 DISCORD, 7 QR code
     blob = bytearray(2 * len(arrs)) + b"".join(arrs)
     arr_table = rb.alloc("bulk", bytes(blob),
-                         "set 5 arrangement table: 3 (version, BG3), 4 (1-4 PLAYER GAME, BG3), 5 (boot logo)")
+                         "set 5 arrangement table: 3 (version, BG3), 4 (1-4 PLAYER GAME, BG3), 5 (boot logo), "
+                         "6 (DISCORD), 7 (QR code)")
     pos = arr_table + 2 * len(arrs)
     for i, a in enumerate(arrs):
         blob[2 * i:2 * i + 2] = rb.le16(pos & 0xFFFF)

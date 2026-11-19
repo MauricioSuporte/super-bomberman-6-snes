@@ -35,6 +35,12 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$E2:CAF3-$E2:CBE7` | 245 B | `free_e2_boot`: was the Hudson boot logo's arrangement (set 4 `$D3`). Unused. |
 | `$C7:4000-$C7:FFFF`, `$C8:0000-$C8:FFFF`, `$C9:0000-$C9:7FFF` | 144 KB | `free_c7_sheets`, `free_c8_sheets`, `free_c9_sheets`: were SB5's playable characters' OBJ sheets 1-20 (raw 4bpp, set 0 archives 1-`$14`), freed by `bombers.free_stock_sheets` once every character's `[sheet, row]` table names only SB6 sheets (it fails the build otherwise, or if `assets/bomberman/sheet.png` edits them). Boss rivals use the same per-character tables. Louie sheets follow at `$C9:8000`. Unused. |
 | `$D6:A3ED-$D6:CCA6` | 10426 B | `free_d6`: was SB5's two title characters (set 3 OBJ archives `$61`/`$62`, LZ), freed by `title.free_old`; the byte at `$D6:A3EC` stays (the decompressor of archive `$60`, the menu cursor, reads it). Unused. |
+| `$C7:00DE-$C7:0AB1` | 2516 B | `free_c7_options`: were SB5's Options (mode `$0B`), Sound / Sound Test and Password (mode 7) scripts and tables, freed by `options.free_old` (the mode table entries now point at the title's record). Bank `$C7`: fit for scripts. Unused. |
+| `$E3:0000-$E3:127F` | 4736 B | `free_e3_options`: was the Options screen's tiles (set 3 archive `$92`, raw). Bank `$E3`, so it can also hold archive tables. Unused. |
+| `$D4:9DFE-$D4:AFA8` | 4523 B | `free_d4_options`: was the Options / Password background (set 3 archive `$25`, LZ); its first byte `$D4:9DFD` stays (archive `$24`'s decompressor reads it). Unused. |
+| `$E1:9DD9-$E1:A051`, `$E1:C03F-$E1:CC96` | 3793 B | `free_e1_options`, `free_e1_options2`: were the Options frame / menu / Stereo-Mono / Sound Test arrangements (set 6 `$C3`, `$DA-$DD`). Unused. |
+| `$E2:C3FB-$E2:C7A2` | 936 B | `free_e2_password`: were the Password arrangements (set 4 `$C6`/`$C7`). Unused. |
+| `$D9:D641-$D9:D795`, `$DA:CEFE-$DA:CF29` | 385 B | `free_d9_password`, `free_da_password`: were the Password music's sequence (sound set `$41`, music id `$1B`) and song `$1A`'s upload list. Unused. |
 | `$D8:FB02-$D8:FFEB` | 1258 B | `free_d8`: was SB5's title song sequence (sound set `$28`), freed by `title_music.free_old`, which also turns the title's `FF A0 02` music loads into skips. Unused. |
 | `$DA:C512-$DA:C585` | 116 B | `free_da`: was song 1's upload list (sample directory / tuning). Unused. |
 | `$DB:43FA-$DB:539E`, `$DB:66EC-$DB:84A0` | 11610 B | `free_db_a`, `free_db_b`: were samples 4, 5, 9 and `$0A`, used by song 1 only (its other samples are shared). Unused. |
@@ -45,14 +51,18 @@ each feature lists what it replaced in an `OLD_DATA` table (`world_map.OLD_ZONE_
 check every table that can name the data (archive, palette and arrangement windows of every set, the
 stock OBJ sheet table, the sound set / song lists), the script ops and native callers that load it
 (docs/ROM_MAP.md "Finding who loads a graphics item"), then run `tools/mesen/loads.lua` with
-`LOADS_WATCH` set to the freed ranges (it logs CPU reads of every mirror) through the title, Options,
-the attract demo, the Normal Game, the world map zones and a stage: it must report 0 reads.
+`LOADS_WATCH` set to the freed ranges (it logs CPU reads of every mirror) through the title (with the OPTIONS
+submenu and QR), the attract demo, the Normal Game, the world map zones and a stage: it must report 0 reads.
 Not freed, and why (checked 2026-11-16): SB5's intro (mode `$A9`, skipped since the boot logo goes to
 mode 2) loads set 3 archives 3-6 / `$57-$5F`, palettes 4-7 / `$32-$3A`, sets 13-14 palettes, set 4
 arrangement 1 and set 6 `$EB-$EF`, but the same items are loaded by scripts at `$C6:6Cxx-$C6:6Fxx` and
 `$C6:EAxx-$C6:EFxx` (another scene, probably the ending) or through object data that was not traced;
 the Hudson logo's palette (set 3 `$2B`, 68 bytes in bank `$81`) and the title characters' palette
-(`$3C`) for the same reasons; the stock menu palettes outside mode 3 / the Normal Game picker. Freed
+(`$3C`) for the same reasons; the stock menu palettes outside mode 3 / the Normal Game picker. Options / Password (2026-11-18, `options.py`), kept because other screens load the same
+ids: set 3 archives `$1D`, `$22`, `$26` (the Password characters; a Battle script loads `27 26` too), `$66`,
+palettes `$1B`, `$1C`, `$41`, the Password fade palettes (set 13 `$BB-$C3`, ids computed like the
+`$C4-$D5` fades of other screens), the Password song's samples (shared with songs 1, 9, `$0C`, `$0E`,
+`$14`, `$19`) and the menu SFX. Freed
 2026-11-18 (owner's call): SB5's title song and characters, and the character sheets 1-20, which
 boss rivals would also show (they will be replaced).
 `tools/mesen/loads.lua` also logs OBJ sheet pages (`sheet`), sound set and song uploads.

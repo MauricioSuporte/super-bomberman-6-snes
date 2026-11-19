@@ -123,13 +123,13 @@ script accumulator (`61` = add).
   drops, `asm/title_music.asm` `pre_start`) when the intro is going to play.
   Start or A (raw pad words `$19`/`$1B`; the actions in `$2C+` are not
   decoded during the intro) skips to the finished scene. Checked in Mesen:
-  VRAM after the intro equal to the build's simulation, skip, Options and
-  back, Normal Game to stage 1, attract demo and back.
+  VRAM after the intro equal to the build's simulation, skip, the OPTIONS
+  submenu and QR, Normal Game to stage 1, attract demo and back.
 * Title flow in mode 2: task 5 runs the handlers (forced blank from the end
   of the boot logo's fade), fade-in over 16 frames, then the task at
   `$C7:1847` (`06 04`, `42 02 00` music, cursor Y, `24 D3 1A C7` PUSH START
-  loop) - the hack makes it wait for the intro first. Options is mode `$0B`,
-  the Normal menu 3, the attract demos `$0D`/`$74`; the mode byte changes
+  loop) - the hack makes it wait for the intro first. SB5's Options was mode
+  `$0B` (gone, below), the Normal menu 3, the attract demos `$0D`/`$74`; the mode byte changes
   when the fade-out starts.
 * Bomber palette ids: the cartridge's set 0 ends at `$59`; the SB6
   palettes are ids `$5A`+ (`OWN_ID`, `pal_lookup` / picker `upload`), room
@@ -141,7 +141,7 @@ script accumulator (`61` = add).
   `$08BF` X, `$08C0` Y, `$08C1` tile, `$08C2` attributes `$20`), OBJ
   palette 0 (CGRAM 128-143), tile 0 at rest; after an accepted option it
   hops: tiles `02 04 02 06` and Y +1/-5, a 25-frame loop that goes on until
-  the menu changes. The Options screen has its own hand cursor. SB6
+  the menu changes. SB6
   (`cursor` in `asm/title_anim.asm`, tables from `cursor_tables` in
   `features/title.py`, art `assets/title/Cursor.png`) sends the fan game's
   pose (4 tiles, 63 poses = 7 faces x 9 heads) to whichever of the frames
@@ -159,8 +159,8 @@ script accumulator (`61` = add).
   before the music upload (which holds the main loop ~0.5 s), waiting six
   frames (`FF 1A FC`) so the game's tile queue and the upload do not share
   an NMI.
-* Script tasks: a script runs to its end inside one frame - there is no
-  wait op (`05/06/07/08 n` set / clear / toggle / test flag n of
+* Script tasks: a script runs to its end inside one frame unless it sleeps
+  with `FD 0E n 00 00` (n frames; see the title menu below) (`05/06/07/08 n` set / clear / toggle / test flag n of
   `$7E:2900`). The interpreter loop is `$C2:0222`; after every op the next
   op's address is saved in `$0C87/$0CAF/$0CD7 + task`; `00` returns from a
   `24` call and, at depth -1 (`$0CFF + task`), ends the task. The task
@@ -171,6 +171,32 @@ script accumulator (`61` = add).
   pointer and continues), sets S = `$75` - 3 and `RTL`s to the runner
   (`title_op` `.again`). Looping inside the script instead holds the whole
   main loop (nothing else runs, e.g. the stream feeder).
+* Mode table `$C6:0000`: mode n -> `$C6:0000 + 3*(n-1)` = record of 3-byte
+  pointers (handler list, task scripts, label tables, `00` end; mode 2 =
+  `$C7:177A`: handlers `$C7:1786`, task `$C7:183E`, labels `$C7:1AA4`). Mode 7
+  (Password) was `$C7:08BD`, mode `$0B` (Options) `$C7:00DE`.
+* Script op `FD 0E n 00 00` puts the task to sleep n frames (SB5's wait loop
+  `$C7:1B0B`, `$103A` frames, `FD 0E 01` at `$C7:1B36`): a script may wait
+  this way; an accepted title item waits 64 frames there (`$C7:1AEA`) with
+  the cursor hopping, then reaches the menu checks at `$C7:18A3`.
+* Title menu (task `$C7:1872`, every frame): `$1036` menu (0 NORMAL / BATTLE
+  / OPTIONS, 1 players, 2 unused in the title), `$1032` item, `$1037` last
+  item (set per menu at `$C7:19D3`). A/Start: `$C7:189C` SFX 4 + `$C7:1AEA`,
+  then menu 0 item 0 -> players menu (`$C7:18A3`), `$C7:18D5` menu 0 item 2
+  -> mode `$0B`, `$C7:18ED`.. the other menus (menu 0 item 1 -> Battle, mode
+  4 at `$C7:1941`), `$C7:19A2` B (menus 1/2 -> back block `$C7:19B4`),
+  `$C7:19F7`/`$C7:1A47` down/up. Attract demo: native task `$C5:6ECA`,
+  30 x 64 frames without a new action/direction (`$C5:6F2C`/`$6F3B`), then
+  `$C5:6EF3` picks a demo mode from `$C5:6F1C`.
+* Hack, OPTIONS submenu (`tools/sb6/features/options.py`): `$C7:18D5` calls
+  `s_confirm` (menu 0 item 2: menu 3 = DISCORD, set 5 arrangement 6; menu 3:
+  menu 4 + QR code = set 5 arrangement 7, 20x20 BG3 tiles of 2x2 modules
+  over the title, BG3 window shadow `$0307` off while it is up, any new
+  button closes it), `$C7:19AD` calls `s_back` (menu 2 as before, menu 3
+  -> main menu with the cursor on OPTIONS). `$C5:6ECA`'s input test reports
+  input while mode 2 shows menu 3/4 (no attract demo during a QR scan).
+  SB5's Options / Sound Test / Password screens are freed; mode table
+  entries 7 and `$0B` point at mode 2's record.
 * Intro path (mode `$A9`) setup script `$C6:FC93`; title without intro (mode
   2) handler list `$C7:1783` (2 = `$C7:17D1` load, 4 = `$C7:17DE` OBJ
   archives, 6 = `$C7:17E3` draw).
@@ -242,7 +268,7 @@ script accumulator (`61` = add).
   ~1011 * 2^((n-24)/12).
 * Script music load `$C0:1171` uploads its song unconditionally.
 * Title flow: `0401` (sets), `$C0:1171` song 1, `0002` = play title music.
-  Options: `0204` → `1001` → `0401` → song 1 → `0002`. The song 1 load is
+  SB5's Options (gone): `0204` → `1001` → `0401` → song 1 → `0002`. The song 1 load is
   script `FF A0 02` (op `$A0` = `$C0:1171`, music id 2 = set `$28` + song 1;
   table `$80:8655` + 3 * id: [set, song, ?]) at `$C7:17B8` (title, also after
   Options) and `$C6:FCFF` (intro path); the hack turns both into `45 01`
@@ -341,6 +367,9 @@ script accumulator (`61` = add).
 | `$85:F69B + 3*$48` | set `$48` pointer | group-3 set of SB5's death voice -> upload list of R (in-game SFX) |
 | title scripts | see `tools/sb6/features/title.py` | SB6 title graphics |
 | `$C7:1847` | `06 04 42 02 00 5B A0 60 34 10` | title: music and PUSH START wait for the intro |
+| `$C7:18D5`, `$C7:19AD` | OPTIONS -> mode `$0B`; B test of menu 2 | OPTIONS submenu / DISCORD QR (`tools/sb6/features/options.py`) |
+| `$C5:6ECA` | `20 2C 6F` | attract demo timer: no demo while the OPTIONS submenu / QR is up |
+| `$C6:0012`, `$C6:001E` | modes 7 / `$0B` | mode table: the freed Password / Options screens lead to the title's record |
 | co-op | see `tools/sb6/features/coop.py` | 3/4-player Normal Game (below) |
 | `$C7:10E2`, `$C7:0E27` | `24 4C 12 C7` | file confirm -> character selection (`asm/picker.asm`, below) |
 | `$C2:069B` | `7C 46 C1` | script op `FF 1A nn`: nn >= `$F0` runs `pick_op` |

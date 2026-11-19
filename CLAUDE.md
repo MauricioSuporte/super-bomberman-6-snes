@@ -30,7 +30,8 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 * `tools/sb6/features/<feature>.py` — one feature per module, `apply(rb, …)`.
 * Native code called from a script: op `FF 1A nn` with nn >= `$F0`
   (`pick_op` in `asm/picker.asm`, `$F0-$F4` its own); add new values there (`$F5` is the
-  world map's, `$F8-$FB` the animated title's). Scripts cannot wait: a native op that must wait puts
+  world map's, `$F8-$FB` the animated title's). Scripts cannot spin in a loop (SB5's `FD 0E n 00 00` sleeps n frames, used by
+  `features/options.py`): a native op that must wait puts
   its task to sleep (`title_op` `.again`, docs/ROM_MAP.md "Script tasks").
 * Title scene (BG1/BG2): `features/title_anim.py` builds pictures, palettes,
   tile slots and per-frame job tables from `assets/title/layout.json`
@@ -59,6 +60,10 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   edited ones get new tiles. Palettes equal to his share his ids `$5A + n`.
   Animations over 32 tiles are streamed pose by pose (<= 16 tiles each,
   double-buffered page, `bomber_stream` / `stream_nmi` in asm/bombers.asm).
+* Title OPTIONS: `features/options.py` turns it into a title submenu (DISCORD ->
+  QR code from `assets/options/discord_qr.png`, BG3 set 5 arrangements 6-7);
+  new options go there (menu `$1036` 3, QR/modal 4). SB5's Options, Sound
+  Test and Password screens are freed (modes `$0B`/7 lead to the title).
 * Character select (Normal Game): `features/picker.py` + `asm/picker.asm`
   redraw SB5's Battle picker like the SB6 fan game's SkinSelect: SB5's
   script sets the screen up, then its task sleeps in `pk_loop` while
@@ -92,8 +97,9 @@ input via `emu.setInput` in the `inputPolled` event. The boot logo (mode 1)
 shows at frames ~56-410, then the hack goes straight to the title (mode 2,
 SB5's intro is skipped; the title's own intro runs at frames ~450-670,
 music and pads from ~730); an attract demo starts ~36 s later. Old scripts that
-wait for frame ~5650 still work (the title is already up). Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), Options →
-back restarts it, Normal Game switches to the save menu music (`$010A` = 2,
+wait for frame ~5650 still work (the title is already up). Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), OPTIONS opens
+the DISCORD submenu / QR on the title (`features/options.py`; SB5's Options
+and Password screens are gone), Normal Game switches to the save menu music (`$010A` = 2,
 voice 7 pitch `$0600`, through the picker), the stage releases it (Hudson PC
 `$08xx`, stage music).
 
