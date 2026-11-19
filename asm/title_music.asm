@@ -192,6 +192,11 @@ endif
 ; !SB1M_SB5SONG, loaded with its sequence while the stage loads) are replaced
 ; by SB1's song + SB5's jingles, so music id 6 later only sends command 1. As song_hook does for a song over the menu SFX samples: SB5's
 ; SFX definitions back; game_sfx's gs_song = SB1M_SONG (R kept, no part B).
+; The list also overwrites set !SB1M_SB5SET's sequence, which Hudson still
+; counts as loaded ($03CE): !SB1M_FLAG = $A5 says so, and the next upload of
+; song !SB1M_SB5SONG on another stage first sends that set again ($C0:1171
+; skipped it). $03CE itself stays, or music id 6 would reload the set over
+; the list.
 sb1m_song:
     phy
     phx
@@ -210,6 +215,23 @@ sb1m_song:
     inx
     bra -
 .none:
+    lda.l !SB1M_FLAG
+    cmp #$A5
+    bne .sb5
+    lda #$00
+    sta.l !SB1M_FLAG
+    lda.l $0003CE
+    cmp #!SB1M_SB5SET
+    bne .sb5
+    phb
+    pha
+    lda #$80
+    pha
+    plb
+    pla
+    %c0call($C00E31)        ; Hudson's set upload (A = set)
+    plb
+.sb5:
     pla
 .orig:
     asl
@@ -241,6 +263,8 @@ sb1m_song:
     jsl !GS_SONG            ; in-game SFX: R, tables, the cornered sample's entry
     stz $03D1
     %c0call($C00F35)        ; close it
+    lda #$A5                ; set !SB1M_SB5SET's sequence is gone from ARAM
+    sta.l !SB1M_FLAG
     plb
     plp
     jml $C00F10             ; PLX / PLY / RTS of the original

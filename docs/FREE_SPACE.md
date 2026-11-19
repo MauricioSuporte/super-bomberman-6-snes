@@ -30,6 +30,7 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$C1:985E-$C1:99A5` | 328 B | `free_81`: was SB5's ZONE1/ZONE2 palettes (set 3 `$10`/`$11`, also set 6 `$3E`/`$3F`); bank `$81`, so it can hold palettes. Unused. |
 | `$C5:E22D-$C5:EB44` | 2328 B | `free_c5_sheets`: was the stock OBJ sheet table (`$85:E22D`, 291 entries); its only reader `$C5:6B8C` reads the copy in the OBJ banks (`tools/sb6/objsheets.py` frees it in `finish()`, so it is declared after the bomber features have allocated). Also addressable as `$85:E22D`, i.e. fit for data that must sit in a `$80-$BF` bank (sprite mappings). Unused. |
 | `$D5:9993-$D5:A544` | 2994 B | `free_d5`: was the Hudson boot logo's tiles (set 3 archive `$46`, LZ; same entry as set 0 `$A5`, set 6 `$49`, set 8 `$81`, stock OBJ sheet 165), freed by `boot_logo.free_old`. Unused. |
+| `$D9:E464-$D9:EC39` | 2006 B | `free_d9`: was SB5's death voice (sound set `$48` upload list + end mark + jump word), freed by `game_sfx.free_old` once set `$48` points at R. Unused. |
 | `$E2:0264-$E2:06B3` | 1104 B | `free_e2_title`: was SB5's title scene and logo arrangements (set 4 #2, #3), freed by `title.free_old`. Unused. |
 | `$E2:07A2-$E2:07F3` | 82 B | `free_e2_copy`: was SB5's "(c) 1997 HUDSON SOFT" arrangement (set 4 #6). Unused. |
 | `$E2:CAF3-$E2:CBE7` | 245 B | `free_e2_boot`: was the Hudson boot logo's arrangement (set 4 `$D3`). Unused. |
@@ -95,6 +96,7 @@ sequenced driver).
 | `$7F:FBD0-$7F:FBD3` | World 1's 1-6 stands blink (`asm/world1.asm` stand_task): phase, frames left, cycle, brightness. Set by `FF 1A F6 04`. |
 | `$7F:FBD8-$7F:FBE1` | Animated stage tiles (`asm/stage_anim.asm`, 1-7's electric fence): frame counter, then scratch (source, VRAM address, bytes left, entry size). |
 | `$7F:FBE8-$7F:FBF9` | 1-7's clown boss (`asm/sb1_enemies.asm` clown): center x, y, frames its routine was seen, move tick, set up, `+$06-$0D` queue scratch (source, VRAM, bytes left, entry size; `+$0D` also the nearest distance), drawn this frame, blink counter, mouth frames left, mouth open. Set by `clown_start` (`FF 1A F6 05`). |
+| `$7F:FBFA` | World 1's SB1 music (`asm/title_music.asm` `sb1m_song`, `SB1M_FLAG`): `$A5` = an SB1 song list overwrote set `$2C`'s sequence in ARAM (sent again before the next stage's ZONE1 samples). Any other value = no. |
 | `$0160-$0187` | Louie palettes (`asm/louies.asm`): `$0160` half of each actor (24 bytes, 0 = none), `$0178` users of the 3 halves, `$017B` palette id in each half, `$017E` OBJ slot of the main / spare palette (0 = none), `$0180-$0187` scratch. Zero after reset; forgotten when the slot table loses the `$FF` mark (new stage). |
 
 ## ARAM (sound RAM)
@@ -117,20 +119,20 @@ only played by the stream driver: no instrument or Hudson definition), tuning `$
 leaves `$B900-$DCFF` alone is loaded (docs/ROM_MAP.md, "Sound").
 
 In-game SFX (`tools/sb6/features/game_sfx.py`): R = `$5900-$6579`
-(SB5's group-3 voice buffer; sequences of SFX `$5E-$5F`, a silent END block,
-the SB1 enemy death sample, part A of the cornered recording) while the
+(SB5's group-3 voice buffer; sequences of SFX `$5E-$60`, a silent END block,
+the SB1 death and enemy samples, part A of the cornered recording) while the
 current song leaves it alone; part B of the recording (1359 bytes) right
 below `$DD00` (echo buffer), or below `$B900` for songs that keep the menu
-SFX. Pointer table entries `$448A-$448D`, priorities `$458D-$458E`,
-instruments 3 (`$44DC`) and 31 (`$454C`), directory / tuning entries `$1F`,
-`$3D`. Sizes are printed by the build.
+SFX. Pointer table entries `$448A-$448F`, priorities `$458D-$458F`,
+instruments 2-3 (`$44D8`) and 31 (`$454C`), directory / tuning entries `$1F`,
+`$3C`, `$3D`. Sizes are printed by the build.
 
 World 1's SB1 music (`tools/sb6/features/sb1_music.py`, SB1's songs as Hudson songs, uploaded instead of
 SB5's ZONE1 samples while the stage loads): song table `$3000-$300B` (command 1 = SB1's song, 2-4 = SB5's
 jingles), SB5's jingles where SB5 has them (`$3E00-$4240`), SB1's samples from `$8000`; SB1's header, tracks
 and subroutines and the jingles' samples (SB5 directory entries 2, 3, `$0B-$0D`, 5.5 KB) in the rest of
 `$300C-$43FF` and `$8000-$F4FF`: the song and the jingles use echo delay 1 (buffer `$F500-$FCFF`). The build
-prints the ARAM left per stage (1-1 ~3.1 KB, 1-2 ~0.7 KB). ROM: one upload list per stage (~32 / 35 KB) in
+prints the ARAM left per stage (1-1 ~3.1 KB, 1-2 ~0.7 KB, 1-3 ~5.3 KB). ROM: one upload list per stage (~30-35 KB) in
 `stream_ed` / `stream_ec` / `free_c8_sheets` (build/sb6.map), the stage table in `bulk`. Directory / tuning entries 0-`$11` (SB1's samples take the ones the jingles do not use).
 It covers part B of the cornered recording (`$D841`), so while it is loaded `gs_song` = `SB1M_SONG` (R kept,
 no B: the cornered sound is cut short, as in songs 15, 16, 21, 23-26).

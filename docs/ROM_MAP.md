@@ -239,7 +239,9 @@ script accumulator (`61` = add).
   Every set targets ARAM `$5900` (the voice buffer, up to `$70F1`). Id 1 =
   player death (set `$48`, `$7CE` bytes, SFX `$4F`; callers `$C4:3674`
   Battle, `$C4:3684` Normal): ~32 frames of transfer before the sound, the
-  "late" death sound (the hack keeps it: SB5's own death voice). Ids 2 (`$C4:2FA3`), 3 (`$C4:33F6`, Battle), 4
+  "late" death sound (the hack points set `$48` at its R list and frees the
+  original list `$D9:E464-$D9:EC39`; no other request, group-4 entry or music
+  id names set `$48`). Ids 2 (`$C4:2FA3`), 3 (`$C4:33F6`, Battle), 4
   (`$C5:08C8`); 5-13 = SFX `$26-$2E`, 14-17 = SFX `$68`.
 * SFX command c (port 0, `$C0:0E7F`) = entry c - `$21` of Hudson's pointer
   table `$4410` (priority `$4550 + entry`). Group 2 id `$33` = enemy death
@@ -249,20 +251,21 @@ script accumulator (`61` = add).
 * Stage music: script ops `42 id 00` with ids 6-`$0E` (worlds), `$0F`,
   `$14`, `$15` (songs 5-14, 19, 20).
 * Hack, in-game SFX (`tools/sb6/features/game_sfx.py`, `asm/game_sfx.asm`):
-  SFX `$5E` cornered (recording) and `$5F` enemy death (Super Bomberman 1's
-  sample and note: its sound command `$16`, voice 0, ADSR `$DF/$94`, one
-  key-on at `$04B0`); every other stage sound (bomb, explosion, Louie,
-  player death voice) is SB5's own. Animation `$21` of a seat bomber plays
-  `$5E` (`gs_anim`). The object code never talks to the SPC: `gs_anim` /
-  `gs_enemy` leave the command in `$018C` and `gs_tick` (main loop) sends
-  it; waiting for the SPC inside the setter delayed the frame and
-  characters 1/4 lost the tile DMA of animation `$21`. Enemy hit:
-  `$C3:4D41` (the enemy object becomes type 0 with its death "puff",
-  animation from `$C3:B930`) calls `gs_enemy`; SB5's own enemy sound,
-  group 2 id `$33` (`$C5:3BD6`), comes ~70 frames later with the score and
-  is now silent. A group-3 voice (the player's death, set `$48`) overwrites
-  R; R comes back through SB5's group-3 queue with set `$41` (SB5's freed
-  Password music), whose list pointer now names R's upload list.
+  SFX `$5E` cornered (recording), `$5F` enemy death and `$60` player death
+  (Super Bomberman 1's samples and notes: its sound commands `$16` / `$1F`
+  via `$C4:8522`, voice 0, ADSR `$DF/$94`; death = 8 key-ons alternating
+  pitch `$09C4` / `$05DC`, enemy = one at `$04B0`). Group 3 id 1 is answered
+  by `gs_sound` (the death sound now starts with animation `$16`), animation
+  `$21` of a seat bomber by `gs_anim`. The object code never talks to the
+  SPC: `gs_anim`/`gs_enemy` leave the command in `$018C` and `gs_tick`
+  (main loop) sends it; waiting for the SPC inside the setter delayed the
+  frame and characters 1/4 lost the tile DMA of animation `$21`. Enemy hit: `$C3:4D41` (the enemy object becomes type 0 with
+  its death "puff", animation from `$C3:B930`) calls `gs_enemy`; SB5's own
+  enemy sound, group 2 id `$33` (`$C5:3BD6`), comes ~70 frames later with
+  the score and is now silent. Set `$48`
+  now uploads R (used to restore it after another group-3 voice). Hudson
+  note n (12 * octave + note) with tuning `04 0C 00 CE` plays at
+  ~1011 * 2^((n-24)/12).
 * Script music load `$C0:1171` uploads its song unconditionally.
 * Title flow: `0401` (sets), `$C0:1171` song 1, `0002` = play title music.
   SB5's Options (gone): `0204` → `1001` → `0401` → song 1 → `0002`. The song 1 load is
@@ -361,7 +364,7 @@ script accumulator (`61` = add).
 | `$C0:0F0A` | `20 35 0F 9C D1 03` | song upload: SB6 menu SFX samples + definitions, or SB5's back (`song_hook`) |
 | `$C0:11EC` | `99 9F 07 A9 00` | animation setter: cornered `$21` of a seat bomber plays SFX `$5E` (`gs_anim`, `asm/game_sfx.asm`) |
 | `$C3:4D41` | `BD C2 16 8D 51 1D` | enemy hit: SB1's enemy death SFX `$5F` (`gs_enemy`) |
-| `$85:F69B + 3*$41` | set `$41` pointer | group-3 set of SB5's freed Password music -> upload list of R (in-game SFX) |
+| `$85:F69B + 3*$48` | set `$48` pointer | group-3 set of SB5's death voice -> upload list of R (in-game SFX) |
 | title scripts | see `tools/sb6/features/title.py` | SB6 title graphics |
 | `$C7:1847` | `06 04 42 02 00 5B A0 60 34 10` | title: music and PUSH START wait for the intro |
 | `$C7:18D5`, `$C7:19AD` | OPTIONS -> mode `$0B`; B test of menu 2 | OPTIONS submenu / DISCORD QR (`tools/sb6/features/options.py`) |
@@ -764,8 +767,8 @@ script accumulator (`61` = add).
   `$03CE` = `$FF`); the in-game SFX state `$0188-$018C` is cleared.
   Checked in Mesen: the key-on sequence and timing equal SB1's; stage
   music and in-game SFX after the map.
-* World 1 stages play on Hudson's driver with SB5's stage SFX. 1-1
-  (stage `$0D`) and 1-2 (`$11`) play SB1's World 1 / World 2 songs
+* World 1 stages play on Hudson's driver with SB5's stage SFX (SB1's player and enemy deaths: game_sfx). 1-1
+  (stage `$0D`), 1-2 (`$11`) and 1-3 (`$18`) play SB1's World 1 / 2 / 3 songs
   converted to Hudson songs (`tools/sb6/features/sb1_music.py` `STAGES`,
   see "Hudson songs"; `asm/title_music.asm` `sb1m_song`, table
   `SB1M_TABLE` = [stage, list] ... `$FF`), hooked at the start of Hudson's
@@ -780,7 +783,13 @@ script accumulator (`61` = add).
   sample (directory 2) of the start jingle never sounds (silent block in
   the lists); directory 3 (other jingles' percussion) is kept when there
   is room, else it names SB1's most alike sample (1-2: SB1's kick). The
-  other World 1 stages keep SB5's ZONE1 song. SB1's per-world sound RAM images
+  other World 1 stages keep SB5's ZONE1 song. The list overwrites set
+  `$2C`'s sequence while `$03CE` still says `$2C` (set to `$FF`, music id 6
+  would send the set again over the list): `sb1m_song` marks `SB1M_FLAG`
+  and, on the next upload of song 5 for a stage without SB1 music, sends set
+  `$2C` first (else that stage ran SB1's tracks over SB5's samples: random
+  SPC code, a black screen after 1-2's door). SB1's sample directory is
+  DSP DIR `$2300` (World 3: `$2400`). SB1's per-world sound RAM images
   (`assets/sound/sb1_stage_*.bin`, Mesen snapshot at SB1's first stage
   command) stay as the source of SB1's samples and of future conversions.
 * Hudson songs (measured in Mesen on SB5's driver):

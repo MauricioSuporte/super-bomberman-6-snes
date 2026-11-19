@@ -120,18 +120,19 @@ exec callback at `$C0:0AF9` (end of the pad reader).
   samples from scripts. A song whose samples or echo buffer reach that
   area gets SB5's beeps back; changing the notes in `MENU_SFX` means
   reading the new pitch from voice 0 in Mesen (`SFX_PITCH`).
-* In-game SFX (cornered, SB1's enemy death: `features/game_sfx.py`,
-  `asm/game_sfx.asm`; every other stage sound is SB5's) are Hudson SFX `$5E-$5F` whose data sits in ARAM
+* In-game SFX (cornered, SB1's player and enemy deaths: `features/game_sfx.py`,
+  `asm/game_sfx.asm`; every other stage sound is SB5's) are Hudson SFX `$5E-$60` whose data sits in ARAM
   `$5900-$657F` (SB5's group-3 voice buffer) + a part below the echo buffer;
   title_music's sound/set/song/loop hooks call `gs_*`. Only send them while
   `$0188` = 1 (R in ARAM). Research: `tools/spc_render.py` turns a Mesen log
   of S-DSP writes into a WAV.
-* Stage music is Hudson's (World 1 included). 1-1 / 1-2 play SB1's World 1 / 2 songs
+* Stage music is Hudson's (World 1 included). 1-1 / 1-2 / 1-3 play SB1's World 1 / 2 / 3 songs
   converted to Hudson songs (`features/sb1_music.py` `STAGES`, from `assets/sound/sb1_w<n>_song.txt`,
   made by `tools/sb1_song.py` from a Mesen DSP log of SB1): `sb1m_song` in
   `asm/title_music.asm` uploads it instead of SB5's ZONE1 samples while the
   stage loads (never while a stage runs: an upload freezes the game), with
-  SB5's jingles kept as commands 2-4. Hudson instruments need release GAIN bit 7 set, and a
+  SB5's jingles kept as commands 2-4; Hudson still counts set `$2C` as loaded, so the
+  next stage's ZONE1 sequence is sent again by `sb1m_song` (`SB1M_FLAG`). Hudson instruments need release GAIN bit 7 set, and a
   track must reset channel state left by the previous song (`FE 04`, `FE 01`).
 * The title intro's sounds (pan, drops) are one pre-mixed stream in bank
   `$FC`; `PAN_LEAD_FRAMES` is the measured wait from its start to the pan.

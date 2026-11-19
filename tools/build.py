@@ -83,7 +83,8 @@ def main():
     boot["preview"].save(os.path.join(args.out, "boot_logo_preview.png"))
     # in-game SFX (cornered, deaths): code called from the sound hooks of title_music
     gsfx = game_sfx.apply(rb, os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"))
-    print(f"game SFX: R = {gsfx['r_bytes']} bytes of ARAM $5900 (SB1 enemy death {gsfx['enemy']}); "
+    game_sfx.free_old(rb)            # SB5's death voice (set $48 now uploads R)
+    print(f"game SFX: R = {gsfx['r_bytes']} bytes of ARAM $5900 (SB1 death {gsfx['death']}, enemy {gsfx['enemy']}); "
           f"cornered {gsfx['corner_seconds']:.2f} s at {gsfx['corner_rate']:.0f} Hz = {gsfx['a']} + {gsfx['b']} bytes "
           f"(B at ${gsfx['b1']:04X} / ${gsfx['b2']:04X}), cut short in songs {gsfx['short']}")
     # world map music: SB1's / SB2's own drivers and songs (switched by title_music's sound hook)

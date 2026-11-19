@@ -35,8 +35,8 @@ from ..romlib import off
 from . import title_music as tm
 
 # World 1 stages that play SB1 songs: (stage id, song name: assets/sound/sb1_<name>_song.txt, SB1's sound RAM
-# assets/sound/sb1_stage_<name>.bin)
-STAGES = [(0x0D, "w1"), (0x11, "w2")]
+# assets/sound/sb1_stage_<name>.bin (from $0800), its sample directory there: SB1 DSP register DIR, World 3 has $2400)
+STAGES = [(0x0D, "w1", 0x2300), (0x11, "w2", 0x2300), (0x18, "w3", 0x2400)]
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
 # SB5 directory entries the jingles name but never play: only the start jingle's percussion records (no key-on
 # of it in Mesen, the jingle keeps its percussion off) -> a silent block (2187 bytes saved)
@@ -52,7 +52,6 @@ SEQ_BASE, SEQ_END = 0x3000, 0x4400
 SAMPLE_BASE = 0x8000
 ECHO_DELAY = 1                       # EDL of the song and of SB5's jingles: echo buffer $F500-$FCFF
 ECHO_BASE = 0xFD00 - 0x800 * ECHO_DELAY
-SB1_DIR = 0x2300                     # SB1's sample directory in its sound RAM
 IMAGE_BASE = 0x0800                  # assets/sound/sb1_stage_w1.bin = SB1's sound RAM from $0800
 UNITS_PER_ROW = 24                   # sb1_<name>_song.txt (in ARAM 24, 16 or 12: see build)
 ROWS_PER_BAR = 16
@@ -126,13 +125,13 @@ def read_song(path):
     return notes, meta
 
 
-def sb1_samples(image, srcns):
+def sb1_samples(image, srcns, sb1_dir):
     """{srcn: (BRR bytes, loop offset)} from SB1's sound RAM image."""
     a = bytearray(0x10000)
     a[IMAGE_BASE:IMAGE_BASE + len(image)] = image
     out = {}
     for s in srcns:
-        start, loop = struct.unpack_from("<HH", a, SB1_DIR + 4 * s)
+        start, loop = struct.unpack_from("<HH", a, sb1_dir + 4 * s)
         p = start
         while not a[p] & 1:
             p += 9
@@ -497,7 +496,7 @@ class Space:
 
 # ---------------------------------------------------------------------------------------------------------
 
-def build(image, path, rom):
+def build(image, path, rom, sb1_dir):
     notes, meta = read_song(path)
     loop, end, row = meta["loop"], meta["end"], meta["row"]
     srcns = sorted({n["srcn"] for n in notes})
@@ -513,7 +512,7 @@ def build(image, path, rom):
     dir_of = {s: free_dirs[k] for k, s in enumerate(srcns)}
     dirs, tunings = bytearray(0x48), bytearray(0x48)
     # SB1's samples from $8000
-    smp = sb1_samples(image, srcns)
+    smp = sb1_samples(image, srcns, sb1_dir)
     blob = bytearray()
     for s in srcns:
         data, loop_off = smp[s]
@@ -641,9 +640,9 @@ def build(image, path, rom):
 def apply(rb, sound_dir):
     """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF."""
     table, infos = bytearray(), []
-    for stage, name in STAGES:
+    for stage, name, sb1_dir in STAGES:
         image = open(os.path.join(sound_dir, f"sb1_stage_{name}.bin"), "rb").read()
-        lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d)
+        lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir)
         a = rb.alloc(["stream_ed", "stream_ec", "free_c8_sheets", "free_c7_sheets"], lst,
                      f"SB1 music of stage ${stage:02X} ({name}): Hudson upload list (sequence, samples)")
         if (a & 0xFFFF) + len(lst) > 0x10000:
@@ -652,5 +651,6 @@ def apply(rb, sound_dir):
         infos.append(dict(info, stage=stage, name=name, list=len(lst)))
     table.append(0xFF)
     t = rb.alloc("bulk", bytes(table), "SB1 music: stage -> upload list")
-    defs = {"SB1M_SB5SONG": f"${SB5_SONG:02X}", "SB1M_TABLE": f"${t:06X}"}
+    defs = {"SB1M_SB5SONG": f"${SB5_SONG:02X}", "SB1M_SB5SET": f"${SB5_SET:02X}", "SB1M_TABLE": f"${t:06X}",
+            "SB1M_FLAG": "$7FFBFA"}       # docs/FREE_SPACE.md
     return defs, infos
