@@ -308,6 +308,10 @@ def build(rb, name, spec):
     put(BURN_PAL, bpal)
     for p, pal in zip(PALS, pals):
         put(p, pal)
+    for row, pal in spec.get("extra_pals", {}).items():    # rows the field leaves free (1-7: the clown's)
+        if row in PALS[:len(pals)]:
+            raise BuildError(f"{name}: palette {row} is the field's")
+        put(row, pal)
     data = struct.pack("<HH", dest, cnt) + b"".join(struct.pack("<H", c) for c in colors)
     regs81 = [r for r in ("free_81_stage45", "free_81_stage2", "bank81") if r in rb.regions]
     if spec.get("ext"):             # pointer word + colors in one bank (pal_lookup in asm/bombers.asm sets it)

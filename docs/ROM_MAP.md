@@ -617,6 +617,32 @@ script accumulator (`61` = add).
   tiles every 2 frames; the hack keeps the fence's tiles in one block of
   slots at the archive's end (29 tiles) and a task queues the frame due
   (entries of 256 bytes) every 2 frames.
+* Stage IRQ (`$C0:F08D`, vector `JMP ($006D)`, `$033D` = `$A1`): line 0
+  draws the HUD (TM `$16`, BG2 = its background: map `$3A` (`$3800`, 32 x
+  64), scroll 0); line `$15` writes BG2SC = `$0369`, TM = `$030F` and BG3's
+  scroll for the field; line `$17` BG2's scroll from `$0333`/`$0339` (low
+  bytes of the NMI copies of `$031B`/`$0321`). BG12NBA is not split (0).
+  In stage `$68` VRAM `$3400-$37FF` (BG1's lower screen, 32 x 64 map at
+  `$3000`, never shown) and `$4800-$4FFF` were zero.
+* 1-7's clown (`asm/sb1_enemies.asm` `clown*`, `features/sb1_enemies.py`
+  `clown_bg`): SB1 2-8's boss (about 32 16x16 OBJ in SB1, 112 x 92, mouth
+  open about 40-80 frames every 200) drawn on BG2 below the HUD through the
+  IRQ above: tiles `$340-$37F` (`$3400`; `$360-$37F` = the picture's own,
+  rewritten when the mouth opens/closes), maps `$4800` (open) / `$4C00`
+  (closed) by `$0369`, scroll `$031B`/`$0321`, hidden by `$030F` bit 1;
+  colors in BG palettes 3 and 6 (`extra_pals` of "sb1_4-8"; the burning
+  palette 3 is unused there). Body = enemy type 07 (record: empty
+  picture, routine `clown`): homes toward the nearest live bomber 1 px every
+  3 frames over walls, 6 hearts (`$1662`), hits on the 3 x 3 cells around
+  it (`knight_hit` -> `clown_hit`), the stock 180-frame blink (`$085F`);
+  contact on its cell kills. Started by `FF 1A F6 05` (with the fence).
+* Boss stages: `$C5:3A2D` skips SB5's stage tasks (`$C4:221D`, `$C5:024D`,
+  `$C5:0000`, the clear task `$C5:3B4E`) when `$1D1A` = 8; stage `$68`
+  without its rival runs them (`$1D1A` = `$40`). Op `FF 7C slot x y char`
+  (`$C2:16E6`) = `JSL $C43C60` (boss start: the rival's AI task `$C4:007B`)
+  then the rival set-up. Op `10 n` (`$C2:0C32`) = `$0E1F`, the soft blocks
+  scattered at random (`$C5:0160`, map id 2 at `$7E:2400`, unless `$1D1A &
+  $0C` or `$0E24`); SB5's arenas have `10 10` in their type 01 script.
 * Enemies alive `$1D50` (+1 `$C3:050B`, -1 in the death routine
   `$C3:0649-$065A`). The clear check is a native task `$C5:3B4E` (started by
   `$C5:3A58` `JSL $C020A1 / dl`): `$1D50` = 0 -> `LDA #$0D / JSL $C200D7`
@@ -712,7 +738,9 @@ script accumulator (`61` = add).
   place); World 1 = `$0D`, `$11`, `$18`, `$10`, `$17` (1-1..1-5, one door
   each: op `FF 1A F6 n`, the door hides in a random soft block, picked by a
   native task once the map is in), then bosses `$67` -> `$69` (1-6) -> `$68`
-  (1-7) -> `$1C`.
+  (1-7) -> `$1C`. 1-7 has no rival (its `FF 7C` root and the portal root
+  are dropped, so is `10 10`): the clown (type 07 at 7, 4) and the World 1
+  door, which falls back to a floor cell near the middle.
 
 ## Super Bomberman 1's sound driver (ZONE1 map music)
 

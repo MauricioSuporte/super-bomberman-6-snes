@@ -69,7 +69,7 @@ palettes `$1B`, `$1C`, `$41`, the Password fade palettes (set 13 `$BB-$C3`, ids 
 `$14`, `$19`) and the menu SFX. Freed
 2026-11-18 (owner's call): SB5's title song and characters, and the character sheets 1-20, which
 boss rivals would also show (they will be replaced).
-World 1's 1-6 (2026-11-19): SB5's arena maps `$8E`, `$90`, `$92` (stages `$67`/`$69`/`$6B`, 30-31 bytes LZ each at `$D0:CBA7`, `$D0:CBE3`, `$D0:CC20`): `$8E`'s list entry now names the 1-6 map, the others are no longer named by a played stage; too small to be worth a free (and `$90`/`$92` would still be read if SB5's own zone stages came back). Theme `$27`, set 4 archive `$1F` and palettes `$1B`/`$1C` stay: SB5's other arenas use them.
+World 1's 1-6 (2026-11-19): SB5's arena maps `$8E`, `$90`, `$92` (stages `$67`/`$69`/`$6B`, 30-31 bytes LZ each at `$D0:CBA7`, `$D0:CBE3`, `$D0:CC20`): `$8E`'s list entry now names the 1-6 map, the others are no longer named by a played stage; too small to be worth a free (and `$90`/`$92` would still be read if SB5's own zone stages came back). Theme `$27`, set 4 archive `$1F` and palettes `$1B`/`$1C` stay: SB5's other arenas use them. 1-7's clown (2026-11-19): enemy type 07 now shows an empty picture, but its stock OBJ tiles (set 8 archive 9, LZ at `$CB:1AC7`) are also named by another archive table entry (set 0 entry `$2D`), so they stay; type 07's palette 7 of set 8 is rewritten in place.
 `tools/mesen/loads.lua` also logs OBJ sheet pages (`sheet`), sound set and song uploads.
 
 Budget note: streamed audio costs ~9 KB per second (16 kHz mono). The whole
@@ -95,6 +95,7 @@ sequenced driver).
 | `$7F:FB20-$7F:FBCF` | SB1 chameleons (`asm/sb1_enemies.asm`), per actor (19): `+$00` set up, `+$18` frames left, `+$30` phase (0 frog, 1 copy), `+$48` seat copied, `+$60`/`+$78` own tile base, `+$90` own palette slot; `+$A8-$AF` scratch. Cleared by World 1's stage start op (`asm/world1.asm`); only chameleon actors (type 05) read it. |
 | `$7F:FBD0-$7F:FBD3` | World 1's 1-6 stands blink (`asm/world1.asm` stand_task): phase, frames left, cycle, brightness. Set by `FF 1A F6 04`. |
 | `$7F:FBD8-$7F:FBE1` | Animated stage tiles (`asm/stage_anim.asm`, 1-7's electric fence): frame counter, then scratch (source, VRAM address, bytes left, entry size). |
+| `$7F:FBE8-$7F:FBF9` | 1-7's clown boss (`asm/sb1_enemies.asm` clown): center x, y, frames its routine was seen, move tick, set up, `+$06-$0D` queue scratch (source, VRAM, bytes left, entry size; `+$0D` also the nearest distance), drawn this frame, blink counter, mouth frames left, mouth open. Set by `clown_start` (`FF 1A F6 05`). |
 | `$0160-$0187` | Louie palettes (`asm/louies.asm`): `$0160` half of each actor (24 bytes, 0 = none), `$0178` users of the 3 halves, `$017B` palette id in each half, `$017E` OBJ slot of the main / spare palette (0 = none), `$0180-$0187` scratch. Zero after reset; forgotten when the slot table loses the `$FF` mark (new stage). |
 
 ## ARAM (sound RAM)

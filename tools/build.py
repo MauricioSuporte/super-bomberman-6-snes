@@ -132,6 +132,8 @@ def main():
     mbg = menu_bg.apply(rb)
     print(f"menu background: blue checker ${mbg['checker'][0]:04X} / ${mbg['checker'][1]:04X}")
     en_defs, en_info = sb1_enemies.apply(rb)     # World 1's SB1 enemies (their tables go through the bombers' hooks)
+    clown = en_info.pop("_clown")                # 1-7's clown boss: its BG2 colors go into the arena's palette
+    sb1_stages.STAGES["sb1_4-8"]["extra_pals"] = dict(zip(sb1_enemies.CLOWN_PALS, clown["pals"]))
     stages = sb1_stages.apply(rb)                # World 1's SB1 / SB6 stage pictures (1-6's palette id: pal_lookup)
     en_defs["W1PAL"] = f"${stages['sb6_1-6']['ext']['pal']:06X}"
     anim_start = stages.pop("anim")              # 1-7's electric fence (asm/stage_anim.asm, started by world1's op)
@@ -153,7 +155,7 @@ def main():
           + ", ".join(f"ZONE{i + 1} {t} tiles / {p} BG palettes" for i, (t, p) in enumerate(wmap["zones"]))
           + f"; sea in {wmap['frames']} frames, {wmap['lights']} light colors (preview build/world_map_preview.png)")
 
-    w1 = world1.code(rb, stages["sb6_1-6"], anim_start)
+    w1 = world1.code(rb, stages["sb6_1-6"], anim_start, clown)
     print("world 1: stages " + ", ".join(world1.chain(rb)))
     for n, i in stages.items():
         print(f"world 1: {n} = {i['metatiles']} metatiles, {i['tiles']} tiles, {i['palettes']} palettes "

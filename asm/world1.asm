@@ -17,7 +17,8 @@
 ;   n = 1  (type 0D: all enemies dead) queue the portal at the door (a soft
 ;          block left, else a free floor cell)
 ;   n = 4  (1-6's third duel, type 04) the stands blink (stand_task, below)
-;   n = 5  (1-7, type 04) start the electric fence's task (asm/stage_anim.asm)
+;   n = 5  (1-7, type 04) start the electric fence's task (asm/stage_anim.asm) and the clown
+;          boss's (asm/sb1_enemies.asm clown_start)
 ;   n = 2  (type 0C) players on the door: like op $12 ($C2:0C67), the sum
 ;          of seat + 1 of the live bombers on the cell -> $0373, JSL $C174D1
 ; State: $7F:FB10 door x (0 = not chosen), $7F:FB11 door y, $7F:FB12-$7F:FB13
@@ -57,6 +58,7 @@ w1_op:
 if !ANIMSTART
     jsl !ANIMSTART              ; 5: 1-7's electric fence (asm/stage_anim.asm)
 endif
+    jsl !CLOWNSTART             ;    and its clown (asm/sb1_enemies.asm clown_start)
     plp
     rtl
 +   lda #$00                    ; 3: forget, start the picking task
@@ -236,8 +238,16 @@ touch:
 ; not hurt by a blast coming from the front, as in SB1's 6-4: facing
 ; $1632 (1 right, 2 down, 3 left, 4 up), the flame cells from the knight's
 ; one in that direction lead to the explosion's center ($1052 & 7 = 5).
+; 1-7's clown (enemy type !CLOWN_TYPE) is tested on the 3 x 3 cells around it
+; instead (asm/sb1_enemies.asm clown_hit).
 knight_hit:
-    lda $1052,y
+    lda $16C2,x                 ; 1-7's clown: flames on the 3 x 3 cells around it
+    cmp #!CLOWN_TYPE
+    bne +
+    jsl !CLOWNHIT
+    bcc .none
+    jml $C349F3
++   lda $1052,y
     and #$04
     beq .none
     lda.l $7E1031

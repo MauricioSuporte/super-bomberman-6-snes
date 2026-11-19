@@ -44,13 +44,22 @@ KINDS = {
     # SB1 3-6's chameleon: a frog that becomes a copy of a live player's bomber (asm/sb1_enemies.asm)
     "frog": dict(type=0x05, sheet="sb1_3-6_frog", routine="chameleon",
                  anims=[[(0, 12), (1, 12), (2, 12), (1, 12), (3, 6), (4, 6), (5, 12), (4, 6), (3, 6)]] * 4),
+    # SB1 2-8's clown mask (1-7's boss): an enemy with an empty picture whose routine moves the clown, drawn
+    # on BG2 from assets/enemies/sb1_2-8_clown.png (asm/sb1_enemies.asm `clown`); type 07 was only in SB5
+    # stages $18-$1B (1-3's enemies are SB1's now)
+    "clownbody": dict(type=0x07, sheet="sb1_2-8_body", routine="clown", anims=[[(0, 60)]] * 4),
 }
+CLOWN = ("sb1_2-8_clown", "sb1_2-8_clown_closed")   # BG2 pictures, mouth open / closed (112 x 92, same box)
+CLOWN_CENTER = (56, 44)          # the body's cell center in the picture
+CLOWN_PALS = (3, 6)              # BG palettes of the 1-7 arena it takes (features/sb1_stages.py "sb1_4-8")
 # 1-2 (stage $11): SB1 2-1 has 4 spring heads, 2 pots, 2 clown faces (`A2 x y type` roots, world1.chain)
 STAGE_ENEMIES = {0x11: [(7, 3, "spring"), (5, 5, "spring"), (9, 5, "pot"), (5, 7, "clown"), (9, 7, "spring"),
                         (7, 9, "pot"), (11, 9, "clown"), (13, 5, "spring")],
                  # 1-3 (stage $18): SB1 3-6's 7 chameleons
                  0x18: [(13, 8, "frog"), (9, 5, "frog"), (9, 9, "frog"), (5, 7, "frog"), (1, 8, "frog"),
-                        (7, 3, "frog"), (11, 11, "frog")]}
+                        (7, 3, "frog"), (11, 11, "frog")],
+                 # 1-7 (stage $68, boss): the clown instead of SB5's rival
+                 0x68: [(7, 4, "clownbody")]}
 
 
 def _w(rb, a):
@@ -67,6 +76,8 @@ def _kind(rb, name, k, map_id):
     colors = sorted({_bgr(p) for c in cells for p in c.reshape(-1, 4) if p[3]})
     if len(colors) > 15:
         raise BuildError(f"SB1 enemy {name}: {len(colors)} colors (15 at most)")
+    if not colors:
+        colors = [0]
     lut = {c: i + 1 for i, c in enumerate(colors)}
     tiles, known, maps = [], {}, []
     for cell in cells:
@@ -98,7 +109,11 @@ def _kind(rb, name, k, map_id):
                 vt = n // 32 * 32 + n % 2 * 16 + n % 32 // 2      # archive tile n -> VRAM tile of the page grid
                 pieces.append(struct.pack("<hhHB", tx * 8 - AX + PIECE_X, ty * 8 - AY + PIECE_Y, vt,
                                           0x20 | (0x40 if hf else 0) | (0x80 if vf else 0)))
+        if not pieces:                  # ($C0:158A loops 256 times on a zero count: one piece far right)
+            pieces.append(struct.pack("<hhHB", 0x4000, 0, 0, 0x20))
         maps.append(bytes([len(pieces)]) + b"".join(pieces))
+    if not tiles:
+        tiles.append(bytes(32))
     if len(tiles) > 64:
         raise BuildError(f"SB1 enemy {name}: {len(tiles)} tiles (64 at most, 2 OBJ pages)")
     arc = b"".join(tiles) + bytes(32 * (len(tiles) % 2))
@@ -114,7 +129,100 @@ OLD_DATA = [
 ]
 
 
-def code(rb):
+def clown_bg(rb):
+    """The clown's BG2 pictures (mouth open, closed): tiles both use (VRAM tiles $340-$35F), each one's own
+    (32 at most, $360-$37F, rewritten when the mouth changes; over 32 the least visible are drawn with
+    the closest tile) and its 32 x 32 map (background = tile 0, blank). One bank: shared tiles, closed
+    tiles, open tiles, open map, closed map; the two palettes (BG palettes CLOWN_PALS)."""
+    from .world_map import _fit, _dist
+    pics = []
+    for name in CLOWN:
+        im = np.asarray(Image.open(os.path.join(ASSETS, name + ".png")).convert("RGBA"))
+        h, w = (im.shape[0] + 7) // 8 * 8, (im.shape[1] + 7) // 8 * 8
+        pic = np.zeros((h, w, 4), np.uint8)
+        pic[:im.shape[0], :im.shape[1]] = im
+        pics.append([(tx, ty, pic[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8]) for ty in range(h // 8) for tx in range(w // 8)
+                     if pic[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8, 3].any()])
+    blocks = [blk for pic in pics for blk in pic]
+    sets = [{_bgr(p) for p in b.reshape(-1, 4) if p[3]} for _, _, b in blocks]
+    pals, where = _fit(sets, cap=15, most=2)
+    if len(pals) > 2:
+        raise BuildError(f"clown: {len(pals)} palettes")
+    pals = [sorted(p) for p in pals]
+    # each block -> (palette, 8x8 indices); a tile = its canonical flip
+    cells, k = [], 0
+    for pic in pics:
+        out = []
+        for tx, ty, b in pic:
+            p = where[k]
+            k += 1
+            lut = {c: i + 1 for i, c in enumerate(pals[p])}
+            idx = np.zeros((8, 8), np.uint8)
+            for y in range(8):
+                for x in range(8):
+                    if b[y, x, 3]:
+                        c = _bgr(b[y, x])
+                        idx[y, x] = lut.get(c) or lut[min(pals[p], key=lambda d: _dist(c, d))]
+            out.append((tx, ty, p, idx))
+        cells.append(out)
+
+    def flips(idx):
+        return [(idx[::-1 if vf else 1, ::-1 if hf else 1], hf, vf) for hf in (False, True) for vf in (False, True)]
+
+    def canon(idx):
+        return min(encode_4bpp(t) for t, _, _ in flips(idx))
+    own = [{canon(i) for *_, i in pic} for pic in cells]
+    shared = sorted(own[0] & own[1])
+    if len(shared) > 32:
+        raise BuildError(f"clown: {len(shared)} shared tiles (32 at most)")
+    groups, mapping = [], [{}, {}]                      # per picture: canonical tile -> slot
+    for n, pic in enumerate(cells):
+        mine = sorted(own[n] - set(shared))
+        while len(mine) > 32:                           # the tile with the fewest opaque pixels goes to the closest
+            dec = {e: np.array([[(e[(y & 7) * 2 + (pl & 1) + (pl >> 1) * 16] >> (7 - x)) & 1 for x in range(8)]
+                                for y in range(8) for pl in range(4)]) for e in mine + shared}
+
+            def px(e):
+                d = dec[e].reshape(8, 4, 8)
+                return sum(d[:, pl] << pl for pl in range(4))
+            worst = min(mine, key=lambda e: (px(e) > 0).sum())
+            near = min((e for e in mine + shared if e != worst), key=lambda e: (px(e) != px(worst)).sum())
+            mapping[n][worst] = near
+            mine.remove(worst)
+        groups.append(mine)
+    slot = {}
+    for i, e in enumerate(shared):
+        slot[e] = 0x340 + i
+    tiledata = [b"".join(shared) + bytes(32 * (32 - len(shared)))]
+    maps = []
+    for n, pic in enumerate(cells):
+        mine = groups[n]
+        local = dict(slot)
+        for i, e in enumerate(mine):
+            local[e] = 0x360 + i
+        for e, near in mapping[n].items():
+            local[e] = local[near]
+        tiledata.append(b"".join(mine) + bytes(32 * (32 - len(mine))))
+        words = [0x0000] * 1024
+        for tx, ty, p, idx in pic:
+            e = canon(idx)
+            src = mapping[n].get(e, e)
+            # the flip that turns the stored (canonical) tile into this block
+            hf, vf = next((hf, vf) for t, hf, vf in flips(idx) if encode_4bpp(t) == src) if src == e else (False, False)
+            words[ty * 32 + tx] = local[e] | CLOWN_PALS[p] << 10 | 0x2000 | (0x4000 if hf else 0) | (0x8000 if vf else 0)
+        maps.append(b"".join(struct.pack("<H", x) for x in words))
+    # one bank: shared, closed's own, open's own, open map, closed map
+    data = tiledata[0] + tiledata[2] + tiledata[1] + maps[0] + maps[1]
+    regs = [r for r in ("free_cb_enemies1", "free_cb_enemies2", "obj_f9", "obj_f8", "bulk") if r in rb.regions]
+    a = rb.alloc(regs, data, f"SB1 clown (1-7's boss): BG2 tiles ({len(shared)} + {len(groups[0])} / "
+                             f"{len(groups[1])}) and 2 maps")
+    if a >> 16 != (a + len(data) - 1) >> 16:
+        raise BuildError("clown: BG2 data crosses a bank")
+    return dict(tiles=a, closed=a + 0x400, open=a + 0x800, map=a + 0xC00, pals=pals,
+                ntiles=len(shared) + max(len(g) for g in groups), merged=sum(len(m) for m in mapping))
+
+
+def code(rb, bg):
     from .. import asar
     region = rb.regions["bulk"]
     hit = bytes(rb.d[off(HIT):off(HIT) + 6])          # JSL gs_enemy (features/game_sfx.py) : NOP NOP
@@ -122,7 +230,13 @@ def code(rb):
         raise BuildError(f"SB1 enemies: ${HIT:06X} is not game_sfx's JSL ({hit.hex()})")
     gs = int.from_bytes(hit[1:4], "little")
     runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}", "GS_ENEMY": f"${gs:06X}",
-                                                "CHAM_TYPE": f"${KINDS['frog']['type']:02X}"})
+                                                "CHAM_TYPE": f"${KINDS['frog']['type']:02X}",
+                                                "CLOWN_TYPE": f"${KINDS['clownbody']['type']:02X}",
+                                                "CTILES": f"${bg['tiles']:06X}", "COPEN": f"${bg['open']:06X}",
+                                                "CCLOSED": f"${bg['closed']:06X}",
+                                                "CMAP": f"${bg['map']:06X}", "CBANK": f"${bg['tiles'] >> 16:02X}",
+                                                "COX": str(CLOWN_CENTER[0]), "COY": str(CLOWN_CENTER[1]),
+                                                "CSTAGE": "$68"})
     start, end = region.cursor, syms["end"]
     out = bytearray(rb.d)
     for o, d in runs:
@@ -138,9 +252,10 @@ def code(rb):
 
 def apply(rb):
     """Archives, palettes, records, tables; returns the asm defines for asm/bombers.asm."""
-    syms = code(rb)
     for name, start, size, crc, purpose in OLD_DATA:      # (the new archives go there first)
         rb.free_old(name, start, size, crc, purpose)
+    bg = clown_bg(rb)
+    syms = code(rb, bg)
     arc_tab = 0xE30000 + _w(rb, 0xC01C96 + 2 * 8)
     pal_tab = 0x810000 + _w(rb, 0xC00379 + 2 * 8)
     base_rec = bytes(rb.d[off(RECORDS + 16 * (BASE_TYPE - 1)):off(RECORDS + 16 * (BASE_TYPE - 1)) + 15])
@@ -182,6 +297,7 @@ def apply(rb):
     defs = {"ENMAP": f"${mt >> 16:02X}", "ENMAPBASE": f"${(mt - 2 * (MAP_FIRST - 1)) & 0xFFFF:04X}",
             "ENMAPFIRST": f"${MAP_FIRST:02X}", "ENANIM": f"${at >> 16:02X}",
             "ENANIMBASE": f"${(at - 2 * (ANIM_FIRST - 1)) & 0xFFFF:04X}", "ENANIMFIRST": f"${ANIM_FIRST:02X}"}
+    info["_clown"] = dict(pals=bg["pals"], start=syms["clown_start"], hit=syms["clown_hit"], tiles=bg["ntiles"])
     return defs, info
 
 

@@ -283,7 +283,7 @@ def _blink_table(rb, blink):
     return rb.alloc("bulk", data, f"World 1: 1-6's stands, BG1 map words (empty / crowd, {len(rows[0])} rows)"), len(rows[0])
 
 
-def code(rb, arena, anim_start=0):
+def code(rb, arena, anim_start=0, clown=None):
     """arena: features/sb1_stages.py's result for "sb6_1-6" (ext ids, blink cells); anim_start: the animated
     fence's task start (asm/stage_anim.asm, 0 = none)."""
     from .. import asar
@@ -291,7 +291,8 @@ def code(rb, arena, anim_start=0):
     region = rb.regions["bulk"]
     defs = {"ORG": f"${region.cursor:06X}", "KNIGHT_STAGE": f"${KNIGHT_STAGE:02X}",
             "W1ARC": f"${arena['ext']['arc']:06X}", "BLINK": f"${blink:06X}", "BLINKN": str(nrows),
-            "ANIMSTART": f"${anim_start:06X}"}
+            "ANIMSTART": f"${anim_start:06X}", "CLOWNSTART": f"${clown['start']:06X}",
+            "CLOWNHIT": f"${clown['hit']:06X}", "CLOWN_TYPE": f"${sb1_enemies.KINDS['clownbody']['type']:02X}"}
     for k, (stage, col) in enumerate(RIVALS):
         defs[f"RIVAL{k + 1}"] = f"${stage:02X}"
         defs[f"PAL{k + 1}"] = f"${RIVAL_OWN_ID + col - 1:02X}"
@@ -327,7 +328,10 @@ KEEP_ENEMIES = {0x17: {0x08}}
 
 # script ops left out (stage: {type: [op prefixes]}): 1-4 is SB1's 4-4 now (features/sb1_stages.py), without
 # SB5's clouds (its type 06 script draws them on BG1 with FF 8D DA 04 / FF 8D DB 04, set 4 arrangements)
-DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB")]}}
+DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB")]},
+            # 1-7: SB5's arena scatters 16 soft blocks (type 01 `10 10`, $0E1F -> $C5:0160); the SB1 4-8 arena
+            # has none (its soft block picture is the floor: they were invisible)
+            0x68: {0x01: [bytes([0x10])]}}
 
 
 def _drop_ops(rb, a, prefixes):
@@ -397,10 +401,35 @@ def chain(rb):
         if not portal:
             raise BuildError(f"boss ${stage:02X}: root ${root:06X} not in its record")
         kept = [r for r, entries in roots if r == root or not any(t == 0x0D for t, _ in entries)]
+        if sb1_enemies.stage_enemies(stage) is not None:     # the boss is an SB1 enemy: no SB5 rival
+            kept = [r for r in kept if not any(t == 0x04 and bytes(rb.d[off(a):off(a) + 2]) == bytes([0xFF, 0x7C])
+                                               for t, a in dict(roots)[r])]
+            for k, scr in enumerate(sb1_enemies.stage_enemies(stage)):
+                sa = rb.alloc("bulk", scr, f"World 1: boss ${stage:02X} SB1 enemy {k}")
+                kept.append(rb.alloc("bulk", bytes([0x04]) + p(sa) + bytes(1), f"World 1: boss ${stage:02X} enemy root {k}"))
+        repl = DROP_OPS.get(stage, {})
+        for i, r in enumerate(kept):
+            entries = dict(roots).get(r)
+            if entries and any(t in repl for t, _ in entries):
+                ents = [(t, rb.alloc("bulk", _drop_ops(rb, a, repl[t]),
+                                     f"World 1: boss ${stage:02X} type {t:02X} script without some ops")
+                         if t in repl else a) for t, a in entries]
+                kept[i] = rb.alloc("bulk", b"".join(bytes([t]) + p(a) for t, a in ents) + bytes(1),
+                                   f"World 1: boss ${stage:02X} root with new scripts")
         if stage in STAGE_OPS:      # 1-6's stands blink (n = 4), 1-7's fence (5): a type 04 root with FF 1A F6 n
             n, what = STAGE_OPS[stage]
             op = rb.alloc("bulk", bytes([0xFF, 0x1A, 0xF6, n, 0x00]), f"World 1: stage ${stage:02X} {what} (op)")
             kept.append(rb.alloc("bulk", bytes([0x04]) + p(op) + bytes(1), f"World 1: stage ${stage:02X} {what} (root)"))
+        if sb1_enemies.stage_enemies(stage) is not None:     # SB5's portal is drawn with its theme's tiles:
+            kept = [r for r in kept if r != root]               # the World 1 door instead (a floor cell)
+            exit_ = rb.alloc("bulk", bytes([0x0F, nxt, 0x00]), f"World 1 door: boss ${stage:02X} -> ${nxt:02X}")
+            kept.append(rb.alloc("bulk", bytes([0x04]) + p(pick) + bytes([0x0D]) + p(queue) + bytes([0x0B])
+                                 + p(exit_) + bytes([0x0C]) + p(touch) + bytes(1), f"World 1 door root, boss ${stage:02X}"))
+            new = rb.alloc("bulk", b"".join(p(r) for r in kept) + bytes(3),
+                           f"World 1: boss ${stage:02X} record (SB1 enemy boss, door -> ${nxt:02X})")
+            rb.patch(MODE_TABLE + 3 * (stage - 1), p(rec), p(new), f"World 1: boss ${stage:02X} = SB1 enemy boss")
+            report.append(f"boss ${stage:02X} -> ${nxt:02X}")
+            continue
         exit_ = dict(portal[0])[0x0B]
         o = off(exit_)
         if rb.d[o] != 0x0F:
