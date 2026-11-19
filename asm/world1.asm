@@ -48,6 +48,7 @@ w1_op:
     sta.l !DX
     jsl $C020A1
     dl door_task
+    db $60                      ; skipped: $C020A1 returns one byte past the dl (SB5's own callers have an RTS there)
     plp
     rtl
 

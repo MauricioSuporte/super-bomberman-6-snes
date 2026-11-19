@@ -87,8 +87,11 @@ def main():
           f"cornered {gsfx['corner_seconds']:.2f} s at {gsfx['corner_rate']:.0f} Hz = {gsfx['a']} + {gsfx['b']} bytes "
           f"(B at ${gsfx['b1']:04X} / ${gsfx['b2']:04X}), cut short in songs {gsfx['short']}")
     # world map music: SB1's / SB2's own drivers and songs (switched by title_music's sound hook)
+    st_drv, st_index = world1.stage_drivers(os.path.join(ROOT, "assets", "sound"))
     maps = world_map.sound(rb, os.path.join(ROOT, "assets", "sound"), [["sb1_f3", "sb1_f4"], ["stream_ef"],
-                                                                         ["wmap_f5"]], os.path.join(args.out, "cache"))
+                                                                         ["wmap_f5"]], os.path.join(args.out, "cache"),
+                           stages=st_drv)
+    maps["defs"].update(world1.stage_tables(rb, len(maps["drivers"]) - len(st_drv) + 1, st_index))
     print("world map music: " + ", ".join(f"{n}'s sound RAM ({b} bytes, {p} parts)" for n, b, p in maps["drivers"]))
     # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),
@@ -134,6 +137,7 @@ def main():
         info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir, menu_bg=mbg)
     sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
     bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
+    maps["finish"]()                 # World 1 stage music: SB1's sound RAM images (freed sheet banks, streams)
 
     wmap = world_map.apply(rb, os.path.join(ROOT, "assets", "world_map"), args.out, ["wmap_f5", "sb1_f4"],
                            music["map_music"])

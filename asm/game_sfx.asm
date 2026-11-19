@@ -105,6 +105,19 @@ gs_anim:
 ; An enemy hit by a flame turns into its "puff" effect here: SB1's enemy
 ; death sound starts now (SB5 only played group 2 id $33 with the score).
 gs_enemy:
+    lda.l $00018D           ; asm/title_music.asm !fdon: an SB1 stage driver (World 1)
+    cmp #$04                ; plays its own enemy death sound ($16, port 1)
+    bcc .hudson
+    lda.l $000191           ; !fdp1: new when bit 7 changes, echoed
+    and #$80
+    eor #$80
+    ora #$16
+    sta.l $000191
+    sta.l $002141
+-   cmp.l $002141
+    bne -
+    bra +
+.hudson:
     lda.l !gs_pend
     bne +                   ; the cornered sound goes first
     lda #!CMD_ENEMY

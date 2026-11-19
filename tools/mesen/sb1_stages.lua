@@ -36,7 +36,15 @@ if FIRSTCMD then
     end
   end, emu.callbackType.write, 0x002140, 0x002140)
 end
+-- KONLOG=1: every key-on (S-DSP $4C) from frame 1100 with its frame (<STAGE>_kon.txt)
+local kon = {}
+if os.getenv("KONLOG") then
+  emu.addMemoryCallback(function(addr, val)
+    if f >= 1100 and emu.read(0xF2, emu.memType.spcMemory) == 0x4C and val ~= 0 then kon[#kon + 1] = string.format("%d %02X", f, val) end
+  end, emu.callbackType.write, 0xF3, 0xF3, emu.cpuType.spc, emu.memType.spcMemory)
+end
 emu.addEventCallback(function() f = f + 1
+  if f == 2600 and os.getenv("KONLOG") then save(string.format("%02X_kon.txt", TARGET), table.concat(kon, NL)) end
   if f == 1100 then emu.write(0xA4, TARGET, emu.memType.snesWorkRam) end
   for _, t in ipairs(SH) do if f == t then save(string.format("%02X_%d.png", TARGET, t), emu.takeScreenshot()) end end
   if f == 2000 then save(string.format("%02X_obj.txt", TARGET), objs()) end

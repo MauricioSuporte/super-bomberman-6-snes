@@ -411,7 +411,10 @@ if !FD
 ; In: [$07,s]/[$08,s] = id / group (sound_hook's frame, +2 for the JSR).
 ; C set = request consumed.
 fd_sound:
-    lda $08,s               ; group
+    jsr fd_stage            ; World 1 stages: SB1's stage drivers
+    bcc +
+    rts
++   lda $08,s               ; group
     bne .notmap
     lda $07,s
     cmp #!MAP_REQ
@@ -532,6 +535,124 @@ fd_sound:
     sec
     rts
 
+; ---- World 1 stages (tools/sb6/features/world1.py): SB1's stage drivers ------
+; FD_STAGES[$1031] = the stage's driver (4+, an SB1 sound RAM image), 0 = SB5's
+; music. SB5's stage set request (group 4, the screen is dark) uploads it
+; instead (~1.3 s), the start jingle (group 0 $20) sends SB1's jingle (table
+; +22), the stage music (group 0 $06 / $0F) SB1's song (+23); SFX (group 2) go
+; through FD_SB1SFX to SB1's port 1, SB5's death voice (group 3 id 1) is SB1's
+; death sound. Anything else is left to fd_sound (other songs bring Hudson's
+; driver back). [$09,s] / [$0A,s] = id / group (one more JSR deep).
+fd_stage:
+    lda #$00                ; (X keeps its width: B = 0)
+    xba
+    lda.l $7E1031
+    tax
+    lda.l !FD_STAGES,x
+    bne +
+.no:
+    clc
+    rts
++   sta.l !fdtmp
+    lda $0A,s               ; group
+    cmp #$04
+    bne .playing
+    lda.l !fdtmp            ; ---- the stage's sound set: SB1's driver and songs
+    cmp.l !fdon
+    beq .eat                ; already there
+    sta.l !fdreq
+    lda #$00
+    sta.l !mapon
+    lda.l !fdon
+    beq .from_hudson
+    jsr fd_leave
+    jsr fd_upload
+    bra .eat
+.from_hudson:
+    lda #$00
+    sta.l !pend
+    lda.l !active
+    beq +
+    jsr release
++   jsr fd_start
+.eat:
+    sec
+    rts
+.playing:
+    lda.l !fdon
+    cmp #$04
+    bcc .no                 ; not an SB1 stage driver
+    lda $0A,s
+    beq .song
+    cmp #$02
+    beq .sfx
+    cmp #$03
+    bne .no
+    lda $09,s               ; group 3 (voices): SB5's death -> SB1's, others dropped
+    cmp #$01
+    bne .eat
+    lda #!SB1_DEATH
+    bra .p1
+.sfx:
+    lda #$00
+    xba
+    lda $09,s
+    bmi .eat
+    tax
+    lda.l !FD_SB1SFX,x
+    beq .eat
+.p1:
+    jsr fd_port1
+    bra .eat
+.song:
+    lda.l !fdon
+    jsr fd_x
+    lda $09,s
+    cmp #$20
+    beq .jingle
+    cmp #$06
+    beq .music
+    cmp #$0F
+    beq .music
+    cmp #$23                ; the player's death: SB1's music fades out ($3B), the driver
+    bne +                   ; stays for the restart (its set request is then taken as is)
+    lda #$3B
+    jsr fd_port0
+    bra .eat
++   clc                     ; another song (clear, game over...): Hudson's driver comes back
+    rts
+.music:
+    inx
+.jingle:
+    lda.l fd_table+22,x
+    beq .eat
+    jsr fd_port0
+    bra .eat
+
+; SB1: A = command on port 0 / port 1, new when bit 7 changes, echoed.
+fd_port0:
+    sta.l !fdtmp
+    lda.l !fdcmd
+    and #$80
+    eor #$80
+    ora.l !fdtmp
+    sta.l !fdcmd
+    sta.l APUIO0
+-   cmp.l APUIO0
+    bne -
+    rts
+fd_port1:
+    sta.l !fdtmp
+    lda.l !fdp1
+    and #$80
+    eor #$80
+    ora.l !fdtmp
+    sta.l !fdp1
+    sta.l APUIO1
+-   cmp.l APUIO1
+    bne -
+    rts
+
 ; X = (A - 1) * 24: the driver's entry in fd_table. M 8-bit.
 fd_x:
     dec a
@@ -634,12 +755,15 @@ fd_upload:
     bne -
     lda #$00
     sta.l !fdp1
-    lda.l fd_table+20,x     ; the song
+    sta.l !fdcmd
+    lda.l fd_table+20,x     ; the song (0: none, World 1 stages send theirs later)
+    beq +
     sta.l !fdcmd
     sta.l APUIO0
     eor.l fd_table+21,x
 -   cmp.l APUIO0            ; echoed when taken
     bne -
++
     lda.l !fdreq
     sta.l !fdon
     lda #$FF
@@ -688,9 +812,9 @@ fd_leave:
     lda.l !fdon
     cmp #$03                ; driver 3 is already back in the IPL ROM
     beq ++
-    cmp #$01
-    bne +
-    lda.l !fdcmd            ; SB1: port 0 command $37
+    cmp #$02
+    beq +
+    lda.l !fdcmd            ; SB1 (1, stage drivers 4+): port 0 command $37
     and #$80
     eor #$80
     ora #$37
@@ -768,8 +892,28 @@ map_music:
     plp
     rtl
 
+; ---- $C0:1171 (REP #$20 : LDA [$0D] : SEP #$20): the script op that puts a
+; set and a song into ARAM straight through Hudson's loader (stage records'
+; music entries). An SB1 stage driver has no use for them (and would hang
+; the loader): skipped while one runs.
+op_set_hook:
+    php
+    sep #$20
+    lda.l !fdon
+    cmp #$04
+    bcs +
+    plp
+    rep #$20
+    lda [$0D]
+    sep #$20
+    jml $C01177
++   plp
+    sep #$30                ; as the op leaves them
+    rtl
+
 fd_table = !FD_TABLE
 print "SYM map_music ", hex(map_music)
+print "SYM op_set_hook ", hex(op_set_hook)
 endif
 
 ; Sends 162-byte chunks if the ring has room: one per frame elapsed since the

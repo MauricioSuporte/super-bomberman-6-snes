@@ -535,6 +535,9 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
              "sample set upload: SB6 menu SFX definitions again after it")
     rb.patch(0xC00F0A, bytes.fromhex("20 35 0F 9C D1 03"), jsl(syms["song_hook"]) + b"\xEA\xEA",
              "song upload: SB6 menu SFX samples and definitions when the song leaves them room")
+    if "op_set_hook" in syms:
+        rb.patch(0xC01171, bytes.fromhex("C2 20 A7 0D"), jml(syms["op_set_hook"]),
+                 "script op set + song upload: skipped under an SB1 stage driver (World 1)")
     seconds = n * CHUNK_SAMPLES / RATE
     return dict(seconds=seconds, bytes=len(stream), banks=banks, code=len(code), driver=len(driver),
                 ring=ring_chunks, sfx=sfx_ids, pre_start=syms["pre_start"], pan=len(pan),

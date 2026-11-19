@@ -596,7 +596,12 @@ script accumulator (`61` = add).
   collision map is filled ~50 frames after the type `04` scripts. Items:
   `$145A` + cell. RNG: `JSL $C01DC4` (A = random byte).
 * Native tasks: `JSL $C020A1` + inline `dl routine` registers one (called
-  every frame by the runner, M/X 8-bit); `JSL $C021CE` ends the current one.
+  every frame by the runner, M/X 8-bit); it returns one byte past the `dl`
+  (SB5's callers put an `RTS` there that never runs: leave a filler byte).
+  `JSL $C021CE` ends the current one.
+* Script op at `$C0:1171` (stage records' music entries): set + song from
+  the table `$80:8655` (3 bytes per id) straight into Hudson's driver; it
+  returns with M/X 8-bit.
 * Stage intro text (task `$C5:0CD9`, `$0D` <= `$102F` < `$67`): set 4
   arrangement `$E0` centred on column `$10` (`JSL $C00000`), digits = set 4
   `$EA + digit` at columns `$11`, `$15`, `$16` row `$0E` (`JSL $C00009`) from
@@ -635,6 +640,23 @@ script accumulator (`61` = add).
   `$03CE` = `$FF`); the in-game SFX state `$0188-$018C` is cleared.
   Checked in Mesen: the key-on sequence and timing equal SB1's; stage
   music and in-game SFX after the map.
+* World 1 stages (`features/world1.py` `SB1_STAGE` / `STAGE_MUSIC`,
+  `asm/title_music.asm` `fd_stage`): SB1 restarts its driver at every
+  stage (port 0 `$3E`) and uploads ~54 KB from `$0800` (driver, the world's
+  songs, the game SFX); then the start jingle (`$8D` World 1, `$9E` 2, `$A0`
+  3, `$A2` 4, `$A4` 5, `$A6` 6; bosses none) and ~3 s later the song
+  (`$02`, `$04`, `$06`, `$0B`, `$14`, `$08`; bosses `$0A`). The images
+  (`assets/sound/sb1_stage_*.bin`, Mesen snapshot at the first command,
+  `tools/mesen/sb1_stages.lua FIRSTCMD`) of worlds 1, 2, 4, 6 differ only in
+  `$0800-$22FF` and from `$CD7C`. Driver entry, ready ports and DIR as the
+  map's (`$0812`, `$68`/`$09`). In the hack SB5's stage set request (group
+  4) uploads the stage's image (driver 4+ of `fd_table`), group 0 `$20`
+  sends the jingle, `$06`/`$0F` the song, `$23` (death) fades out (`$3B`,
+  the driver stays for the restart), other songs bring Hudson's back. SFX:
+  port 1 (bit 7 toggles, echoed, no wait in SB1's own `$09:8522`): `$1E`
+  bomb set, `$15` explosion, `$1F` player death, `$16` enemy death; other
+  SB5 stage SFX are dropped. The script op `$C0:1171` (set + song) is
+  skipped meanwhile.
 * Research: `tools/spc_render.py --voices all --echo` renders a DSP log
   (several logs joined with `+`); the map song capture needed the CPU
   frozen (the map lasts ~4 s in SB1) and runs of < 100 s per Mesen call.

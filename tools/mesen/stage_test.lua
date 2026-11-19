@@ -46,6 +46,7 @@ local KILLF = tonumber(os.getenv("KILLF") or "")
 local KILL = tonumber(os.getenv("KILL") or "-1")
 local ENDF = tonumber(os.getenv("END") or "1500")
 local FOLLOW = os.getenv("FOLLOW") == "1"
+local SPC = tonumber(os.getenv("SPC") or "")
 
 -- stage start: first frame with $1031 in the stage range
 local f, st, last = 0, nil, -1
@@ -77,6 +78,12 @@ emu.addEventCallback(function()
   if k == KILL then emu.write(0x1D50, 0, emu.memType.snesWorkRam) killing = true end
   for _, p in ipairs(POKES) do if p[1] == k then emu.write(p[2], p[3], emu.memType.snesWorkRam) end end
   if SHOTS[k] then shot(tostring(k)) end
+  if SPC and k % SPC == 0 then   -- SPC=<n>: every n stage frames, the SPC's PC and the CPU->APU ports
+    local s = emu.getState()
+    L(string.format("cpu %02X%04X spc frame %d pc=%04X ports %02X %02X %02X %02X", s["cpu.k"], s["cpu.pc"], k, s["spc.pc"],
+      emu.read(0x2140, emu.memType.snesDebug), emu.read(0x2141, emu.memType.snesDebug), emu.read(0x2142, emu.memType.snesDebug), emu.read(0x2143, emu.memType.snesDebug))
+      .. (function() local e = " envx" for v = 0, 7 do e = e .. string.format(" %02X", emu.read(v * 16 + 8, emu.memType.spcDspRegisters)) end return e end)())
+  end
   if DUMPS[k] then
     local t = {} for i = 0, 0x1FFFF do t[#t + 1] = string.char(emu.read(i, emu.memType.snesWorkRam)) end
     local h = io.open(OUT .. "_wram" .. k .. ".bin", "wb") h:write(table.concat(t)) h:close()
@@ -140,16 +147,47 @@ if STAGE then
   emu.addMemoryCallback(fn, emu.callbackType.write, 0x7E1031, 0x7E1031)
 end
 
+local EXECFROM = tonumber(os.getenv("EXECFROM") or "")
 -- EXEC="E4AC6D,C53B4E": log every call of these addresses (stage frame, A, X, Y, [$0A] byte)
 for item in string.gmatch(os.getenv("EXEC") or "", "[^,]+") do
   local a = tonumber(item, 16)
   emu.addMemoryCallback(function()
+    if EXECFROM and (not st or f - st < EXECFROM) then return end
     local s = emu.getState()
     local p = emu.read(0x0A, emu.memType.snesWorkRam) | (emu.read(0x0B, emu.memType.snesWorkRam) << 8) | (emu.read(0x0C, emu.memType.snesWorkRam) << 16)
-    L(string.format("exec %06X frame %s A=%04X X=%04X Y=%04X [$0A]=%06X:%02X mode %02X", a, st and tostring(f - st) or ("boot " .. f),
-      s["cpu.a"], s["cpu.x"], s["cpu.y"], p, emu.read(p, emu.memType.snesMemory), r(0x1031)))
+    local sp = s["cpu.sp"]
+    local stk = ""
+    for i = 1, 9 do stk = stk .. string.format("%02X", emu.read(sp + i, emu.memType.snesMemory)) end
+    L(string.format("exec %06X frame %s A=%04X X=%04X Y=%04X [$0A]=%06X:%02X mode %02X stack %s", a, st and tostring(f - st) or ("boot " .. f),
+      s["cpu.a"], s["cpu.x"], s["cpu.y"], p, emu.read(p, emu.memType.snesMemory), r(0x1031), stk))
   end, emu.callbackType.exec, a, a)
 end
 
+-- DSPLOG="a,b": S-DSP writes between stage frames a and b, with sound RAM / DSP dumps at a, for
+-- tools/spc_render.py (OUT_dsp.txt, OUT_aram.bin, OUT_dsp.bin)
+local DA, DB = (os.getenv("DSPLOG") or ""):match("(%d+),(%d+)")
+if DA then
+  DA, DB = tonumber(DA), tonumber(DB)
+  local dl = {}
+  emu.addMemoryCallback(function(addr, val)
+    if not st or f - st < DA or f - st > DB then return end
+    dl[#dl + 1] = string.format("W %d %02X %02X", emu.getState()["spc.cycle"], emu.read(0xF2, emu.memType.spcMemory), val)
+  end, emu.callbackType.write, 0xF3, 0xF3, emu.cpuType.spc, emu.memType.spcMemory)
+  emu.addEventCallback(function()
+    if not st then return end
+    local k = f - st
+    if k == DA then
+      local t = {} for i = 0, 65535 do t[#t + 1] = string.char(emu.read(i, emu.memType.spcRam)) end
+      local h = io.open(OUT .. "_aram.bin", "wb") h:write(table.concat(t)) h:close()
+      t = {} for i = 0, 127 do t[#t + 1] = string.char(emu.read(i, emu.memType.spcDspRegisters)) end
+      h = io.open(OUT .. "_dsp.bin", "wb") h:write(table.concat(t)) h:close()
+      dl[#dl + 1] = string.format("START %d", emu.getState()["spc.cycle"])
+      dl[#dl + 1] = string.format("C %d", emu.getState()["spc.cycle"])
+    end
+    if k == DB then local h = io.open(OUT .. "_dsp.txt", "w") h:write(table.concat(dl, NL)) h:close() end
+  end, emu.eventType.endFrame)
+end
+
 -- picker_nav drives the menus; its own stop comes at STAGE_WAIT (keep it beyond END)
+if os.getenv("RING") then dofile(os.getenv("RING")) end
 dofile(DIR .. "/picker_nav.lua")

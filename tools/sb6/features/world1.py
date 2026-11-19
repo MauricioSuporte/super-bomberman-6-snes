@@ -313,3 +313,86 @@ def chain(rb):
         rb.patch(MODE_TABLE + 3 * (stage - 1), p(rec), p(new), f"World 1: boss ${stage:02X} has one exit")
         report.append(f"boss ${stage:02X} -> ${nxt:02X}")
     return report
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Music: Super Bomberman 1's own driver and songs in World 1 (asm/title_music.asm fd_sound, the map's
+# foreign-driver code). SB1 cold-restarts its driver at every stage ($3E) and uploads ~54 KB: sound RAM
+# $0800-end with the driver, the world's songs and the game SFX, then sends the world's start jingle and,
+# ~3 s later, its song (port 0). assets/sound/sb1_stage_<w>.bin = that upload, taken in Mesen at the first
+# command (tools/mesen/sb1_stages.lua FIRSTCMD). Worlds 1, 2, 4, 6 share one set: their images differ only
+# in $0800-$22FF (driver variables, instrument table) and from $CD7C (the world's own samples), so the
+# middle is stored once; the tail goes in the IPL upload list (above the loader's triples).
+# Here SB5's stage set request (group 4: the screen is dark) uploads it instead, SB5's start jingle
+# (group 0 $20) sends SB1's jingle and SB5's stage music (group 0 $06, bosses $0F) SB1's song.
+SB1_STAGE = {     # name: (image, jingle, song) as port 0 commands without the toggle bit; 0 = none
+    "w1": ("sb1_stage_w1.bin", 0x0D, 0x02),
+    "w2": ("sb1_stage_w2.bin", 0x1E, 0x04),
+    "w3": ("sb1_stage_w3.bin", 0x20, 0x06),
+    "w4": ("sb1_stage_w4.bin", 0x22, 0x0B),
+    "w6": ("sb1_stage_w6.bin", 0x26, 0x08),
+    "w5": ("sb1_stage_w5.bin", 0x24, 0x14),
+    "boss": ("sb1_stage_boss.bin", 0x00, 0x0A),
+}
+STAGE_MUSIC = {   # 1-1 World 1's, 1-2 World 2's (2-1), 1-3 World 3's (3-6), 1-4 World 4's (4-4),
+    0x0D: "w1",   # 1-5 World 6's (6-4), 1-6 the tournament's (World 5), 1-7 the 2-8 boss's
+    0x11: "w2",
+    0x18: "w3",
+    0x10: "w4",
+    0x17: "w6",
+    0x67: "w5",
+    0x69: "w5",
+    0x68: "boss",
+}
+FAMILY = ("w1", "w2", "w4", "w6")
+SPLIT1, SPLIT2 = 0x2300, 0xCD7C   # own $0800-$22FF, shared $2300-$CD7B, own tail $CD7C-
+# SB5 group-2 SFX (stages) -> SB1 SFX (port 1); 0 = silent. SB1: $1E bomb set, $15 explosion, $1F player
+# death, $16 enemy death (tools/extract_sb1_sfx.py).
+SB1_SFX = {0x06: 0x1E, 0x0C: 0x15}
+SB1_DEATH, SB1_ENEMY = 0x1F, 0x16
+SB1_ENTRY, SB1_READY = 0x0812, (0x68, 0x09)   # as the map's SB1 driver (features/world_map.py)
+
+
+def stage_drivers(snd_dir):
+    """Driver entries for world_map.sound(stages=): pieces (key, data, regions) uploaded one after the
+    other from $0800, IPL extra blocks; and name -> index."""
+    def img(name):
+        return open(os.path.join(snd_dir, SB1_STAGE[name][0]), "rb").read()
+
+    base = 0x0800
+    out, index = [], {}
+    shared = img(FAMILY[0])[SPLIT1 - base:SPLIT2 - base]
+    for name in FAMILY:
+        if img(name)[SPLIT1 - base:SPLIT2 - base] != shared:
+            raise BuildError(f"SB1 stage music: {name}'s image differs from w1's in ${SPLIT1:04X}-${SPLIT2 - 1:04X}")
+    big = {"w3": ["free_c8_sheets"], "w5": ["stream_ee"], "boss": ["free_c7_sheets", "free_c9_sheets"]}
+    for name, (fn, jingle, song) in SB1_STAGE.items():
+        data = img(name)
+        if name in FAMILY:
+            pieces = [(f"sb1 {name} $0800", data[:SPLIT1 - base], ["stream_ec", "free_c9_sheets", "obj_f7"]),
+                      ("sb1 w1/w2/w4/w6 $2300", shared, ["stream_ed"])]
+            extra = [(SPLIT2, data[SPLIT2 - base:])]
+        else:
+            data += bytes(-len(data) % 3)
+            cut = len(data) if name != "boss" else 0xBFFD + 3     # boss: 48 KB in $C7, the rest elsewhere
+            pieces = [(f"sb1 {name} $0800", data[:cut], big[name])]
+            if cut < len(data):
+                pieces.append((f"sb1 {name} ${base + cut:04X}", data[cut:], ["free_c9_sheets", "obj_f7"]))
+            extra = []
+        index[name] = len(out)
+        out.append(dict(name=f"SB1 stage {name}", pieces=pieces, extra=extra, entry=SB1_ENTRY, ready=SB1_READY,
+                        song=0x00, echo=0x00, sfx=(jingle, song)))
+    return out, index
+
+
+def stage_tables(rb, first, index):
+    """$1031 -> driver (0 = SB5's music) and SB5 group-2 SFX -> SB1 SFX tables in bulk: asm defines."""
+    t = bytearray(256)
+    for stage, name in STAGE_MUSIC.items():
+        t[stage] = first + index[name]
+    s = bytearray(128)
+    for k, v in SB1_SFX.items():
+        s[k] = v
+    ta = rb.alloc("bulk", bytes(t), "SB1 stage music: driver of each stage ($1031)")
+    sa = rb.alloc("bulk", bytes(s), "SB1 stage music: SB5 group-2 SFX -> SB1 SFX (port 1)")
+    return {"FD_STAGES": f"${ta:06X}", "FD_SB1SFX": f"${sa:06X}", "SB1_DEATH": f"${SB1_DEATH:02X}"}
