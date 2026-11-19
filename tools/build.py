@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, sb1_stages, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -147,6 +147,9 @@ def main():
 
     w1 = world1.code(rb)
     print("world 1: stages " + ", ".join(world1.chain(rb)))
+    for n, i in sb1_stages.apply(rb).items():
+        print(f"world 1: {n} = {i['metatiles']} metatiles, {i['tiles']} tiles, {i['palettes']} palettes "
+              f"({i['approx']} pixels approximated), {i['bytes']} bytes LZ")
     pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"], w1["w1_op"])
     print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")
 

@@ -602,6 +602,26 @@ script accumulator (`61` = add).
 * Script op at `$C0:1171` (stage records' music entries): set + song from
   the table `$80:8655` (3 bytes per id) straight into Hudson's driver; it
   returns with M/X 8-bit.
+* Stage field (BG2), type `02` script `2A n 27 n 0A map theme` (set 4):
+  op `0A` (`$C2:0BED`, `$1B7E` map, `$1B7D` theme; `$C0:3550`/`$357B`).
+  Map m = 16 x 13 metatile ids (LZ, row 13 = 0) at the first 24-bit
+  pointer of the list named by the 3 bytes at `$D0:A000 + 3*(m-1)`. Theme t:
+  metatile table at word `$D0:0000 + 2*(t-1)` (bank `$D0`, 4 BG2 words TL TR
+  BL BR per id; table size = up to the next theme's), collision table at
+  word `$D0:8000 + 2*(t-1)` (`$80` wall, `$30` soft, `$00` floor per id).
+  Id 2 = the soft block scattered at random; a burnt block shows the map's
+  id again. Burning frames: tiles `$126`, `$122`, `$11E`, `$11A`, `$116`
+  (4 each) in palette 3, ~8 frames apiece; flames = tiles `$050-$07B`
+  palette 2. Set 4 archive n = BG tiles from `$100` (LZ; theme 2 `$1600`
+  bytes), palette n = CGRAM `$20`/`$30` + 80/64 colors (palettes 2/3-6).
+  Theme 2 = stages `$0F`/`$10`, 5 = `$15-$17`, 4 = `$13`/`$14`. Stage
+  `$10`'s type `06` script draws SB5's clouds on BG1 (`FF 8D DA 04`,
+  `FF 8D DB 04`, set 4 arrangements).
+* Hack (`features/sb1_stages.py`, pictures from `tools/sb1_stage_assets.py`):
+  1-4 (`$10`) = SB1 4-4, 1-5 (`$17`) = SB1 6-4: new map, metatiles,
+  collisions, archive and palette for themes 2 / 5 (5's tables moved over
+  theme 4's + its own); SB1 draws its stages on BG1 in 16x16-tile mode, 17
+  x 13 entries (walls 2 wide): SB5 column c = SB1 column c + 1.
 * Stage intro text (task `$C5:0CD9`, `$0D` <= `$102F` < `$67`): set 4
   arrangement `$E0` centred on column `$10` (`JSL $C00000`), digits = set 4
   `$EA + digit` at columns `$11`, `$15`, `$16` row `$0E` (`JSL $C00009`) from

@@ -275,6 +275,30 @@ def code(rb):
     return syms
 
 
+# script ops left out (stage: {type: [op prefixes]}): 1-4 is SB1's 4-4 now (features/sb1_stages.py), without
+# SB5's clouds (its type 06 script draws them on BG1 with FF 8D DA 04 / FF 8D DB 04, set 4 arrangements)
+DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB")]}}
+
+
+def _drop_ops(rb, a, prefixes):
+    """The script at a (to its 00) without the ops starting with one of the prefixes. Operand lengths: op n
+    at $C2:0AF5+n-1, FF n at $C2:09D8+n-1, FE n at $C2:094D+n-1 (tools/scriptdis.py)."""
+    out = bytearray()
+    while True:
+        op = rb.d[off(a)]
+        if op == 0:
+            return bytes(out + b"\x00")
+        if op in (0xFE, 0xFF):
+            sub = rb.d[off(a) + 1]
+            ln = 2 + rb.d[off(0xC2094D if op == 0xFE else 0xC209D8) + sub - 1]
+        else:
+            ln = 1 + rb.d[off(0xC20AF5) + op - 1]
+        b = bytes(rb.d[off(a):off(a) + ln])
+        if not any(b.startswith(x) for x in prefixes):
+            out += b
+        a += ln
+
+
 def chain(rb):
     def p(a):
         return bytes([a & 0xFF, (a >> 8) & 0xFF, a >> 16])
@@ -285,7 +309,18 @@ def chain(rb):
     report = []
     for stage, num, nxt in CHAIN:
         rec, roots = _roots(rb, stage)
-        kept = [r for r, entries in roots if not any(t == 0x0D for t, _ in entries)]
+        kept = []
+        for r, entries in roots:
+            if any(t == 0x0D for t, _ in entries):
+                continue
+            repl = DROP_OPS.get(stage, {})
+            if any(t in repl for t, _ in entries):
+                ents = [(t, rb.alloc("bulk", _drop_ops(rb, a, repl[t]),
+                                     f"World 1: stage ${stage:02X} type {t:02X} script without some ops")
+                         if t in repl else a) for t, a in entries]
+                r = rb.alloc("bulk", b"".join(bytes([t]) + p(a) for t, a in ents) + bytes(1),
+                             f"World 1: stage ${stage:02X} root with new scripts")
+            kept.append(r)
         exit_ = rb.alloc("bulk", bytes([0x0F, nxt, 0x00]), f"World 1 door: stage ${stage:02X} -> ${nxt:02X}")
         door = rb.alloc("bulk", bytes([0x04]) + p(pick) + bytes([0x0D]) + p(queue) + bytes([0x0B]) + p(exit_)
                         + bytes([0x0C]) + p(touch) + b"\x00", f"World 1 door root, stage ${stage:02X}")

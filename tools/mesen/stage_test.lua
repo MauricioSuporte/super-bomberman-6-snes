@@ -27,6 +27,9 @@ end
 
 local SHOTS = {}
 for v in string.gmatch(os.getenv("SHOTS") or "", "%d+") do SHOTS[tonumber(v)] = true end
+local ppu = {}   -- last values written to $2100-$2133 (dumped with DUMP as OUT_ppu<frame>.bin)
+for i = 0, 0x33 do ppu[i] = 0 end
+emu.addMemoryCallback(function(addr, value) ppu[addr & 0xFF] = value end, emu.callbackType.write, 0x002100, 0x002133)
 local DUMPS = {}   -- DUMP="300,600": WRAM ($7E/$7F), VRAM and CGRAM dumps OUT_wram/_vram/_cgram<frame>.bin
 for v in string.gmatch(os.getenv("DUMP") or "", "%d+") do DUMPS[tonumber(v)] = true end
 local MOVES = {}
@@ -93,6 +96,8 @@ emu.addEventCallback(function()
     h = io.open(OUT .. "_cgram" .. k .. ".bin", "wb") h:write(table.concat(t)) h:close()
     t = {} for i = 0, 543 do t[#t + 1] = string.char(emu.read(i, emu.memType.snesSpriteRam)) end
     h = io.open(OUT .. "_oam" .. k .. ".bin", "wb") h:write(table.concat(t)) h:close()
+    t = {} for i = 0, 0x33 do t[#t + 1] = string.char(ppu[i]) end
+    h = io.open(OUT .. "_ppu" .. k .. ".bin", "wb") h:write(table.concat(t)) h:close()
   end
   if k == ENDF then
     local h = io.open(OUT .. ".txt", "w") h:write(table.concat(log, NL)) h:close()
@@ -158,8 +163,8 @@ for item in string.gmatch(os.getenv("EXEC") or "", "[^,]+") do
     local sp = s["cpu.sp"]
     local stk = ""
     for i = 1, 9 do stk = stk .. string.format("%02X", emu.read(sp + i, emu.memType.snesMemory)) end
-    L(string.format("exec %06X frame %s A=%04X X=%04X Y=%04X [$0A]=%06X:%02X mode %02X stack %s", a, st and tostring(f - st) or ("boot " .. f),
-      s["cpu.a"], s["cpu.x"], s["cpu.y"], p, emu.read(p, emu.memType.snesMemory), r(0x1031), stk))
+    L(string.format("exec %06X frame %s A=%04X X=%04X Y=%04X [$0A]=%06X:%02X mode %02X set %02X stack %s", a, st and tostring(f - st) or ("boot " .. f),
+      s["cpu.a"], s["cpu.x"], s["cpu.y"], p, emu.read(p, emu.memType.snesMemory), r(0x1031), r(0x0AE7), stk))
   end, emu.callbackType.exec, a, a)
 end
 
