@@ -533,6 +533,8 @@ def apply(rb, wav, sound_dir, cache_dir, game_sfx, first_bank=0xE5, drop_frames=
 
     rb.patch(0xC00E58, bytes.fromhex("20 62 0F 20 35 0F"), jsl(syms["set_hook"]) + b"\xEA\xEA",
              "sample set upload: SB6 menu SFX definitions again after it")
+    rb.patch(0xC00E9C, bytes.fromhex("5A DA 0A AA A9 DA"), jml(syms["sb1m_song"]) + bytes([0xEA, 0xEA]),
+             "song upload: World 1's 1-1 loads SB1's music instead of SB5's ZONE1 samples (sb1m_song)")
     rb.patch(0xC00F0A, bytes.fromhex("20 35 0F 9C D1 03"), jsl(syms["song_hook"]) + b"\xEA\xEA",
              "song upload: SB6 menu SFX samples and definitions when the song leaves them room")
     seconds = n * CHUNK_SAMPLES / RATE

@@ -118,16 +118,6 @@ endif
     jsl !GS_SOUND
     bcc +
     brl .swallow
-+   lda $06,s               ; World 1's 1-1: SB1's music (tools/sb6/features/sb1_music.py)
-    bne +
-    lda $05,s
-    cmp #!SB1M_ID
-    bne +
-    lda.l !MODE
-    cmp #!SB1M_STAGE
-    bne +
-    jsr sb1m_play
-    brl .swallow
 +   lda $06,s               ; group
     cmp #$02
     bne .not_sfx
@@ -196,36 +186,48 @@ endif
     plp
     rtl
 
-; SB1's 1-1 music instead of SB5's ZONE1 song (music id !SB1M_ID on stage
-; !SB1M_STAGE): one upload session with its list (sequence at $3000, samples,
-; directory and tuning entries) and game_sfx's cornered entry looped into its
-; silent block (the song covers B1), then the song command twice, as the API
-; does. Set and song are marked unknown so the next request uploads its own.
-sb1m_play:
+; SB1's 1-1 music (tools/sb6/features/sb1_music.py): JML from Hudson's song
+; upload $C0:0E9C (A = song, M/X 8-bit). On stage !SB1M_STAGE, SB5's ZONE1
+; samples (song !SB1M_SB5SONG, loaded with its sequence while the stage loads)
+; are replaced by SB1's song + SB5's jingles, so music id 6 later only sends
+; command 1. As song_hook does for a song over the menu SFX samples: SB5's
+; SFX definitions back; game_sfx's gs_song = SB1M_SONG (R kept, no part B).
+sb1m_song:
+    phy
+    phx
+    cmp #!SB1M_SB5SONG
+    bne .orig
+    pha
+    lda.l !MODE
+    cmp #!SB1M_STAGE
+    beq .ours
+    pla
+.orig:
+    asl
+    tax
+    lda #$DA
+    jml $C00EA2
+.ours:
+    pla
     php
     phb
     sep #$30
     lda #$80                ; Hudson's routines use absolute $03Cx / $214x
     pha
     plb
-    lda #!SB1M_ID
-    sta.l $0003CC
-    lda #$FF
-    sta.l $0003CE
-    sta.l $0003CD
-    lda #!SB1M_SONG         ; game_sfx's gs_song: R stays, no room for the cornered sound's part B
-    sta.l $00018B
     %c0call($C00F13)        ; open the upload session
     %sendlist(!SB1M_LIST)
-    %sendlist(!L_DIR0)
-    %c0call($C00F35)        ; close it (the driver runs on)
-    lda #!SB1M_CMD
-    %c0call($C00E7F)
-    lda #!SB1M_CMD
-    %c0call($C00E7F)
+    lda #$00
+    sta.l !sfxok
+    sta.l !sfxnew
+    %sendlist(!L_ORIG)
+    ldx #!SB1M_SONG
+    jsl !GS_SONG            ; in-game SFX: R, tables, the cornered sample's entry
+    stz $03D1
+    %c0call($C00F35)        ; close it
     plb
     plp
-    rts
+    jml $C00F10             ; PLX / PLY / RTS of the original
 
 ; A = slot (1-31): port 0 = $80 | toggle | slot, then waits for the echo.
 send_sfx:
@@ -946,4 +948,5 @@ print "SYM loop_hook ", hex(loop_hook)
 print "SYM pre_start ", hex(pre_start)
 print "SYM set_hook ", hex(set_hook)
 print "SYM song_hook ", hex(song_hook)
+print "SYM sb1m_song ", hex(sb1m_song)
 print "SYM end ", hex(pc())

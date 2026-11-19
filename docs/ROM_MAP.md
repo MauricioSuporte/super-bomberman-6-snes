@@ -767,11 +767,15 @@ script accumulator (`61` = add).
 * World 1 stages play on Hudson's driver with SB5's stage SFX. 1-1
   (stage `$0D`) plays SB1's World 1 song converted to a Hudson song
   (`tools/sb6/features/sb1_music.py`, see "Hudson songs"): `sound_hook`
-  (`asm/title_music.asm`) answers music id 6 on that stage with `sb1m_play`
-  (sets `$03CC` = 6, `$03CD`/`$03CE` = `$FF` so the next request uploads
-  its own song, `gs_song` = `SB1M_SONG`; session `$C0:0F13`, the list,
-  game_sfx's `L_DIR0`, `$C0:0F35`, then song command 1 twice). SB5's start
-  jingle plays first, as for any SB5 stage. The other World 1 stages keep
+  (`asm/title_music.asm`): `sb1m_song`, hooked at the start of Hudson's
+  song upload `$C0:0E9C` (A = song; `PHY PHX`, then `$C0:0EA2`, ends with
+  `PLX PLY RTS` at `$C0:0F10`), uploads its list instead of song 5 (SB5's
+  ZONE1 samples) on that stage; the stage script loads set `$2C` + song 5
+  unconditionally (`$C0:1171`) while the screen is black, so music id 6
+  (`[$2C, 5, 1]`) and the start jingle (group 0 `$20`: command 2) only send
+  commands. The list keeps SB5's commands 2-4 (jingles, `$3E00-$4240` with
+  their samples) and makes command 1 SB1's song. Uploading it at music id 6
+  instead (after the jingle) froze the game ~80 frames. The other World 1 stages keep
   SB5's ZONE1 song. SB1's per-world sound RAM images
   (`assets/sound/sb1_stage_*.bin`, Mesen snapshot at SB1's first stage
   command) stay as the source of SB1's samples and of future conversions.

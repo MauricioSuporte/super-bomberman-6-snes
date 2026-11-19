@@ -125,11 +125,14 @@ SFX. Pointer table entries `$448A-$448D`, priorities `$458D-$458E`,
 instruments 3 (`$44DC`) and 31 (`$454C`), directory / tuning entries `$1F`,
 `$3D`. Sizes are printed by the build.
 
-World 1's 1-1 music (`tools/sb6/features/sb1_music.py`, SB1's World 1 song as a Hudson song): sequence
-`$3000-$422A` (song table, header, 6 tracks, 41 subroutines; must end below the SFX tables at `$4400`),
-samples `$8000-$D99C` (7 SB1 samples; must end below the echo buffer at `$DD00`), directory / tuning entries
-0-6. It covers part B of the cornered recording (`$D841`), so while it plays `gs_song` = `SB1M_SONG`
-(R kept, no B: the cornered sound is cut short, as in songs 15, 16, 21, 23-26).
+World 1's SB1 music (`tools/sb6/features/sb1_music.py`, SB1's songs as Hudson songs, uploaded instead of
+SB5's ZONE1 samples while the stage loads): song table `$3000-$300B` (command 1 = SB1's song, 2-4 = SB5's
+jingles), SB5's jingles where SB5 has them (`$3E00-$4240`), SB1's samples from `$8000`; SB1's header, tracks
+and subroutines and the jingles' samples (SB5 directory entries 2, 3, `$0B-$0D`, 5.5 KB) in the rest of
+`$300C-$43FF` and `$8000-$F4FF`: the song and the jingles use echo delay 1 (buffer `$F500-$FCFF`). The build
+prints the ARAM left. Directory / tuning entries 0-`$11` (SB1's samples take the ones the jingles do not use).
+It covers part B of the cornered recording (`$D841`), so while it is loaded `gs_song` = `SB1M_SONG` (R kept,
+no B: the cornered sound is cut short, as in songs 15, 16, 21, 23-26).
 
 While the title music streams, the stream driver owns `$7000-$B8FF`
 (driver + SFX scripts `$7000-$72FF`, ring `$7300-$B89B`,

@@ -307,6 +307,5 @@ def apply(rb, sound_dir, cache_dir):
     lr = int(defs["L_R"][1:], 16)
     rb.patch(t, bytes(rb.d[off(t):off(t) + 3]), lr.to_bytes(3, "little"), f"game SFX: set ${STREAM_SET:02X} = R (group-3 stream)")
     info["syms"] = syms
-    info["l_dir0"] = defs["L_DIR0"]   # cornered entry looped into the silent block (asm/title_music.asm sb1m_play)
     info["sb1m_song"] = defs["SB1M_SONG"]
     return info
