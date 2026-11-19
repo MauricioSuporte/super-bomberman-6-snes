@@ -629,7 +629,12 @@ script accumulator (`61` = add).
   1-4 (`$10`) = SB1 4-4, 1-5 (`$17`) = SB1 6-4: new map, metatiles,
   collisions, archive and palette for themes 2 / 5 (5's tables moved over
   theme 4's + its own); SB1 draws its stages on BG1 in 16x16-tile mode, 17
-  x 13 entries (walls 2 wide): SB5 column c = SB1 column c + 1.
+  x 13 entries (walls 2 wide): SB5 column c = SB1 column c + 1. 1-7
+  (`$68`, boss arena: `2A 1B 27 1F 0B 27 0C 8F`, op `0B` = theme, `0C` =
+  map + draw without soft blocks; theme `$27`, archive `$1F`, palette `$1B`
+  are shared by all arenas `$67-$73`, `$9C-$9F`) = SB1 4-8: its script now
+  names archive / palette 4 (freed slots) and theme 4, whose tables are new
+  ones in freed bank `$D0` room (`free_d0_maps*`).
 * Stage intro text (task `$C5:0CD9`, `$0D` <= `$102F` < `$67`): set 4
   arrangement `$E0` centred on column `$10` (`JSL $C00000`), digits = set 4
   `$EA + digit` at columns `$11`, `$15`, `$16` row `$0E` (`JSL $C00009`) from
