@@ -566,6 +566,53 @@ script accumulator (`61` = add).
   changes (VRAM `$2000-$211F`), the clouds do not move. Shown ~250 frames,
   then the stage.
 
+## Stages: records, portals, clear (World 1)
+
+* Mode table `$C6:0000 + 3*(stage-1)` -> record = 3-byte pointers to roots
+  (`000000` ends); root = `[type][ptr24]`... `00`. `$C2:00D7` (A = type)
+  runs that type's script of every root, one after the other in **one
+  task** (a sleep in a type `04` script holds the rest of the stage setup).
+  Types seen: `01` setup (`10 nn`, `42 set group` sounds, `FF A0 id` music),
+  `0E` music on, `06` palette cycling, `02` map (`2A pal 27 arc 0A map`),
+  `04` stage start (enemies `A2 x y type`, items `21 ...`), `0D` all enemies
+  dead, `0B` portal exit (`0F dest` = next mode), `0C` portal touch test.
+* Stage `$0D` (1-1) record `$C6:1ADB`; bosses `$67-$70` in bank `$C7`
+  (`$67` `$C7:1B47`, rival boss index by `FF 7C 03 07 03 n`; portals behind
+  route flags `08 f 49 n`, `83` = not).
+* Enemies alive `$1D50` (+1 `$C3:050B`, -1 in the death routine
+  `$C3:0649-$065A`). The clear check is a native task `$C5:3B4E` (started by
+  `$C5:3A58` `JSL $C020A1 / dl`): `$1D50` = 0 -> `LDA #$0D / JSL $C200D7`
+  (type `0D` scripts), then it becomes the portal processor `$C5:3B60`.
+  Poking `$1D50` = 0 in a test clears the stage (the enemies stay).
+* Portal queue `$7E:4DA3` (5 slots, `$FF` free; state `$41`/`$42` from
+  `JSL $C20372` with op `$11`'s first operand; x `$4DA8`, y `$4DAD`). Op
+  `11 label x y` (`$C2:0C38`) queues; the processor waits while the cell has
+  `$1052 & $E0` (soft block) or `$1152 & $C0`, then creates the portal
+  (object `$04FF` = 6, `$04A0` = `$26`), SFX group 2 `$33`, archive set 3
+  `$63` (its beam tiles, OBJ `$160+`, `$D6:CAA7`). Op `12 x y`
+  (`$C2:0C67`): sum of seat + 1 of the bombers on the cell -> `$0373`,
+  `JSL $C174D1`. Player cell = (`$182A`+8)>>4, ((`$1872`+8)&`$F0`)>>4.
+* Soft blocks are random each play (`$1052` = `$30`, walls `$80`); the
+  collision map is filled ~50 frames after the type `04` scripts. Items:
+  `$145A` + cell. RNG: `JSL $C01DC4` (A = random byte).
+* Native tasks: `JSL $C020A1` + inline `dl routine` registers one (called
+  every frame by the runner, M/X 8-bit); `JSL $C021CE` ends the current one.
+* Stage intro text (task `$C5:0CD9`, `$0D` <= `$102F` < `$67`): set 4
+  arrangement `$E0` centred on column `$10` (`JSL $C00000`), digits = set 4
+  `$EA + digit` at columns `$11`, `$15`, `$16` row `$0E` (`JSL $C00009`) from
+  the decimal word `$80:8A8A + 2*$102F` (1001 = "1 - 01"; split by
+  `$C0:4672` into `$1CB6-$1CBA`). Font = BG3 set 3 archive `$4D` (LZ, VRAM
+  `$5400`, tiles `$80-$F6`: digits, PAUSE!, ZONE `$A6-$AB`, START, TIME,
+  HURRY UP!). World map label "ZONE" + digit: BG3 tiles 1-8 / `$11-$18` +
+  `$0A`+ of set 3 archive `$0D` (raw, `$E3:D110`).
+* Hack (`tools/sb6/features/world1.py`, `asm/world1.asm`): "WORLD" in both
+  fonts (archive `$4D` re-packed in `bulk` with two more tiles `$F7`/`$F8`,
+  arrangement `$E0` 14 wide in `free_e2`; archive `$0D` tiles redrawn in
+  place); World 1 = `$0D`, `$11`, `$18`, `$10`, `$17` (1-1..1-5, one door
+  each: op `FF 1A F6 n`, the door hides in a random soft block, picked by a
+  native task once the map is in), then bosses `$67` -> `$69` (1-6) -> `$68`
+  (1-7) -> `$1C`.
+
 ## Super Bomberman 1's sound driver (ZONE1 map music)
 
 * Boot: IPL upload to `$0800`, a second stage loader, then cold start
@@ -607,6 +654,24 @@ script accumulator (`61` = add).
 * Hack (`world_map._sb1_accept`): instrument table moved to `$A200` (+
   instrument 6 = record `$A210`, sample 8), directory moved to `$A300`
   (+ entry 8 = SB6's accept recording at `$A330`), SFX 1 = one note of it.
+
+## Super Bomberman 1's stages (reference for porting)
+
+* Scene index `$0D10` (object at `$0D00`: `$C4:694F` `LDA $C32EEF,X`, word
+  table of scene scripts in bank `$C3`, X = scene * 2): `$00-$2F` = stages
+  (world * 8 + stage - 1; stage 8 = boss), `$30` battle, `$31` title,
+  `$39` world map. `$C4:63A9` copies `$00A4` (the scene to play next, set by
+  the map) into `$0D10` (old one to `$0D16`). Writing `$00A4` on the map
+  (frame ~1100 after Start x9 from frame 300) plays any stage, boss included;
+  `tools/mesen/sb1_stages.lua` does it and screenshots (output of all 48:
+  `build/sb1_stages/`, README there lists themes / enemies).
+* Stage grid: `$C4:7B33` unpacks the layout from the scene script pointer
+  `[$53]` to `$7E:4800` (cells) / `$7E:4A00`, then 13 rows x 17 into
+  `$0916+` (collision, 2 bytes per cell, row stride `$40`) and `$04F4`/`$0514`.
+* Music (port 0, value & `$7F`; bit 7 toggles per command): world 1 `$02`,
+  2 `$04`, 3 `$06`, 4 `$0B`, 5 `$14`, 6 `$08`. Boss stages send `$3E` (cold
+  restart, new upload) and then `$0A` (1-8, 2-8), `$17` (3-8), `$18` (4-8),
+  `$19` (5-8), `$1A` (6-8) from the uploaded set.
 
 ## Super Bomberman 2's sound driver (ZONE2 map music)
 

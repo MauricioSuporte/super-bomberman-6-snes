@@ -155,6 +155,12 @@ if !WMAP_OP
     jml !WMAP_OP
 +
 endif
+if !W1_OP
+    cmp #$F6                        ; F6 n: World 1's exit door (asm/world1.asm)
+    bne +
+    jml !W1_OP
++
+endif
     cmp #$F4
     bne +
     brl .wait

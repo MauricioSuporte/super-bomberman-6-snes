@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, title, title_music, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -141,13 +141,17 @@ def main():
           + ", ".join(f"ZONE{i + 1} {t} tiles / {p} BG palettes" for i, (t, p) in enumerate(wmap["zones"]))
           + f"; sea in {wmap['frames']} frames, {wmap['lights']} light colors (preview build/world_map_preview.png)")
 
-    pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"])
+    w1 = world1.code(rb)
+    print("world 1: stages " + ", ".join(world1.chain(rb)))
+    pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"], w1["w1_op"])
     print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")
 
     coop.apply(rb, louie["louie_tick"], pick)
     print("co-op: Normal Game for 1-4 players (multitap on port 2)")
     options.apply(rb, title.SET)
     print("options: title submenu (DISCORD -> QR code); SB5's Options, Sound Test and Password screens freed")
+    world1.text(rb, base_rom, args.out)
+    print("world 1: WORLD instead of ZONE (stage intro, world map label; preview build/world_text_preview.png)")
     for ch in info["chars"] if info else []:
         n = ch["notes"]
         print(f"char{ch['char']}: Bomberman's layout, {n['edited']} animations redrawn in {ch['strips']} KB of tiles, "

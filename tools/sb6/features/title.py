@@ -58,8 +58,9 @@ OLD_DATA = [
     # SB5's two title characters (set 3 OBJ archives $61, $62, LZ, one block): loaded only by `28 61 28 62`
     # at $C6:FC9D (intro path, skipped) and $C7:17DE (handler 4, patched); every other "28 61" / "28 62"
     # in the ROM is an operand or data. The first byte stays: the decompressor reads one byte past
-    # archive $60 (the menu cursor, still loaded), which ends right there.
-    ("free_d6", 0xD6A3ED, 10426, 0x8B7961A0, "freed SB5 title characters (set 3 archives $61, $62)"),
+    # archive $60 (the menu cursor, still loaded), which ends right there. It stops where archive $63
+    # (the exit portal's beam, loaded when a stage is cleared) starts.
+    ("free_d6", 0xD6A3ED, 9914, 0xD86C3097, "freed SB5 title characters (set 3 archives $61, $62)"),
 ]
 
 
