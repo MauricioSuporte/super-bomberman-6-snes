@@ -526,6 +526,20 @@ pal_lookup:
     LDA #$81
     STA $AA
     LDA $0AE7
+if !W1PAL                           ; set 4 ids $F0+: World 1's own stage palettes (features/sb1_stages.py ext)
+    CMP #$04
+    BNE .notw1
+    CPY #$EF
+    BCC .notw1
+    REP #$20
+    LDA.w #(!W1PAL-2*$EF)&$FFFF
+    STA $A8
+    SEP #$20
+    LDA.b #!W1PAL>>16
+    STA $AA
+    BRA +
+.notw1
+endif
 if !BGTAB
     CMP #$03
     BNE .notset3

@@ -16,6 +16,8 @@
 ;          clear); then it ends (JSL $C021CE)
 ;   n = 1  (type 0D: all enemies dead) queue the portal at the door (a soft
 ;          block left, else a free floor cell)
+;   n = 4  (1-6's third duel, type 04) the stands blink (stand_task, below)
+;   n = 5  (1-7, type 04) start the electric fence's task (asm/stage_anim.asm)
 ;   n = 2  (type 0C) players on the door: like op $12 ($C2:0C67), the sum
 ;          of seat + 1 of the live bombers on the cell -> $0373, JSL $C174D1
 ; State: $7F:FB10 door x (0 = not chosen), $7F:FB11 door y, $7F:FB12-$7F:FB13
@@ -44,7 +46,20 @@ w1_op:
     beq .queue
     dec a
     beq .touch
-    lda #$00                    ; 3: forget, start the picking task
+    dec a
+    dec a
+    bne +
+    jsr stand_start             ; 4: the stands blink (1-6's Golden Bomber)
+    plp
+    rtl
++   dec a
+    bne +
+if !ANIMSTART
+    jsl !ANIMSTART              ; 5: 1-7's electric fence (asm/stage_anim.asm)
+endif
+    plp
+    rtl
++   lda #$00                    ; 3: forget, start the picking task
     sta.l !DX
     ldx #$B0                    ; and clear the chameleons' state (asm/sb1_enemies.asm, $7F:FB20-$7F:FBCF)
 -   dex
@@ -267,6 +282,243 @@ knight_hit:
 .step:
     db $01, $10, $FF, $F0       ; right, down, left, up
 
+; ---------------------------------------------------------------------------
+; 1-6, the tournament (SB6 Unity scene): three duels, stages !RIVAL1/2/3, each
+; one rival (seat 4) drawn with character 1's sheet (the mecha bomber) and
+; one column of its palette picture (rival_pal); the third is the Golden
+; Bomber: 3 hits (2 hearts, $1662), kick (rival_stats), and the stands blink between the crowd and empty before
+; it (stand_task). The arena is theme $28 / set 4 archive and palette $F0
+; (features/sb1_stages.py "sb6_1-6"), ids past SB5's tables: arc_entry and
+; bombers.asm's pal_lookup point at the World 1 entries.
+
+; $C0:1B0E (archive loader, A = M 8-bit, Y = id - 1, X = set * 2): replaces
+; LDA #$E3 / STA $C8 / REP #$20 / LDA $C01C96,X / STA $C6 (returns M 16-bit)
+arc_entry:
+    lda $0AE7
+    cmp #$04
+    bne .orig
+    tya
+    cmp #$EF
+    bcc .orig
+    lda.b #(!W1ARC-8*$EF)>>16
+    sta $C8
+    rep #$20
+    lda.w #(!W1ARC-8*$EF)&$FFFF
+    sta $C6
+    rtl
+.orig:
+    lda #$E3
+    sta $C8
+    rep #$20
+    lda.l $C01C96,x
+    sta $C6
+    rtl
+
+; $C4:3CD5 (rival set-up $C4:3CCF, X = seat, A = character already in
+; $16C2,X): replaces TAX / LDA $BB4E,X / CLC / ADC #$07 (A = palette id)
+rival_pal:
+    pha                         ; the character
+    cpx #$04
+    bne .stock
+    phx
+    lda.l $7E1031
+    ldx #$02
+-   cmp.l .stages,x
+    beq .ours
+    dex
+    bpl -
+    plx
+.stock:
+    plx                         ; (PLX after us restores the seat)
+    lda $BB4E,x
+    clc
+    adc #$07
+    rtl
+.ours:
+    lda #$01                    ; character 1 (the mecha bomber sheet)
+    sta $16C2+4
+    lda.l .ids,x
+    plx
+    plx
+    rtl
+.stages:
+    db !RIVAL1, !RIVAL2, !RIVAL3
+.ids:
+    db !PAL1, !PAL2, !PAL3
+
+; $C4:3D28 (end of the rival set-up: its stats from the character's table
+; $C0:B9D4, here the last one): replaces LDA ($BD),Y / STA $167A,X (X =
+; seat). 1-6's rivals: 1 hit (no heart), the Golden Bomber 3 (2 hearts) and
+; the kick ($167A bit 6 + $7E:4ED5 bit 1, as item $0B gives)
+rival_stats:
+    lda ($BD),y
+    sta $167A,x
+    cpx #$04
+    bne .out
+    lda.l $7E1031
+    cmp #!RIVAL1
+    beq .one
+    cmp #!RIVAL2
+    beq .one
+    cmp #!RIVAL3
+    bne .out
+    lda $167A,x
+    ora #$40
+    sta $167A,x
+    lda.l $7E4ED5+4
+    ora #$02
+    sta.l $7E4ED5+4
+    lda #$02
+    bra +
+.one:
+    lda #$00
++   sta $1662,x
+.out:
+    rtl
+
+; FF 1A F6 04 (stage !RIVAL3, type 04): the stands blink. Task: after
+; BWAIT frames, 5 times: fade to black (brightness in the INIDISP shadow
+; $0300), stands empty on cycles 0/2/4 and full on 1/3 (BG1 map words
+; through SB5's VRAM queue, $C0:0478/0497/04AC), hold, fade back in.
+; State $7F:FBD0 phase, $FBD1 frames, $FBD2 cycle, $FBD3 brightness.
+!BPH = $7FFBD0
+!BFR = $7FFBD1
+!BCY = $7FFBD2
+!BBR = $7FFBD3
+
+stand_start:
+    lda #$00
+    sta.l !BPH
+    sta.l !BCY
+    lda #90
+    sta.l !BFR
+    jsl $C020A1
+    dl stand_task
+    db $60
+    rts
+
+stand_task:
+    php
+    sep #$30
+    lda.l !BFR
+    beq +
+    dec a
+    sta.l !BFR
+    bra .out
++   lda.l !BPH
+    beq .fadeout
+    dec a
+    beq .black
+    dec a
+    beq .fadein
+    jsl $C021CE                 ; done
+    bra .out
+.fadeout:                       ; phase 0: brightness 15 -> 0, 2 frames a step
+    lda.l !BBR
+    bne +
+    lda #$10
++   dec a
+    sta.l !BBR
+    sta $0300
+    bne .two
+    jsr stands
+    lda #$01
+    sta.l !BPH
+    lda #30
+    sta.l !BFR
+    bra .out
+.black:                         ; phase 1 done: fade in
+    lda #$02
+    sta.l !BPH
+    bra .out
+.fadein:
+    lda.l !BBR
+    inc a
+    sta.l !BBR
+    sta $0300
+    cmp #$0F
+    bne .two
+    lda #$00
+    sta.l !BBR
+    lda.l !BCY
+    inc a
+    sta.l !BCY
+    cmp #$05
+    bcc +
+    lda #$03                    ; ends next frame
+    sta.l !BPH
+    bra .out
++   lda #$00
+    sta.l !BPH
+    lda #20
+    sta.l !BFR
+    bra .out
+.two:
+    lda #$01
+    sta.l !BFR
+.out:
+    plp
+    rtl
+
+; queue the stands' BG1 map words: cycle even -> empty, odd -> crowd
+stands:
+    rep #$30
+    lda $0352
+    pha
+    lda.w #$0084
+    sta $0352
+    lda.l !BCY
+    and.w #$0001
+    beq +
+    lda.w #!BLINKN*6
++   clc
+    adc.w #!BLINK&$FFFF
+    tax
+    ldy.w #!BLINKN
+-   lda.l (!BLINK&$FF0000),x
+    sta $AE
+    phx
+    phy
+    sep #$30                    ; (SB5's queue routines: PHX ... SEP #$30 / PLX)
+    jsl $C00478
+    rep #$30
+    ply
+    plx
+    lda.l (!BLINK&$FF0000)+2,x
+    sta $A5
+    phx
+    phy
+    sep #$30                    ; (SB5's queue routines: PHX ... SEP #$30 / PLX)
+    jsl $C00497
+    rep #$30
+    ply
+    plx
+    lda.l (!BLINK&$FF0000)+4,x
+    sta $A5
+    phx
+    phy
+    sep #$30
+    jsl $C00497
+    jsl $C004AC
+    rep #$30
+    ply
+    plx
+    inx
+    inx
+    inx
+    inx
+    inx
+    inx
+    dey
+    bne -
+    pla
+    sta $0352
+    sep #$30
+    rts
+
+print "SYM arc_entry ", hex(arc_entry)
+print "SYM rival_pal ", hex(rival_pal)
+print "SYM rival_stats ", hex(rival_stats)
 print "SYM w1_op ", hex(w1_op)
 print "SYM knight_hit ", hex(knight_hit)
 print "SYM end ", hex(pc())

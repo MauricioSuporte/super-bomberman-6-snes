@@ -44,6 +44,7 @@ def main():
     rb.add_region("bulk", 0xE40000, 0xE50000, "hack code, scripts and small data (E4); streamed audio from $E5")
     rb.add_region("e3_tables", 0xE3DD60, 0xE40000, "graphics archive tables (must be in bank $E3)")
     rb.add_region("bank81", 0xC1FA00, 0xC20000, "palette tables/colors (must be in bank $81)")
+    rb.add_region("d0", 0xD06300, 0xD08000, "stage theme tables (metatiles, collisions: must be in bank $D0)")
     for bank in range(0xF0, 0xF3):
         rb.add_region(f"obj_f{bank & 15}", bank << 16, (bank + 1) << 16, "OBJ sheets: raw 4bpp strips (bombers)")
     for bank in range(0xEC, 0xF0):
@@ -131,6 +132,9 @@ def main():
     mbg = menu_bg.apply(rb)
     print(f"menu background: blue checker ${mbg['checker'][0]:04X} / ${mbg['checker'][1]:04X}")
     en_defs, en_info = sb1_enemies.apply(rb)     # World 1's SB1 enemies (their tables go through the bombers' hooks)
+    stages = sb1_stages.apply(rb)                # World 1's SB1 / SB6 stage pictures (1-6's palette id: pal_lookup)
+    en_defs["W1PAL"] = f"${stages['sb6_1-6']['ext']['pal']:06X}"
+    anim_start = stages.pop("anim")              # 1-7's electric fence (asm/stage_anim.asm, started by world1's op)
     print("SB1 enemies: " + ", ".join(f"{n} = type ${i['type']:02X} ({i['frames']} frames, {i['tiles']} tiles, "
                                       f"{i['colors']} colors)" for n, i in en_info.items()))
     if own_palettes:
@@ -149,9 +153,9 @@ def main():
           + ", ".join(f"ZONE{i + 1} {t} tiles / {p} BG palettes" for i, (t, p) in enumerate(wmap["zones"]))
           + f"; sea in {wmap['frames']} frames, {wmap['lights']} light colors (preview build/world_map_preview.png)")
 
-    w1 = world1.code(rb)
+    w1 = world1.code(rb, stages["sb6_1-6"], anim_start)
     print("world 1: stages " + ", ".join(world1.chain(rb)))
-    for n, i in sb1_stages.apply(rb).items():
+    for n, i in stages.items():
         print(f"world 1: {n} = {i['metatiles']} metatiles, {i['tiles']} tiles, {i['palettes']} palettes "
               f"({i['approx']} pixels approximated), {i['bytes']} bytes LZ")
     pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"], w1["w1_op"])

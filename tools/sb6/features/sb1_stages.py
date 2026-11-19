@@ -41,7 +41,16 @@ STAGES = {
     "sb1_6-4": dict(stage=0x17, theme=5, map=0x0B, gfx=5),
     # 1-7 (SB5 boss arena $68: theme $27, archive $1F and palette $1B shared with the other arenas, map $8F its
     # own) gets SB1's 4-8 arena in theme 4 (free: its room serves theme 5 above), set 4 archive / palette 4
-    "sb1_4-8": dict(stage=0x68, theme=4, map=0x8F, arc=4, pal=4, src_arc=0x1F, src_pal=0x1B, new_theme=True,
+    # 1-6 = the SB6 Unity scene's tournament arena (tools/unity_arena_assets.py): stands with the crowd, and
+    # the empty stands as the alternate picture (asm/world1.asm blinks them); ids past SB5's (theme $28 is
+    # named by no script; archive / palette $F0 through arc_entry / pal_lookup); stages $67/$69/$6B
+    # (white, black, golden bomber) all draw map $8E
+    "sb6_1-6": dict(stage=0x67, theme=0x28, map=0x8E, arc=0xF0, pal=0xF0, src_arc=0x1F, src_pal=0x1B,
+                    new_theme=True, ext=True, rows=(3, 11), alt="sb6_1-6_empty",
+                    scripts=[(0xC71BB1, "2A 1B 27 1F 0B 27 0C 8E", "2A F0 27 F0 0B 28 0C 8E"),
+                             (0xC71F3B, "2A 1C 27 1F 0B 27 0C 90", "2A F0 27 F0 0B 28 0C 8E"),
+                             (0xC72178, "2A 1B 27 1F 0B 27 0C 92", "2A F0 27 F0 0B 28 0C 8E")]),
+    "sb1_4-8": dict(anim="sb1_4-8_shock", stage=0x68, theme=4, map=0x8F, arc=4, pal=4, src_arc=0x1F, src_pal=0x1B, new_theme=True,
                     script=(0xC71D8F, "2A 1B 27 1F 0B 27 0C 8F", "2A 04 27 04 0B 04 0C 8F")),
 }
 SPARE_THEMES = (4,)            # theme 4 (SB5 stages $13 / $14, not played): its tables can hold a bigger theme
@@ -166,21 +175,43 @@ def build(rb, name, spec):
         next_id[0] += 1
         return i
 
+    top, bottom = spec.get("rows", (1, 11))
+    alt = _cells(spec["alt"])[0] if "alt" in spec else None
+    blink = []                      # (column, row, metatile id, id in the alternate picture)
+
+    anim = _cells(spec["anim"])[0] if "anim" in spec else None
+    second = {}                     # metatile id -> its cell in the animation's second frame
+
+    def meta(cell, col, cell1=None):
+        key = (cell.tobytes(), col, None if cell1 is None else cell1.tobytes())
+        if key not in ids:
+            ids[key] = new_id()
+            cells.append((ids[key], cell, col))
+            if cell1 is not None:
+                second[ids[key]] = cell1
+        return ids[key]
+
     for r in range(13):
         for c in range(16):
             cell = field[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
-            inner = 1 <= c <= 13 and 1 <= r <= 11
+            inner = 1 <= c <= 13 and top <= r <= bottom
             hard = inner and c % 2 == 0 and r % 2 == 0
             col = 0x00 if inner and not hard else 0x80
-            key = (cell.tobytes(), col)
-            if key not in ids:
-                ids[key] = new_id()
-                cells.append((ids[key], cell, col))
-            grid[r, c] = ids[key]
+            cell1 = None
+            if anim is not None:
+                cell1 = anim[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
+                if (cell1 == cell).all():
+                    cell1 = None
+            grid[r, c] = meta(cell, col, cell1)
+            if alt is not None:
+                other = alt[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
+                if (other != cell).any():
+                    blink.append((c, r, int(grid[r, c]), meta(other, col)))
     cells.append((SOFT_ID, soft, 0x30))
     count = max(i for i, _, _ in cells) + 1
     # ---- palettes and tiles ----
-    tiles8 = [t for _, cell, _ in cells for t in _split(cell)]
+    tiles8 = [np.concatenate([t, t1]) if i in second else t for i, cell, _ in cells
+              for t, t1 in zip(_split(cell), _split(second.get(i, cell)))]
     pals, where = _palettes(tiles8)
     if len(pals) > len(PALS):
         raise BuildError(f"{name}: {len(pals)} palettes needed")
@@ -194,14 +225,42 @@ def build(rb, name, spec):
     tiles = _Tiles(base, free)
     table = bytearray(8 * count)
     approx = 0
-    for k, (i, cell, _) in enumerate(cells):
-        for q, t in enumerate(_split(cell)):
-            p = where[4 * k + q]
-            idx, a = _index(t, pals[p])
-            approx += a
-            n, hf, vf = tiles.add(idx)
-            word = (0x100 + n) | PALS[p] << 10 | (0x4000 if hf else 0) | (0x8000 if vf else 0)
-            table[8 * i + 2 * q:8 * i + 2 * q + 2] = struct.pack("<H", word)
+    pairs, frame1 = {}, {}          # animated tiles: (frame 0, frame 1) -> slot; slot -> frame 1's tile
+
+    def flip(t, hf, vf):
+        t = t[:, ::-1] if hf else t
+        return t[::-1, :] if vf else t
+
+    def add_pair(idx, idx1):
+        for hf in (False, True):
+            for vf in (False, True):
+                k = (encode_4bpp(flip(idx, hf, vf)), encode_4bpp(flip(idx1, hf, vf)))
+                if k in pairs:
+                    return pairs[k], hf, vf
+        if not tiles.free:
+            raise BuildError(f"{name}: no free tile slot left for the animation")
+        n = tiles.free.pop()        # from the archive's end: one block of slots
+        tiles.data[32 * n:32 * n + 32] = encode_4bpp(idx)
+        frame1[n] = encode_4bpp(idx1)
+        pairs[(encode_4bpp(idx), encode_4bpp(idx1))] = n
+        return n, False, False
+
+    for animated in (False, True):
+        for k, (i, cell, _) in enumerate(cells):
+            if (i in second) != animated:
+                continue
+            for q, (t, t1) in enumerate(zip(_split(cell), _split(second.get(i, cell)))):
+                p = where[4 * k + q]
+                idx, a = _index(t, pals[p])
+                approx += a
+                if animated:
+                    idx1, a = _index(t1, pals[p])
+                    approx += a
+                    n, hf, vf = add_pair(idx, idx1)
+                else:
+                    n, hf, vf = tiles.add(idx)
+                word = (0x100 + n) | PALS[p] << 10 | (0x4000 if hf else 0) | (0x8000 if vf else 0)
+                table[8 * i + 2 * q:8 * i + 2 * q + 2] = struct.pack("<H", word)
     # burning frames (palette 3)
     frames = _burn_frames(soft)
     bset = set()
@@ -216,13 +275,27 @@ def build(rb, name, spec):
             idx, a = _index(t, bpal)
             tiles.data[32 * (first + q):32 * (first + q) + 32] = encode_4bpp(idx)
     used = n_tiles - 1 - len(BURN_TILES) - len(tiles.free)
+    shock = None
+    if frame1:                      # both frames of the animated block (VRAM: BG tiles $100+ at word $1000)
+        lo, hi = min(frame1), max(frame1)
+        if hi - lo + 1 != len(frame1):
+            raise BuildError(f"{name}: the animated tiles are not one block")
+        f0 = bytes(tiles.data[32 * lo:32 * hi + 32])
+        f1 = bytearray(f0)
+        for n, enc in frame1.items():
+            f1[32 * (n - lo):32 * (n - lo) + 32] = enc
+        shock = dict(vram=0x1000 + 16 * lo, frames=[f0, bytes(f1)], tiles=len(frame1))
     # ---- archive ----
     packed = lz.compress(bytes(tiles.data))
-    a = rb.alloc(["bulk", "free_c9_sheets", "free_c8_sheets", "obj_f8", "obj_f9"], packed,
-                 f"{name}: BG tiles (set 4 archive {gfx}, LZ)")
-    rb.patch(entry, bytes(rb.d[off(entry):off(entry + 8)]), bytes(rb.d[off(sentry):off(sentry) + 2]) +
-             struct.pack("<H", len(tiles.data)) + a.to_bytes(3, "little") + bytes([rb.d[off(sentry) + 7]]),
-             f"{name}: set 4 archive {gfx} -> SB1 tiles")
+    a = rb.alloc([r for r in ("free_cd_stage2", "free_cd_stage45", "free_c9_sheets", "free_c8_sheets", "obj_f9",
+                              "obj_f8", "bulk") if r in rb.regions], packed,
+                 f"{name}: BG tiles (set 4 archive {gfx:02X}, LZ)")
+    ent = bytes(rb.d[off(sentry):off(sentry) + 2]) + struct.pack("<H", len(tiles.data)) + a.to_bytes(3, "little") +         bytes([rb.d[off(sentry) + 7]])
+    ext = {}
+    if spec.get("ext"):             # an id past SB5's tables: its own entry (asm/world1.asm `arc_entry`)
+        ext["arc"] = rb.alloc("e3_tables", ent, f"{name}: set 4 archive {gfx:02X} entry (World 1 ids)")
+    else:
+        rb.patch(entry, bytes(rb.d[off(entry):off(entry + 8)]), ent, f"{name}: set 4 archive {gfx} -> SB1 tiles")
     # ---- palette (bank $81) ----
     pt = 0x810000 + _w(rb, 0xC00379 + 2 * 4) + 2 * (pal_id - 1)
     old = 0x810000 + _w(rb, 0x810000 + _w(rb, 0xC00379 + 2 * 4) + 2 * (src_pal - 1))
@@ -236,8 +309,16 @@ def build(rb, name, spec):
     for p, pal in zip(PALS, pals):
         put(p, pal)
     data = struct.pack("<HH", dest, cnt) + b"".join(struct.pack("<H", c) for c in colors)
-    pa = rb.alloc([r for r in ("bank81", "free_81_stage45", "free_81_stage2") if r in rb.regions], data, f"{name}: BG palettes (set 4 palette {pal_id})")
-    rb.patch(pt, bytes(rb.d[off(pt):off(pt) + 2]), struct.pack("<H", pa & 0xFFFF), f"{name}: set 4 palette {pal_id}")
+    regs81 = [r for r in ("free_81_stage45", "free_81_stage2", "bank81") if r in rb.regions]
+    if spec.get("ext"):             # pointer word + colors in one bank (pal_lookup in asm/bombers.asm sets it)
+        start = rb.regions["bulk"].cursor
+        ext["pal"] = rb.alloc("bulk", struct.pack("<H", (start + 2) & 0xFFFF) + data,
+                              f"{name}: set 4 palette {pal_id:02X} (pointer word + colors)")
+        if ext["pal"] != start:
+            raise BuildError(f"{name}: palette moved")
+    else:
+        pa = rb.alloc(regs81, data, f"{name}: BG palettes (set 4 palette {pal_id:02X})")
+        rb.patch(pt, bytes(rb.d[off(pt):off(pt) + 2]), struct.pack("<H", pa & 0xFFFF), f"{name}: set 4 palette {pal_id}")
     # ---- theme tables (bank $D0) ----
     def theme_slot(t):
         a1, a2 = _w(rb, 0xD00000 + 2 * (t - 1)), _w(rb, 0xD00000 + 2 * t)
@@ -277,14 +358,16 @@ def build(rb, name, spec):
         cbytes[0] = 0x80
         rb.patch(0xD00000 + c1, bytes(rb.d[off(0xD00000 + c1):off(0xD00000 + c1) + count]), bytes(cbytes),
                  f"{name}: theme {th} collisions")
-    if "script" in spec:
-        at, old_s, new_s = spec["script"]
-        rb.patch(at, bytes.fromhex(old_s), bytes.fromhex(new_s), f"{name}: stage ${spec['stage']:02X} field ids")
+    for at, old_s, new_s in spec.get("scripts", [spec["script"]] if "script" in spec else []):
+        rb.patch(at, bytes.fromhex(old_s), bytes.fromhex(new_s), f"{name}: stage field ids ({at:06X})")
     # ---- map ----
     lst = _p24(rb, 0xD0A000 + 3 * (mp - 1))
     m = rb.alloc("bulk", lz.compress(bytes(grid.flatten())), f"{name}: map {mp} (16 x 13 metatiles, LZ)")
     rb.patch(lst, bytes(rb.d[off(lst):off(lst) + 3]), m.to_bytes(3, "little"), f"{name}: map {mp} -> SB1 layout")
-    return dict(metatiles=count, tiles=used, palettes=len(pals), approx=approx, bytes=len(packed))
+    words = {i: [struct.unpack("<H", table[8 * i + 2 * q:8 * i + 2 * q + 2])[0] for q in range(4)]
+             for i, _, _ in cells}
+    return dict(metatiles=count, tiles=used, palettes=len(pals), approx=approx, bytes=len(packed), ext=ext, anim=shock,
+                blink=[(c, r, words[a], words[b]) for c, r, a, b in blink])
 
 
 # SB5's ZONE1 stage data nothing reads any more: set 4 archives 2 (themes 2: stages $0F/$10, rebuilt above), 4
@@ -303,7 +386,7 @@ OLD_DATA = [
 ]
 
 
-D0_ROOM = ["free_d0_maps2", "free_d0_maps1"]    # bank $D0 room for new theme tables
+D0_ROOM = ["free_d0_maps2", "free_d0_maps1", "d0"]    # bank $D0 room for new theme tables
 
 
 def apply(rb):
@@ -312,4 +395,38 @@ def apply(rb):
     for name, start, size, crc, purpose in OLD_DATA:
         rb.free_old(name, start, size, crc, purpose)
     out.update({name: build(rb, name, spec) for name, spec in STAGES.items() if spec.get("new_theme")})
+    out["anim"] = _anim_code(rb, [(spec, out[name]["anim"]) for name, spec in STAGES.items() if out[name]["anim"]])
     return out
+
+
+ANIM_ASM = os.path.join(ROOT, "asm", "stage_anim.asm")
+ANIM_HALF = 2                   # frames each picture of the animation stays (SB1 4-8's shock: 2)
+
+
+def _anim_code(rb, anims):
+    """asm/stage_anim.asm for the (one) animated stage: its two tile blocks, queued by a task (anim_start)."""
+    if not anims:
+        return 0
+    if len(anims) > 1:
+        raise BuildError("stage_anim.asm plays one stage's animation")
+    from .. import asar
+    spec, a = anims[0]
+    regs = [r for r in ("free_cd_stage2", "free_cd_stage45", "obj_f9", "obj_f8", "bulk") if r in rb.regions]
+    both = rb.alloc(regs, a["frames"][0] + a["frames"][1],
+                    f"stage ${spec['stage']:02X}: animated BG tiles, frames 0 and 1 ({a['tiles']} tiles each)")
+    src = [both, both + len(a["frames"][0])]
+    if src[0] >> 16 != (src[1] + len(a["frames"][1]) - 1) >> 16:
+        raise BuildError("animated tiles cross a bank")
+    region = rb.regions["bulk"]
+    defs = {"ORG": f"${region.cursor:06X}", "STAGE": f"${spec['stage']:02X}", "THEME": f"${spec['theme']:02X}",
+            "VRAM": f"${a['vram']:04X}", "SIZE": f"${len(a['frames'][0]):04X}", "SRC0": f"${src[0]:06X}",
+            "SRC1": f"${src[1]:06X}", "BANK": f"${src[0] >> 16:02X}", "HALF": str(ANIM_HALF)}
+    runs, syms = asar.assemble_into(rb.d, ANIM_ASM, defs)
+    start, end = region.cursor, syms["end"]
+    out = bytearray(rb.d)
+    for o, d in runs:
+        if not (off(start) <= o and o + len(d) <= off(end)):
+            raise BuildError(f"stage_anim.asm wrote outside its section at file offset {o:06X}")
+        out[o:o + len(d)] = d
+    rb.alloc("bulk", bytes(out[off(start):off(end)]), "World 1: animated stage tiles, task (asm/stage_anim.asm)")
+    return syms["anim_start"]

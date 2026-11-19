@@ -16,6 +16,7 @@ the fonts' outline/shadow rules (intro: outline all round + drop shadow 2 px dow
 label: colour bands by row + 1-px shadow). Preview: build/world_text_preview.png.
 """
 import os
+import struct
 import zlib
 
 import numpy as np
@@ -236,9 +237,16 @@ CHAIN = [
     (0x10, 4, 0x17),               # 1-4: SB5 1-4 (the green tank)
     (0x17, 5, 0x67),               # 1-5: SB5 1-11 (the knights)
 ]
+# 1-6: three duels in the SB6 tournament arena (features/sb1_stages.py "sb6_1-6"), the rival = character 1
+# (char1_sb6.png, the mecha bomber) in a column of its palette picture (0 = key colors): white, black, golden
+RIVALS = [(0x67, 1), (0x69, 2), (0x6B, 20)]
+RIVAL_OWN_ID = 0x5A                # column 1 = palette id $5A (features/bombers.py OWN_ID; char1 shares his)
+BG1_MAP = 0x3000                   # arena field: BG1 map at VRAM word $3000
+STAGE_OPS = {0x6B: (4, "stands blink"), 0x68: (5, "electric fence")}
 BOSSES = [                         # (boss stage, its first portal root, next stage)
-    (0x67, 0xC71BE3, 0x69),        # 1-6, first duel
-    (0x69, 0xC71F6D, 0x68),        # 1-6, second duel
+    (0x67, 0xC71BE3, 0x69),        # 1-6, first duel (white)
+    (0x69, 0xC71F6D, 0x6B),        # 1-6, second duel (black)
+    (0x6B, 0xC721AD, 0x68),        # 1-6, the Golden Bomber (the stands blink first)
     (0x68, 0xC71DC1, NEXT_WORLD),  # 1-7
 ]
 
@@ -262,10 +270,32 @@ def _roots(rb, stage):
     return rec, roots
 
 
-def code(rb):
+def _blink_table(rb, blink):
+    """Rows of the stands' BG1 map words (arena map at VRAM word $3000, 32 wide; cell (c, r) at
+    $3000 + 64r + 2c): every row as (address, left word, right word), the empty stands first, then the crowd."""
+    rows = {0: [], 1: []}
+    for c, r, crowd, empty in blink:
+        for dy in range(2):
+            a = BG1_MAP + 64 * r + 32 * dy + 2 * c
+            rows[0].append(struct.pack("<HHH", a, empty[2 * dy], empty[2 * dy + 1]))
+            rows[1].append(struct.pack("<HHH", a, crowd[2 * dy], crowd[2 * dy + 1]))
+    data = b"".join(rows[0] + rows[1])
+    return rb.alloc("bulk", data, f"World 1: 1-6's stands, BG1 map words (empty / crowd, {len(rows[0])} rows)"), len(rows[0])
+
+
+def code(rb, arena, anim_start=0):
+    """arena: features/sb1_stages.py's result for "sb6_1-6" (ext ids, blink cells); anim_start: the animated
+    fence's task start (asm/stage_anim.asm, 0 = none)."""
     from .. import asar
+    blink, nrows = _blink_table(rb, arena["blink"])
     region = rb.regions["bulk"]
-    runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}", "KNIGHT_STAGE": f"${KNIGHT_STAGE:02X}"})
+    defs = {"ORG": f"${region.cursor:06X}", "KNIGHT_STAGE": f"${KNIGHT_STAGE:02X}",
+            "W1ARC": f"${arena['ext']['arc']:06X}", "BLINK": f"${blink:06X}", "BLINKN": str(nrows),
+            "ANIMSTART": f"${anim_start:06X}"}
+    for k, (stage, col) in enumerate(RIVALS):
+        defs[f"RIVAL{k + 1}"] = f"${stage:02X}"
+        defs[f"PAL{k + 1}"] = f"${RIVAL_OWN_ID + col - 1:02X}"
+    runs, syms = asar.assemble_into(rb.d, ASM, defs)
     start, end = region.cursor, syms["end"]
     out = bytearray(rb.d)
     for o, d in runs:
@@ -276,6 +306,16 @@ def code(rb):
     k = syms["knight_hit"]
     rb.patch(0xC349EC, bytes.fromhex("B9 52 10 29 04"), bytes([0x5C, k & 0xFF, k >> 8 & 0xFF, k >> 16, 0xEA]),
              "enemy flame test: World 1's knights are not hurt from the front (asm/world1.asm knight_hit)")
+
+    def jsl(name, n):
+        a = syms[name]
+        return bytes([0x22, a & 0xFF, a >> 8 & 0xFF, a >> 16]) + bytes([0xEA] * (n - 4))
+    rb.patch(0xC01B0E, bytes.fromhex("A9 E3 85 C8 C2 20 BF 96 1C C0 85 C6"), jsl("arc_entry", 12),
+             "archive loader: set 4 ids $F0+ = World 1's entries (asm/world1.asm arc_entry)")
+    rb.patch(0xC43CD5, bytes.fromhex("AA BD 4E BB 18 69 07"), jsl("rival_pal", 7),
+             "rival set-up: 1-6's rivals = character 1 in their palette (asm/world1.asm rival_pal)")
+    rb.patch(0xC43D28, bytes.fromhex("B1 BD 9D 7A 16"), jsl("rival_stats", 5),
+             "rival set-up: 1-6's rivals' hits, the Golden Bomber's kick (asm/world1.asm rival_stats)")
     return syms
 
 
@@ -357,6 +397,10 @@ def chain(rb):
         if not portal:
             raise BuildError(f"boss ${stage:02X}: root ${root:06X} not in its record")
         kept = [r for r, entries in roots if r == root or not any(t == 0x0D for t, _ in entries)]
+        if stage in STAGE_OPS:      # 1-6's stands blink (n = 4), 1-7's fence (5): a type 04 root with FF 1A F6 n
+            n, what = STAGE_OPS[stage]
+            op = rb.alloc("bulk", bytes([0xFF, 0x1A, 0xF6, n, 0x00]), f"World 1: stage ${stage:02X} {what} (op)")
+            kept.append(rb.alloc("bulk", bytes([0x04]) + p(op) + bytes(1), f"World 1: stage ${stage:02X} {what} (root)"))
         exit_ = dict(portal[0])[0x0B]
         o = off(exit_)
         if rb.d[o] != 0x0F:

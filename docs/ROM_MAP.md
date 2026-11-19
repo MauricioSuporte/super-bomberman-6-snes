@@ -579,6 +579,44 @@ script accumulator (`61` = add).
 * Stage `$0D` (1-1) record `$C6:1ADB`; bosses `$67-$70` in bank `$C7`
   (`$67` `$C7:1B47`, rival boss index by `FF 7C 03 07 03 n`; portals behind
   route flags `08 f 49 n`, `83` = not).
+* World 1's 1-6 (`features/world1.py` RIVALS, `asm/world1.asm`): stages
+  `$67` -> `$69` -> `$6B` -> `$68`, each one rival in seat 4. Rival set-up
+  `$C4:3CCF` (A = character, X = seat; from op `FF 7C 03 slot x y char`,
+  `$C2:16EE` -> `$C4:3CB5`): `$16C2` = character, `$16DA` = palette id
+  (`$80:BB4E[char]` + 7; hook `rival_pal` at `$C4:3CD5`: character 1, ids
+  `$5A`/`$5B`/`$6D` = columns 2/3/21 of the palette picture), then the
+  character's stats from the table at `$C0:B9D4` (word per character ->
+  `$1D26`, hearts + 1 -> `$1662`, fire `$7E:4EBD`, bombs `$17CA`, speed
+  `$15D2`/`$15EA`, abilities `$7E:4ED5`, `$167A`; hook `rival_stats` at
+  `$C4:3D28`). A bomber with hearts (`$1662`) loses one per hit and blinks.
+  Kick = `$167A` bit 6 + `$7E:4ED5` bit 1 (item `$0B`, `$C5:43AB`); item
+  handlers: table `$C5:4195` (item id - 1). Boss start op `$C2:16E6`
+  (`LDA [$0D] / JSL $C43C60`) runs before the rival set-up.
+* Arena field = BG1, map at VRAM word `$3000` (32 wide; cell (c, r) TL at
+  `$3000 + 64r + 2c`), BG tiles from word `$1000` (tile `$100`); an arena
+  draws columns 0-14. 1-6 = theme `$28` (named by no SB5 script; only ops
+  `0A`/`0B` write `$1B7D`) with set 4 archive / palette `$F0`: ids past
+  SB5's tables, through `arc_entry` (`$C0:1B0E`, the archive loader
+  `$C0:1B04`: A = id, `$0AE7` set, entry `[$C6] + 8*(id-1)` in bank `$E3`)
+  and `pal_lookup` (`asm/bombers.asm`, the palette's word table + colors in
+  `bulk`).
+* SB5's VRAM queue (main thread): `$C0:0478` opens an entry (`$AE` = VRAM
+  word address, header word `$0352` = mode, `$0084` = words, VMAIN `$80`),
+  `$C0:0497` appends the word in `$A5`, `$C0:04AC` closes it (size, write
+  offset `$0357`); all three start with PHX and end SEP #$30 / PLX, so call
+  them with X 8-bit. Ring `$7E:8000-$BFFF` (entries are written straight
+  past its end and the offsets masked with `$3FFF`): header mode, size,
+  VRAM address, then the data. The NMI (`$C0:04E0`) sends entries while the
+  scanline allows it (size < 8: CPU writes, else DMA channel 0). The NMI
+  hook `stream_nmi` (`asm/bombers.asm`) runs before `$C5:6AAF`, which
+  relies on channel 0's registers and on the vblank time left: a long DMA
+  there corrupts the later transfers (flames, HUD).
+* 1-6's stands (`stand_task`): fade to black through the INIDISP shadow
+  `$0300`, the stands' BG1 map words queued, fade back; 1-7's electric
+  fence (`asm/stage_anim.asm`): SB1 4-8 sends a second picture of 27
+  tiles every 2 frames; the hack keeps the fence's tiles in one block of
+  slots at the archive's end (29 tiles) and a task queues the frame due
+  (entries of 256 bytes) every 2 frames.
 * Enemies alive `$1D50` (+1 `$C3:050B`, -1 in the death routine
   `$C3:0649-$065A`). The clear check is a native task `$C5:3B4E` (started by
   `$C5:3A58` `JSL $C020A1 / dl`): `$1D50` = 0 -> `LDA #$0D / JSL $C200D7`
