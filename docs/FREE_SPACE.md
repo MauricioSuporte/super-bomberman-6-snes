@@ -130,7 +130,8 @@ SB5's ZONE1 samples while the stage loads): song table `$3000-$300B` (command 1 
 jingles), SB5's jingles where SB5 has them (`$3E00-$4240`), SB1's samples from `$8000`; SB1's header, tracks
 and subroutines and the jingles' samples (SB5 directory entries 2, 3, `$0B-$0D`, 5.5 KB) in the rest of
 `$300C-$43FF` and `$8000-$F4FF`: the song and the jingles use echo delay 1 (buffer `$F500-$FCFF`). The build
-prints the ARAM left. Directory / tuning entries 0-`$11` (SB1's samples take the ones the jingles do not use).
+prints the ARAM left per stage (1-1 ~3.1 KB, 1-2 ~0.7 KB). ROM: one upload list per stage (~32 / 35 KB) in
+`stream_ed` / `stream_ec` / `free_c8_sheets` (build/sb6.map), the stage table in `bulk`. Directory / tuning entries 0-`$11` (SB1's samples take the ones the jingles do not use).
 It covers part B of the cornered recording (`$D841`), so while it is loaded `gs_song` = `SB1M_SONG` (R kept,
 no B: the cornered sound is cut short, as in songs 15, 16, 21, 23-26).
 

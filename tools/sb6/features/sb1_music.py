@@ -16,7 +16,7 @@ SB1's own samples (assets/sound/sb1_stage_w1.bin) with SB1's ADSR and release GA
     own instrument / octave / volume / pan), a bar repeated in a row a DD n ... DE loop;
   * tempo: op D1 with Hudson's tick (4 ms * 256 / $38 per unit, $38 from the tempo byte) = row / 24.
 
-It replaces SB5's ZONE1 song (set $2C = its sequence, song 5 = its samples) on stage $0D, uploaded with
+It replaces SB5's ZONE1 song (set $2C = its sequence, song 5 = its samples) on the STAGES, uploaded with
 it while the stage loads (asm/title_music.asm sb1m_song, hooked at the song upload $C0:0E9C): music id 6
 then only sends command 1, as in SB5, with no upload once the stage runs. Commands 2-4 of SB5's song
 (the stage start jingle and the others) are kept: their data stays where SB5 has it ($3E00-$4240), with
@@ -29,19 +29,33 @@ import math
 import os
 import struct
 
+from .. import brr
 from ..rombuild import BuildError
 from ..romlib import off
 from . import title_music as tm
 
-STAGE = 0x0D
+# World 1 stages that play SB1 songs: (stage id, song name: assets/sound/sb1_<name>_song.txt, SB1's sound RAM
+# assets/sound/sb1_stage_<name>.bin)
+STAGES = [(0x0D, "w1"), (0x11, "w2")]
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
+# SB5 directory entries the jingles name but never play: only the start jingle's percussion records (no key-on
+# of it in Mesen, the jingle keeps its percussion off) -> a silent block (2187 bytes saved)
+SILENT_DIRS = (0x02,)
+# kept when the song leaves room (else an SB1 sample alike plays them): the other jingles' percussion (3 KB)
+OPTIONAL_DIRS = (0x03,)
+
+
+def _zcr(data):
+    x = brr.decode(data)
+    return sum(1 for a, b in zip(x, x[1:]) if (a < 0) != (b < 0)) / max(1, len(x) - 1)
 SEQ_BASE, SEQ_END = 0x3000, 0x4400
 SAMPLE_BASE = 0x8000
 ECHO_DELAY = 1                       # EDL of the song and of SB5's jingles: echo buffer $F500-$FCFF
 ECHO_BASE = 0xFD00 - 0x800 * ECHO_DELAY
 SB1_DIR = 0x2300                     # SB1's sample directory in its sound RAM
 IMAGE_BASE = 0x0800                  # assets/sound/sb1_stage_w1.bin = SB1's sound RAM from $0800
-UNITS_PER_ROW = 24
+UNITS_PER_ROW = 24                   # sb1_<name>_song.txt (in ARAM 24, 16 or 12: see build)
+ROWS_PER_BAR = 16
 
 # Hudson driver, measured in Mesen (docs/ROM_MAP.md "Hudson songs"):
 TEMPO_TABLE = [0, 2, 4, 5, 7, 9, 11, 13, 14, 16, 18, 20, 22, 23, 25, 27, 29, 31, 33, 34, 36, 38, 40, 42, 43,
@@ -250,17 +264,16 @@ def _lengths(n):
         n -= k
 
 
-BAR = 16 * UNITS_PER_ROW
-# musical lines (SB1 spreads them over its voices as they come): the samples of each group, the voices of
-# the group's simultaneous notes, highest pitch first; Hudson channel of each line (channel 2 is the one
-# SB5's stage SFX share: the sparsest line)
-GROUPS = [(2,), (3, 4, 5), (6,), (7,), (0,)]
-CHANNELS = {((2,), 0): 7, ((3, 4, 5), 0): 6, ((6,), 0): 5, ((7,), 0): 4, ((7,), 1): 3, ((0,), 0): 2}
+DRUMS = (3, 4, 5)                    # SB1's drum samples: one line
+CHANNELS = (7, 6, 5, 4, 3, 2)        # busiest line first; 2 (shared with SB5's stage SFX) gets the sparsest
 
 
 def lines_of(notes):
+    """Musical lines: per sample (the drums together), simultaneous notes split by pitch, highest first."""
+    srcns = sorted({n["srcn"] for n in notes})
+    groups = [tuple(x for x in srcns if x in DRUMS)] + [(x,) for x in srcns if x not in DRUMS]
     out = {}
-    for g in GROUPS:
+    for g in groups:
         ends = []
         for n in sorted((n for n in notes if n["srcn"] in g), key=lambda n: (n["t"], -n["pitch"])):
             for i, e in enumerate(ends):
@@ -271,12 +284,27 @@ def lines_of(notes):
                 i = len(ends)
                 ends.append(n["t"] + n["d"])
             out.setdefault((g, i), []).append(n)
-    if any(n["srcn"] not in sum(GROUPS, ()) for n in notes):
-        raise BuildError("SB1 music: a sample in no line group")
     return out
 
 
-def bar_bytes(key, st):
+def channels_of(lines):
+    """Lines -> {channel: notes}: busiest lines first, a line joins a channel whose notes it never overlaps."""
+    chans = []
+    for ln in sorted(lines, key=lambda ln: (-len(lines[ln]), ln)):
+        ns = lines[ln]
+        for c in chans:
+            if all(n["t"] + n["d"] <= m["t"] or m["t"] + m["d"] <= n["t"] for n in ns for m in c):
+                c.extend(ns)
+                break
+        else:
+            chans.append(list(ns))
+    if len(chans) > len(CHANNELS):
+        raise BuildError(f"SB1 music: {len(chans)} lines that overlap, {len(CHANNELS)} channels")
+    chans.sort(key=lambda c: -len(c))
+    return {CHANNELS[i]: sorted(c, key=lambda n: n["t"]) for i, c in enumerate(chans)}
+
+
+def bar_bytes(key, st, bar):
     """key = (overhang in, ((t, d, inst, octave, key, vol, pan), ...)); st = state before (None = unknown)
     -> (bytes, state after)."""
     over, notes = key
@@ -295,88 +323,158 @@ def bar_bytes(key, st):
         for j, x in enumerate(parts):
             out += bytes([k << 4 | (0x08 if j < len(parts) - 1 else 0), x])
         cur = t + d
-    if cur < BAR:
-        for x in _lengths(BAR - cur):
+    if cur < bar:
+        for x in _lengths(bar - cur):
             out += bytes([0x00, x])
     return bytes(out), tuple(st)
 
 
-def line_bars(notes, nbars, inst_of, tune, volpan):
+def line_bars(notes, nbars, inst_of, tune, volpan, bar):
     """Bar keys of one line (overhang in, notes relative to the bar)."""
     by = {}
     for n in notes:
-        by.setdefault(n["t"] // BAR, []).append(n)
+        by.setdefault(n["t"] // bar, []).append(n)
     keys, over = [], 0
     for b in range(nbars):
         ns = []
-        end = b * BAR + over
+        end = b * bar + over
         for n in sorted(by.get(b, []), key=lambda n: n["t"]):
             note = tune[n["srcn"]][1][n["pitch"]]
             v, p = volpan[(n["vl"], n["vr"])]
-            ns.append((n["t"] - b * BAR, n["d"], inst_of[n["srcn"]], note // 12, note % 12 + 1, v, p))
+            ns.append((n["t"] - b * bar, n["d"], inst_of[n["srcn"]], note // 12, note % 12 + 1, v, p))
             end = max(end, n["t"] + n["d"])
         keys.append((over, tuple(ns)))
-        over = max(0, end - (b + 1) * BAR)
+        over = max(0, end - (b + 1) * bar)
     return keys
 
 
-def assemble(lines_keys, loop_bar, tempo):
+def assemble(lines_keys, loop_bar, tempo, bar):
     """lines_keys: {channel: [bar key]} -> (tracks(sub addresses) -> {channel: bytes}, {channel: size},
-    [subroutine bytes]). Bars used more than once (any line) become subroutines; runs of one bar become
-    DD n .. DE loops."""
-
-    def runs(keys):
-        b = 0
+    [subroutine bytes]). A bar repeated in a row becomes a DD n .. DE loop (an item); a bar used more than
+    once (any channel) a subroutine; then stretches of items found more than once become subroutines
+    (DF addr .. FF) that may call the bar ones (the driver keeps a 16-byte call / loop stack per channel:
+    at most DF, DD, DF here), chosen greedily by the bytes they save."""
+    seqs = {}
+    for ch, keys in lines_keys.items():
+        items, b = [], 0
         while b < len(keys):
             r = 1
             while b + r < len(keys) and keys[b + r] == keys[b] and not (b < loop_bar <= b + r):
                 r += 1
-            yield b, r
+            items.append((keys[b], r, b))
             b += r
+        seqs[ch] = items
 
     uses = {}
-    for keys in lines_keys.values():
-        for b, r in runs(keys):
-            uses[keys[b]] = uses.get(keys[b], 0) + 1
-    body = {k: bar_bytes(k, None) for k in uses}
-    subs = [k for k, n in uses.items() if n >= 2 and len(body[k][0]) > 4]
-    sub_index = {k: i for i, k in enumerate(subs)}
+    for items in seqs.values():
+        for it in items:
+            uses[it[0]] = uses.get(it[0], 0) + 1
+    body = {k: bar_bytes(k, None, bar) for k in uses}
+    single = [k for k, n in uses.items() if n >= 2 and len(body[k][0]) > 4]
+    single_index = {k: i for i, k in enumerate(single)}
+    addr = {}                                    # subroutine index -> ARAM address (set by tracks())
+
+    def item_bytes(it, st):
+        k, r = it[0], it[1]
+        if k in single_index:
+            a = addr.get(single_index[k], 0)
+            inner, st = bytes([0xDF, a & 0xFF, a >> 8]), body[k][1]
+        else:
+            inner, st = bar_bytes(k, None if r > 1 else st, bar)
+        if r > 1:
+            return bytes([0xDD, r]) + inner + bytes([0xDE]), st
+        return inner, st
+
+    def seg_bytes(seg):
+        out, st = bytearray(), None
+        for it in seg:
+            data, st = item_bytes(it, st)
+            out += data
+        return bytes(out) + bytes([0xFF]), st
+
+    subs = [((k, 1),) for k in single]          # segments of (key, r); the bar subroutines first
+    MAXLEN = 16
+    while True:
+        occ = {}
+        for ch, items in seqs.items():
+            for i in range(len(items)):
+                for n in range(2, MAXLEN + 1):
+                    seg = items[i:i + n]
+                    if len(seg) < n or any(it[0] == "call" for it in seg):
+                        break
+                    if any(it[2] == loop_bar for it in seg[1:]):
+                        break
+                    occ.setdefault(tuple((it[0], it[1]) for it in seg), []).append((ch, i))
+        best = None
+        for seg, where in occ.items():
+            used, last = 0, {}
+            for ch, i in where:                 # non-overlapping, left to right
+                if i >= last.get(ch, -1):
+                    used += 1
+                    last[ch] = i + len(seg)
+            if used < 2:
+                continue
+            size = len(seg_bytes(seg)[0])
+            gain = used * (size - 1) - size - 3 * used
+            if gain > 0 and (best is None or gain > best[0]):
+                best = (gain, seg)
+        if best is None:
+            break
+        seg = best[1]
+        idx = len(subs)
+        subs.append(seg)
+        n = len(seg)
+        for ch, items in seqs.items():
+            out, i = [], 0
+            while i < len(items):
+                if tuple((it[0], it[1]) for it in items[i:i + n]) == seg and \
+                        all(it[0] != "call" for it in items[i:i + n]):
+                    out.append(("call", idx, items[i][2]))
+                    i += n
+                else:
+                    out.append(items[i])
+                    i += 1
+            seqs[ch] = out
+
+    def sub_body(i):
+        if i < len(single):
+            return body[single[i]][0] + bytes([0xFF]), body[single[i]][1]
+        return seg_bytes(subs[i])
 
     def tracks(sub_addr):
+        addr.update(enumerate(sub_addr))
         out = {}
-        for ch, keys in sorted(lines_keys.items()):
+        for ch, items in sorted(seqs.items()):
             t = bytearray()
-            if ch == max(lines_keys):
+            if ch == max(seqs):
                 t += bytes([0xD1, tempo])
             # full-length notes, no transpose / detune; FE 04: percussion mode off, FE 01: voice out of the
             # $8D mask (both are channel state the previous song may leave on)
             t += bytes([0xD5, 0x08, 0xE7, 0x00, 0xE1, 0x00, 0xFE, 0x04, 0xFE, 0x01])
             st = None
-            for b, r in runs(keys):
-                if b == loop_bar:
+            for it in items:
+                if it[2] == loop_bar:
                     t.append(0xEB)
-                k = keys[b]
-                if r > 1:
-                    t += bytes([0xDD, r])
-                if k in sub_index:
-                    a = sub_addr[sub_index[k]]
+                if it[0] == "call":
+                    a = sub_addr[it[1]]
                     t += bytes([0xDF, a & 0xFF, a >> 8])
-                    st = body[k][1]
-                elif r > 1:
-                    t += body[k][0]
-                    st = body[k][1]
+                    st = sub_body(it[1])[1]
                 else:
-                    data, st = bar_bytes(k, st)
+                    data, st = item_bytes(it, st)
                     t += data
-                if r > 1:
-                    t.append(0xDE)
             t.append(0xEC)
             out[ch] = bytes(t)
         return out
 
-    sub_bytes = [body[k][0] + bytes([0xFF]) for k in subs]
     sizes = {ch: len(t) for ch, t in tracks([0] * len(subs)).items()}
-    return tracks, sizes, sub_bytes
+    sub_sizes = [len(sub_body(i)[0]) for i in range(len(subs))]
+
+    def build_all(sub_addr):
+        """-> ({channel: bytes}, [subroutine bytes]) with the subroutines at sub_addr."""
+        tr = tracks(sub_addr)
+        return tr, [sub_body(i)[0] for i in range(len(subs))]
+
+    return build_all, sizes, sub_sizes
 
 
 class Space:
@@ -429,15 +527,27 @@ def build(image, path, rom):
     for p in jedl:
         jimg[p - jlo] = ECHO_DELAY
     blocks.append((jlo, bytes(jimg)))
-    jbytes = 0
-    for d in sorted(jdirs, key=lambda d: -zsamples[d][1]):
+    jbytes, silent, aliased = 0, None, {}
+
+    def put_sb5(d):
         start, n = zsamples[d]
         loop_off = struct.unpack_from("<H", zimg, 0xFD00 + 4 * d + 2)[0] - start
         a = space.alloc(n, f"SB5 sample {d:02X}")
         blocks.append((a, bytes(zimg[start:start + n])))
         struct.pack_into("<HH", dirs, 4 * d, a, a + loop_off)
+        return n
+
+    for d in jdirs:
         tunings[4 * d:4 * d + 4] = zimg[0xFE00 + 4 * d:0xFE04 + 4 * d]
-        jbytes += n
+        if d in OPTIONAL_DIRS:
+            continue
+        if d in SILENT_DIRS:
+            if silent is None:
+                silent = space.alloc(9, "a silent block")
+                blocks.append((silent, bytes([0x03]) + bytes(8)))
+            struct.pack_into("<HH", dirs, 4 * d, silent, silent)
+            continue
+        jbytes += put_sb5(d)
     # tuning: multiplier per sample, note per pitch
     tune, worst = {}, 0.0
     for s in srcns:
@@ -466,42 +576,81 @@ def build(image, path, rom):
         instruments.append(bytes([dir_of[s], a1, a2, gain]))
         inst_of[s] = k
     volpan = {(n["vl"], n["vr"]): volume_pan(n["vl"], n["vr"]) for n in notes}
-    tempo, unit_ms = tempo_for(row / UNITS_PER_ROW)
-    if loop % BAR or end % BAR:
+    # units a row: 24 (as written), 16 or 12, whichever has the tempo closest to SB1's (the driver's tempo
+    # byte is coarse, and too fast tempos need fewer units)
+    best = None
+    for units in (24, 16, 12):
+        if any(n["t"] * units % UNITS_PER_ROW for n in notes):
+            continue
+        tempo, unit_ms = tempo_for(row / units)
+        err = abs(unit_ms * units / row - 1)
+        if best is None or err < best[0] - 1e-4:
+            best = (err, units, tempo, unit_ms)
+    err, units, tempo, unit_ms = best
+    if err > 0.01:
+        raise BuildError(f"SB1 music: no tempo within 1 % of SB1's ({err * 100:.1f} %)")
+    if units != UNITS_PER_ROW:
+        for n in notes:
+            n["t"] = n["t"] * units // UNITS_PER_ROW
+            n["d"] = max(1, round(n["d"] * units / UNITS_PER_ROW))
+        loop, end = loop * units // UNITS_PER_ROW, end * units // UNITS_PER_ROW
+        if any(n["t"] + n["d"] > m["t"] for ns in lines_of(notes).values() for n, m in zip(ns, ns[1:])):
+            raise BuildError(f"SB1 music: notes overlap at {units} units a row")
+    bar = ROWS_PER_BAR * units
+    if loop % bar or end % bar:
         raise BuildError("SB1 music: loop / end not on a bar")
-    lines = lines_of(notes)
-    if set(lines) - set(CHANNELS):
-        raise BuildError(f"SB1 music: lines without a channel: {sorted(set(lines) - set(CHANNELS))}")
-    keys = {CHANNELS[ln]: line_bars(ns, end // BAR, inst_of, tune, volpan) for ln, ns in lines.items()}
-    tracks, sizes, subs = assemble(keys, loop // BAR, tempo)
+    chans = channels_of(lines_of(notes))
+    keys = {ch: line_bars(ns, end // bar, inst_of, tune, volpan, bar) for ch, ns in chans.items()}
+    build_all, sizes, sub_sizes = assemble(keys, loop // bar, tempo, bar)
     hl = len(header({ch: 0 for ch in keys}, instruments))
     head = space.alloc(hl + sum(sizes.values()), "the song's header and tracks")
     taddr, a = {}, head + hl
     for ch in sorted(sizes):
         taddr[ch] = a
         a += sizes[ch]
-    sub_addr = [0] * len(subs)
-    for i in sorted(range(len(subs)), key=lambda i: -len(subs[i])):
-        sub_addr[i] = space.alloc(len(subs[i]), "a subroutine")
-        blocks.append((sub_addr[i], subs[i]))
-    tr = tracks(sub_addr)
+    sub_addr = [0] * len(sub_sizes)
+    for i in sorted(range(len(sub_sizes)), key=lambda i: -sub_sizes[i]):
+        sub_addr[i] = space.alloc(sub_sizes[i], "a subroutine")
+    tr, subs = build_all(sub_addr)
+    for a, data in zip(sub_addr, subs):
+        blocks.append((a, data))
+    # SB5 samples kept only when there is room; else the SB1 sample of the song that sounds most alike
+    # (zero-crossing rate) plays in their place
+    for d in OPTIONAL_DIRS:
+        if d not in jdirs:
+            continue
+        try:
+            jbytes += put_sb5(d)
+        except BuildError:
+            start, n = zsamples[d]
+            z = _zcr(bytes(zimg[start:start + n]))
+            s = min(srcns, key=lambda s: abs(_zcr(smp[s][0]) - z))
+            dirs[4 * d:4 * d + 4] = dirs[4 * dir_of[s]:4 * dir_of[s] + 4]
+            aliased[d] = s
     blocks.append((head, header(taddr, instruments) + b"".join(tr[ch] for ch in sorted(tr))))
     # song table: command 1 = SB1's song, 2.. = SB5's (their headers where SB5 has them)
     blocks.append((SEQ_BASE, struct.pack(f"<{len(heads) + 2}H", SEQ_BASE + 2, head, *heads[1:], 0)))
     blocks += [(0xFD00, bytes(dirs)), (0xFE00, bytes(tunings))]
     seq = hl + sum(sizes.values()) + sum(map(len, subs))
     info = dict(seq=seq, samples=len(blob), notes=len(notes), tempo=tempo, unit_ms=unit_ms, row_ms=row,
-                cents=worst, channels=sorted(keys), subs=len(subs), jingles=(jlo, jhi), jingle_dirs=jdirs,
-                jingle_samples=jbytes, aram_left=space.free(), head=head)
+                cents=worst, channels=sorted(keys), subs=len(subs), units=units, jingles=(jlo, jhi), jingle_dirs=jdirs,
+                jingle_samples=jbytes, aram_left=space.free(), head=head, aliased=aliased)
     return tm._list(blocks, bytes([0x00, 0x08])), info
 
 
 def apply(rb, sound_dir):
-    image = open(os.path.join(sound_dir, "sb1_stage_w1.bin"), "rb").read()
-    lst, info = build(image, os.path.join(sound_dir, "sb1_w1_song.txt"), rb.d)
-    a = rb.alloc(["stream_ed", "free_c8_sheets"], lst, "SB1 1-1 music: Hudson upload list (sequence, samples)")
-    if (a & 0xFFFF) + len(lst) > 0x10000:
-        raise BuildError("SB1 music: the upload list crosses a bank")
-    info["list"] = len(lst)
-    defs = {"SB1M_STAGE": f"${STAGE:02X}", "SB1M_SB5SONG": f"${SB5_SONG:02X}", "SB1M_LIST": f"${a:06X}"}
-    return defs, info
+    """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF."""
+    table, infos = bytearray(), []
+    for stage, name in STAGES:
+        image = open(os.path.join(sound_dir, f"sb1_stage_{name}.bin"), "rb").read()
+        lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d)
+        a = rb.alloc(["stream_ed", "stream_ec", "free_c8_sheets", "free_c7_sheets"], lst,
+                     f"SB1 music of stage ${stage:02X} ({name}): Hudson upload list (sequence, samples)")
+        if (a & 0xFFFF) + len(lst) > 0x10000:
+            raise BuildError("SB1 music: an upload list crosses a bank")
+        table += bytes([stage]) + a.to_bytes(3, "little")
+        infos.append(dict(info, stage=stage, name=name, list=len(lst)))
+    table.append(0xFF)
+    t = rb.alloc("bulk", bytes(table), "SB1 music: stage -> upload list")
+    defs = {"SB1M_SB5SONG": f"${SB5_SONG:02X}", "SB1M_TABLE": f"${t:06X}"}
+    return defs, infos

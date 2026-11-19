@@ -92,11 +92,13 @@ def main():
     # World 1's 1-1: SB1's music as a Hudson song (uploaded by title_music's sound hook)
     sb1m_defs, sb1m = sb1_music.apply(rb, os.path.join(ROOT, "assets", "sound"))
     maps["defs"].update(sb1m_defs, SB1M_SONG=gsfx["sb1m_song"])
-    print(f"1-1 music (SB1's, Hudson song): {sb1m['notes']} notes, sequence {sb1m['seq']} bytes "
-          f"({sb1m['subs']} subroutines), samples {sb1m['samples']} bytes, tempo {sb1m['tempo']} "
-          f"({sb1m['unit_ms'] * 24:.2f} ms rows, SB1 {sb1m['row_ms']:.2f}), pitch within {sb1m['cents']:.1f} cents; "
-          f"SB5's jingles ${sb1m['jingles'][0]:04X}-${sb1m['jingles'][1] - 1:04X} + {sb1m['jingle_samples']} bytes of "
-          f"samples; {sb1m['aram_left']} bytes of ARAM left; list {sb1m['list']} bytes")
+    for m in sb1m:
+        print(f"stage ${m['stage']:02X} music (SB1 {m['name']}, Hudson song): {m['notes']} notes, sequence "
+              f"{m['seq']} bytes ({m['subs']} subroutines), samples {m['samples']} bytes, tempo {m['tempo']} "
+              f"({m['unit_ms'] * m['units']:.2f} ms rows, SB1 {m['row_ms']:.2f}), pitch within {m['cents']:.1f} "
+              f"cents; SB5's jingles + {m['jingle_samples']} bytes of samples"
+              + (f" (SB1 samples for SB5's {m['aliased']})" if m['aliased'] else "")
+              + f"; {m['aram_left']} bytes of ARAM left; list {m['list']} bytes")
     print("world map music: " + ", ".join(f"{n}'s sound RAM ({b} bytes, {p} parts)" for n, b, p in maps["drivers"]))
     # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),

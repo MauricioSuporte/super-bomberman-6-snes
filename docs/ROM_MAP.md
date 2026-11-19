@@ -765,9 +765,10 @@ script accumulator (`61` = add).
   Checked in Mesen: the key-on sequence and timing equal SB1's; stage
   music and in-game SFX after the map.
 * World 1 stages play on Hudson's driver with SB5's stage SFX. 1-1
-  (stage `$0D`) plays SB1's World 1 song converted to a Hudson song
-  (`tools/sb6/features/sb1_music.py`, see "Hudson songs"): `sound_hook`
-  (`asm/title_music.asm`): `sb1m_song`, hooked at the start of Hudson's
+  (stage `$0D`) and 1-2 (`$11`) play SB1's World 1 / World 2 songs
+  converted to Hudson songs (`tools/sb6/features/sb1_music.py` `STAGES`,
+  see "Hudson songs"; `asm/title_music.asm` `sb1m_song`, table
+  `SB1M_TABLE` = [stage, list] ... `$FF`), hooked at the start of Hudson's
   song upload `$C0:0E9C` (A = song; `PHY PHX`, then `$C0:0EA2`, ends with
   `PLX PLY RTS` at `$C0:0F10`), uploads its list instead of song 5 (SB5's
   ZONE1 samples) on that stage; the stage script loads set `$2C` + song 5
@@ -775,8 +776,11 @@ script accumulator (`61` = add).
   (`[$2C, 5, 1]`) and the start jingle (group 0 `$20`: command 2) only send
   commands. The list keeps SB5's commands 2-4 (jingles, `$3E00-$4240` with
   their samples) and makes command 1 SB1's song. Uploading it at music id 6
-  instead (after the jingle) froze the game ~80 frames. The other World 1 stages keep
-  SB5's ZONE1 song. SB1's per-world sound RAM images
+  instead (after the jingle) froze the game ~80 frames. SB5's percussion
+  sample (directory 2) of the start jingle never sounds (silent block in
+  the lists); directory 3 (other jingles' percussion) is kept when there
+  is room, else it names SB1's most alike sample (1-2: SB1's kick). The
+  other World 1 stages keep SB5's ZONE1 song. SB1's per-world sound RAM images
   (`assets/sound/sb1_stage_*.bin`, Mesen snapshot at SB1's first stage
   command) stay as the source of SB1's samples and of future conversions.
 * Hudson songs (measured in Mesen on SB5's driver):
@@ -811,14 +815,19 @@ script accumulator (`61` = add).
     pan p: R = VOL * PT[p] / 127, L = VOL * PT[30 - p] / 127, PT = 00 07 0D
     14 1A 21 27 2E 34 3A 40 45 4B 50 55 5A 5E 63 67 6B 6E 71 74 77 79 7B 7C
     7D 7E 7F 7F. MVOL `$60` (as SB1).
-* SB1's World 1 song (`tools/sb1_song.py`, from a DSP log of a .spc of
-  SB1 restarted at the song: port 0's toggle bit flipped): music on voices
-  3-7, every note ends with ADSR1 = 0 and its release GAIN (`$B4`; 0 for
-  the drum samples 3-5). Rows of 133.547 ms (key-ons jitter +-11 ms around
-  them on SB1's 12 ms timer), an intro of 128 rows (17.09 s) then 512 rows
-  (68.38 s) looped. The converter regroups the notes into musical lines
-  (by sample, simultaneous notes split by pitch) on 6 channels, bars
-  repeated anywhere become subroutines, runs of one bar `DD`/`DE`.
+* SB1's stage songs (`tools/sb1_song.py`, from a DSP log of a .spc of
+  SB1 restarted at the song: Mesen snapshot of SB1 in the stage, port 0's
+  toggle bit flipped; World 1 = song `$02`, World 2 = `$04`): music on
+  voices 2-7, every note ends with ADSR1 = 0 and its release GAIN (`$B4`;
+  0 for the drum samples 3-5). Key-ons jitter +-11 ms around the rows on
+  SB1's 12 ms timer. World 1: rows of 133.547 ms, 128 rows of intro, 512
+  looped; World 2: 101.875 ms, 32 + 768. The converter regroups the notes
+  into musical lines (by sample, the drums together, simultaneous notes
+  split by pitch), packs lines that never overlap into at most 6 channels,
+  bars used twice become subroutines, then repeated runs of bars too
+  (calling the bar ones: the driver's call / loop stack is 16 bytes per
+  channel, `$03AC + 16 * ch`, depth `$03A4 + ch`), runs of one bar
+  `DD`/`DE`; 24, 16 or 12 units a row, whichever tempo is closest.
 * Research: `tools/spc_render.py --voices all --echo` renders a DSP log
   (several logs joined with `+`); the map song capture needed the CPU
   frozen (the map lasts ~4 s in SB1) and runs of < 100 s per Mesen call.

@@ -186,11 +186,11 @@ endif
     plp
     rtl
 
-; SB1's 1-1 music (tools/sb6/features/sb1_music.py): JML from Hudson's song
-; upload $C0:0E9C (A = song, M/X 8-bit). On stage !SB1M_STAGE, SB5's ZONE1
-; samples (song !SB1M_SB5SONG, loaded with its sequence while the stage loads)
-; are replaced by SB1's song + SB5's jingles, so music id 6 later only sends
-; command 1. As song_hook does for a song over the menu SFX samples: SB5's
+; World 1's SB1 music (tools/sb6/features/sb1_music.py): JML from Hudson's
+; song upload $C0:0E9C (A = song, M/X 8-bit). On a stage of !SB1M_TABLE
+; ([stage, upload list (long)] ..., $FF), SB5's ZONE1 samples (song
+; !SB1M_SB5SONG, loaded with its sequence while the stage loads) are replaced
+; by SB1's song + SB5's jingles, so music id 6 later only sends command 1. As song_hook does for a song over the menu SFX samples: SB5's
 ; SFX definitions back; game_sfx's gs_song = SB1M_SONG (R kept, no part B).
 sb1m_song:
     phy
@@ -198,9 +198,18 @@ sb1m_song:
     cmp #!SB1M_SB5SONG
     bne .orig
     pha
-    lda.l !MODE
-    cmp #!SB1M_STAGE
+    ldx #$00
+-   lda.l !SB1M_TABLE,x
+    cmp #$FF
+    beq .none
+    cmp.l !MODE
     beq .ours
+    inx
+    inx
+    inx
+    inx
+    bra -
+.none:
     pla
 .orig:
     asl
@@ -212,11 +221,18 @@ sb1m_song:
     php
     phb
     sep #$30
+    lda.l !SB1M_TABLE+1,x   ; the stage's list -> $48-$4A
+    sta $48
+    lda.l !SB1M_TABLE+2,x
+    sta $49
+    lda.l !SB1M_TABLE+3,x
+    sta $4A
     lda #$80                ; Hudson's routines use absolute $03Cx / $214x
     pha
     plb
-    %c0call($C00F13)        ; open the upload session
-    %sendlist(!SB1M_LIST)
+    %c0call($C00F13)        ; open the upload session (keeps $48-$4A)
+    stz $03D1
+    %c0call($C00F62)        ; send the list at [$48]
     lda #$00
     sta.l !sfxok
     sta.l !sfxnew
