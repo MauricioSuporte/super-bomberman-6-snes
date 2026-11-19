@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, sb1_stages, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, sb1_enemies, sb1_stages, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -130,11 +130,15 @@ def main():
     # Normal menu / picker background in blue (palettes returned by the bombers' palette hook)
     mbg = menu_bg.apply(rb)
     print(f"menu background: blue checker ${mbg['checker'][0]:04X} / ${mbg['checker'][1]:04X}")
+    en_defs, en_info = sb1_enemies.apply(rb)     # World 1's SB1 enemies (their tables go through the bombers' hooks)
+    print("SB1 enemies: " + ", ".join(f"{n} = type ${i['type']:02X} ({i['frames']} frames, {i['tiles']} tiles, "
+                                      f"{i['colors']} colors)" for n, i in en_info.items()))
     if own_palettes:
         info = bombers.apply(rb, base_rom, sheets, sb6_sheet, sb6_pal, os.path.join(bdir, "bomber_anims.txt"), bdir,
-                             menu_bg=mbg)
+                             menu_bg=mbg, enemies=en_defs)
     else:
-        info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir, menu_bg=mbg)
+        info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir, menu_bg=mbg,
+                             enemies=en_defs)
     sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
     bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
     maps["finish"]()                 # World 1 stage music: SB1's sound RAM images (freed sheet banks, streams)

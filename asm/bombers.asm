@@ -81,6 +81,10 @@ bomber_ours:
     RTS
 
 bomber_map:
+if !ENMAP != 0
+    JSR enemy_map
+    BCS .stock
+endif
     JSR bomber_ours
     BCC .stock
     PHX
@@ -389,12 +393,60 @@ stream_clear:
     PLP
     RTL
 
+if !ENMAP != 0
+; SB1 enemies (features/sb1_enemies.py): type 7 objects with mapping ids from !ENMAPFIRST / animations
+; from !ENANIMFIRST read new tables (bank !ENMAP / !ENANIM; the bases are moved down so that the stock
+; index 2 * (id - 1) lands on their first entry). Carry set = done. Y = object; keeps X, Y.
+enemy_map:
+    LDA $04FF,Y
+    CMP #$07
+    BNE .no
+    LDA $049F,Y
+    CMP #!ENMAPFIRST
+    BCC .no
+    LDA #!ENMAP
+    STA $5D
+    REP #$20
+    LDA #!ENMAPBASE
+    STA $5B
+    SEP #$20
+    SEC
+    RTS
+.no
+    CLC
+    RTS
+
+; (bomber_anim: the table's bank is at 3,S under this call's return address)
+enemy_anim:
+    LDA $04FF,Y
+    CMP #$07
+    BNE .no
+    LDA $079F,Y
+    CMP #!ENANIMFIRST
+    BCC .no
+    LDA #!ENANIM
+    STA 3,S
+    REP #$20
+    LDA #!ENANIMBASE
+    STA $5B
+    SEP #$20
+    SEC
+    RTS
+.no
+    CLC
+    RTS
+endif
+
 ; Animation scripts ($C0:11F8, table $C0:171D + 3*type). The same bombers
 ; get the scripts of assets/bombers/*_anims.txt. Replaces
 ; `LDA $C0171F,X` (table bank) at $C0:120E; $5B = table address, already set.
 bomber_anim:
     LDA $C0171F,X
     PHA
+if !ENMAP != 0
+    JSR enemy_anim
+    BCS +
+endif
     JSR bomber_ours
     BCC +
     LDA.l !CHARANIM+2,X

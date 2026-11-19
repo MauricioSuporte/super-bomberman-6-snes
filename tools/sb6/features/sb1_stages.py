@@ -236,7 +236,7 @@ def build(rb, name, spec):
     for p, pal in zip(PALS, pals):
         put(p, pal)
     data = struct.pack("<HH", dest, cnt) + b"".join(struct.pack("<H", c) for c in colors)
-    pa = rb.alloc(["bank81", "free_81_stage45", "free_81_stage2"], data, f"{name}: BG palettes (set 4 palette {pal_id})")
+    pa = rb.alloc([r for r in ("bank81", "free_81_stage45", "free_81_stage2") if r in rb.regions], data, f"{name}: BG palettes (set 4 palette {pal_id})")
     rb.patch(pt, bytes(rb.d[off(pt):off(pt) + 2]), struct.pack("<H", pa & 0xFFFF), f"{name}: set 4 palette {pal_id}")
     # ---- theme tables (bank $D0) ----
     def theme_slot(t):

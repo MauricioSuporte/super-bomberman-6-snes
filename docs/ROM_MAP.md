@@ -610,6 +610,22 @@ script accumulator (`61` = add).
   (type `$08`, SB5 1-11 = `$17`) have 4 HP. Hack: `knight_hit`
   (`asm/world1.asm`) skips the hit on 1-5 when the explosion's center lies
   in front of a knight; 1-5 keeps only its two knights (SB1 6-4).
+* Enemy type records: 16 bytes at `$C3:005C + 16*(type-1)`, 15 copied to
+  `$1D41+` by `$C3:0000` (`[arc, pal, slot mask, T|flags, first anim, ...,
+  routine24 ($C3:4B5A), data16, ...]`): set 8 archive (OBJ tiles, LZ; tile
+  2i = VRAM tile i of a 16-tile row, 2i+1 the one under it, 32 per page),
+  set 8 palette (16 colors), palette slots `$38` (3-5: at most 3 enemy
+  palettes at once), object type T (7 for walkers), animation base `$1692`;
+  a walker shows base + facing - 1. Stage use of types (`A2 x y type`):
+  01 `$0D/$0E`, 02 `$0F/$12`, 03 `$13/$14/$16`, 04 `$10`, 05 `$11/$12/$16`,
+  06 `$14`, 07 `$18-$1B`, 08 `$15/$17`. T 7: animations 1-`$27`, mappings
+  1-`$D5`.
+* Hack (`features/sb1_enemies.py`, `tools/sb1_enemy_assets.py`): types 02,
+  03, 06 = type 01's record with SB1 2-1's spring head / pot / clown face
+  (archives 4, 5, 8 and palettes 2, 3, 6 of set 8 rewritten; T 7
+  animations `$60+` and mappings `$E0+` in `objmap`, read through
+  `enemy_anim` / `enemy_map` in `asm/bombers.asm`); 1-2 (`$11`) places 4
+  springs, 2 pots, 2 clowns (`STAGE_ENEMIES`).
 * Stage field (BG2), type `02` script `2A n 27 n 0A map theme` (set 4):
   op `0A` (`$C2:0BED`, `$1B7E` map, `$1B7D` theme; `$C0:3550`/`$357B`).
   Map m = 16 x 13 metatile ids (LZ, row 13 = 0) at the first 24-bit

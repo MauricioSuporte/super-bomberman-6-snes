@@ -24,6 +24,7 @@ from PIL import Image
 from .. import lz
 from ..rombuild import BuildError
 from ..romlib import off
+from . import sb1_enemies
 
 ARC_TABLE = 0xE3BE60          # archive entries (8 bytes), set 3 window starts at $E3:C158
 SET3 = 0xE3C158
@@ -322,6 +323,9 @@ def chain(rb):
         for r, entries in roots:
             if any(t == 0x0D for t, _ in entries):
                 continue
+            if sb1_enemies.stage_enemies(stage) is not None and any(t == 0x04 and rb.d[off(a)] == 0xA2
+                                                                   for t, a in entries):
+                continue                      # replaced below
             if stage in KEEP_ENEMIES and any(t == 0x04 and rb.d[off(a)] == 0xA2 and rb.d[off(a) + 3]
                                              not in KEEP_ENEMIES[stage] for t, a in entries):
                 continue
@@ -333,6 +337,9 @@ def chain(rb):
                 r = rb.alloc("bulk", b"".join(bytes([t]) + p(a) for t, a in ents) + bytes(1),
                              f"World 1: stage ${stage:02X} root with new scripts")
             kept.append(r)
+        for k, scr in enumerate(sb1_enemies.stage_enemies(stage) or []):
+            sa = rb.alloc("bulk", scr, f"World 1: stage ${stage:02X} SB1 enemy {k}")
+            kept.append(rb.alloc("bulk", bytes([0x04]) + p(sa) + bytes(1), f"World 1: stage ${stage:02X} enemy root {k}"))
         exit_ = rb.alloc("bulk", bytes([0x0F, nxt, 0x00]), f"World 1 door: stage ${stage:02X} -> ${nxt:02X}")
         door = rb.alloc("bulk", bytes([0x04]) + p(pick) + bytes([0x0D]) + p(queue) + bytes([0x0B]) + p(exit_)
                         + bytes([0x0C]) + p(touch) + b"\x00", f"World 1 door root, stage ${stage:02X}")
