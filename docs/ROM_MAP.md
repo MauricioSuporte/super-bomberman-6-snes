@@ -602,6 +602,14 @@ script accumulator (`61` = add).
 * Script op at `$C0:1171` (stage records' music entries): set + song from
   the table `$80:8655` (3 bytes per id) straight into Hudson's driver; it
   returns with M/X 8-bit.
+* Enemies: one routine `$C3:4B5A` for all (type `$16C2,x`, cell `$16AA,x`,
+  facing `$1632,x` 1 right 2 down 3 left 4 up, HP `$1662,x`); flame test
+  `$C3:49EC` (Y = cell): `$1052 & 4` = flame (`& 7`: 5 center, 7
+  horizontal arm, 6 vertical), then a hit costs 1 HP and gives 180 frames
+  (`$085F`) of grace; 0 HP -> `SEC` -> death `$C3:4D1C`/`$4D41`. Knights
+  (type `$08`, SB5 1-11 = `$17`) have 4 HP. Hack: `knight_hit`
+  (`asm/world1.asm`) skips the hit on 1-5 when the explosion's center lies
+  in front of a knight; 1-5 keeps only its two knights (SB1 6-4).
 * Stage field (BG2), type `02` script `2A n 27 n 0A map theme` (set 4):
   op `0A` (`$C2:0BED`, `$1B7E` map, `$1B7D` theme; `$C0:3550`/`$357B`).
   Map m = 16 x 13 metatile ids (LZ, row 13 = 0) at the first 24-bit

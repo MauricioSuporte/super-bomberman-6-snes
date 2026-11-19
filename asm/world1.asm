@@ -209,5 +209,59 @@ touch:
     jsl $C174D1
     rts
 
+;-----------------------------------------------------------------------------
+; knight_hit: $C3:49EC (LDA $1052,Y : AND #$04), the flame test of an enemy
+; (X = actor, Y = its cell, M/X 8-bit; SEC = hit, through $C3:49F3). On
+; World 1's 1-5 (stage !KNIGHT_STAGE) the knights (enemy type $08) are
+; not hurt by a blast coming from the front, as in SB1's 6-4: facing
+; $1632 (1 right, 2 down, 3 left, 4 up), the flame cells from the knight's
+; one in that direction lead to the explosion's center ($1052 & 7 = 5).
+knight_hit:
+    lda $1052,y
+    and #$04
+    beq .none
+    lda.l $7E1031
+    cmp #!KNIGHT_STAGE
+    bne .orig
+    lda $16C2,x
+    cmp #$08
+    bne .orig
+    phx
+    lda $1632,x
+    dec a
+    and #$03
+    tax
+    lda.l .step,x
+    sta.l !K
+    tya
+    tax
+    lda #$0C                    ; at most 12 cells
+    sta.l !CNT
+-   txa
+    clc
+    adc.l !K
+    tax
+    lda.l $7E1052,x
+    and #$07
+    cmp #$05
+    beq .front
+    and #$04
+    beq .side
+    lda.l !CNT
+    dec a
+    sta.l !CNT
+    bne -
+.side:
+    plx
+.orig:
+    jml $C349F3
+.front:
+    plx
+.none:
+    jml $C34A04                 ; CLC : RTS (not hit)
+.step:
+    db $01, $10, $FF, $F0       ; right, down, left, up
+
 print "SYM w1_op ", hex(w1_op)
+print "SYM knight_hit ", hex(knight_hit)
 print "SYM end ", hex(pc())

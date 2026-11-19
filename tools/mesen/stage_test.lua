@@ -163,7 +163,7 @@ for item in string.gmatch(os.getenv("EXEC") or "", "[^,]+") do
     local sp = s["cpu.sp"]
     local stk = ""
     for i = 1, 9 do stk = stk .. string.format("%02X", emu.read(sp + i, emu.memType.snesMemory)) end
-    L(string.format("exec %06X frame %s A=%04X X=%04X Y=%04X [$0A]=%06X:%02X mode %02X set %02X stack %s", a, st and tostring(f - st) or ("boot " .. f),
+    L(string.format("exec %06X frame %s P=%02X A=%04X X=%04X Y=%04X [$0A]=%06X:%02X mode %02X set %02X stack %s", a, st and tostring(f - st) or ("boot " .. f), s["cpu.ps"],
       s["cpu.a"], s["cpu.x"], s["cpu.y"], p, emu.read(p, emu.memType.snesMemory), r(0x1031), r(0x0AE7), stk))
   end, emu.callbackType.exec, a, a)
 end

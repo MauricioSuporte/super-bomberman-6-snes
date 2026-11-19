@@ -264,15 +264,24 @@ def _roots(rb, stage):
 def code(rb):
     from .. import asar
     region = rb.regions["bulk"]
-    runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}"})
+    runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}", "KNIGHT_STAGE": f"${KNIGHT_STAGE:02X}"})
     start, end = region.cursor, syms["end"]
     out = bytearray(rb.d)
     for o, d in runs:
         if not (off(start) <= o and o + len(d) <= off(end)):
             raise BuildError(f"world1.asm wrote outside its section at file offset {o:06X}")
         out[o:o + len(d)] = d
-    rb.alloc("bulk", bytes(out[off(start):off(end)]), "World 1: exit door op FF 1A F6 (asm/world1.asm)")
+    rb.alloc("bulk", bytes(out[off(start):off(end)]), "World 1: exit door op FF 1A F6, knights (asm/world1.asm)")
+    k = syms["knight_hit"]
+    rb.patch(0xC349EC, bytes.fromhex("B9 52 10 29 04"), bytes([0x5C, k & 0xFF, k >> 8 & 0xFF, k >> 16, 0xEA]),
+             "enemy flame test: World 1's knights are not hurt from the front (asm/world1.asm knight_hit)")
     return syms
+
+
+KNIGHT_STAGE = 0x17      # 1-5 (SB1's 6-4): its knights (enemy type $08) take no hit from the front
+# enemies kept (stage: types; the other type 04 roots that place an enemy `A2 x y type` go): 1-5 = SB1's 6-4,
+# its two knights only
+KEEP_ENEMIES = {0x17: {0x08}}
 
 
 # script ops left out (stage: {type: [op prefixes]}): 1-4 is SB1's 4-4 now (features/sb1_stages.py), without
@@ -312,6 +321,9 @@ def chain(rb):
         kept = []
         for r, entries in roots:
             if any(t == 0x0D for t, _ in entries):
+                continue
+            if stage in KEEP_ENEMIES and any(t == 0x04 and rb.d[off(a)] == 0xA2 and rb.d[off(a) + 3]
+                                             not in KEEP_ENEMIES[stage] for t, a in entries):
                 continue
             repl = DROP_OPS.get(stage, {})
             if any(t in repl for t, _ in entries):
