@@ -146,8 +146,8 @@ for item in string.gmatch(os.getenv("EXEC") or "", "[^,]+") do
   emu.addMemoryCallback(function()
     local s = emu.getState()
     local p = emu.read(0x0A, emu.memType.snesWorkRam) | (emu.read(0x0B, emu.memType.snesWorkRam) << 8) | (emu.read(0x0C, emu.memType.snesWorkRam) << 16)
-    L(string.format("exec %06X frame %s A=%04X X=%04X Y=%04X [$0A]=%06X:%02X", a, st and tostring(f - st) or ("boot " .. f),
-      s["cpu.a"], s["cpu.x"], s["cpu.y"], p, emu.read(p, emu.memType.snesMemory)))
+    L(string.format("exec %06X frame %s A=%04X X=%04X Y=%04X [$0A]=%06X:%02X mode %02X", a, st and tostring(f - st) or ("boot " .. f),
+      s["cpu.a"], s["cpu.x"], s["cpu.y"], p, emu.read(p, emu.memType.snesMemory), r(0x1031)))
   end, emu.callbackType.exec, a, a)
 end
 
