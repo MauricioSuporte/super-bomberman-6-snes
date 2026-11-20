@@ -560,6 +560,21 @@ script accumulator (`61` = add).
   scroll up 1 line every 2 frames (`$0321`) and the ship lights write 8 CGRAM
   entries per frame (64-frame cycle). Both from `pick_nmi` while mode 3 and
   task 9 is in `$C7:1300-$C7:17FF`.
+* Stage markers: `$C2:1070` = 3-byte pointers per zone (0-5) to entries
+  `x y stage n` ending with `00 00 00 00` (zone 1 `$C2:1082`). Script op
+  `$18` (`$C2:0EBD`, zone) creates object `$48` per entry (8x8 flag at
+  x, y - 9; OBJ palette 6 = `$4DB2`, 7 = cleared, 5 otherwise); op `$19`
+  (`$C2:0F76`, zone x y) returns the stage whose box `[x-8, x+12)` x
+  `[y-8, y+12)` holds the cursor (`$103A`, `$103C`) and draws the label
+  "- n" (`$C5:0DA7`: set 4 arrangement `$1B + n - 1`); op `$1A`
+  (`$C2:100B`) puts the cursor on a stage (`$7E:4DBA`/`$4DBC`). The map
+  script (`$C7:128B`) plays the marker under the cursor on START when it is
+  the zone's first stage (`$1046`), `$4DB2`, or cleared (op `08`: bit
+  stage + 3 of `$7E:2900`); the cursor moves freely.
+* Hack (`features/world1.py` `markers`): zone 1 = 7 markers 1-1..1-7
+  (`$0D $11 $18 $10 $17 $67 $68`, n = 1-7) where
+  `assets/world_map/zone1_stages.png` has its digits; ZONE2 loses `$68`/`$69`
+  and ZONE3 `$6B` (World 1's stages now).
 * SB1's map (for reference): BG1 map `$5000` (island, clouds; 16x16 tiles),
   BG2 map `$5400` (tile `$200` everywhere, palette 1), V scroll -1, the
   center tower is OBJ (tiles `$180-$1C2`, palette 4); only the sea tile

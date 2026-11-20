@@ -251,6 +251,48 @@ BOSSES = [                         # (boss stage, its first portal root, next st
 ]
 
 
+# World map stage markers (docs/ROM_MAP.md "World map"): $C2:1070 = 3-byte pointers per zone to
+# [x, y, stage, n]... + 00 00 00 00. Op $18 draws a flag (object $48, 8x8 at x, y - 9) per entry, op $19
+# gives the stage of the entry whose box [x - 8, x + 12) x [y - 8, y + 12) holds the cursor ($103A, $103C),
+# op $1A puts the cursor on a stage; the label is set 4 arrangement $1B + n - 1 ("- n"). START plays the
+# marker's stage when it is the zone's first one, the last one played ($4DB2) or cleared ($7E:2900 bit
+# stage + 3), as in SB5.
+MARKER_ZONES = 0xC21070
+# 1-1 .. 1-7 where assets/world_map/zone1_stages.png has its red digits (centre cx, cy in the picture): the
+# flag is centred on the digit, screen line = picture line + 1 (features/world_map.py) -> x = cx - 4, y = cy + 6
+MARKERS = [(64, 166), (113, 160), (167, 150), (175, 80), (119, 124), (63, 83), (119, 94)]
+# SB5's boss markers on ZONE2 / ZONE3 whose stages are World 1's now (1-7 $68, 1-6's $69 / $6B): taken out
+MARKERS_DROP = {1: (0x68, 0x69), 2: (0x6B,)}
+
+
+def markers(rb):
+    stages = [s for s, _, _ in CHAIN] + [BOSSES[0][0], BOSSES[-1][0]]
+    assert len(stages) == len(MARKERS)
+
+    def table(zone):
+        a = _p24(rb, MARKER_ZONES + 3 * zone)
+        o = off(a)
+        n = 0
+        while any(rb.d[o + 4 * n:o + 4 * n + 3]):
+            n += 1
+        return a, [bytes(rb.d[o + 4 * k:o + 4 * k + 4]) for k in range(n)]
+
+    at, old = table(0)
+    new = b"".join(bytes([cx - 4, cy + 6, s, n]) for n, ((cx, cy), s) in enumerate(zip(MARKERS, stages), 1))
+    size = 4 * len(old) + 4
+    rb.patch(at, bytes(rb.d[off(at):off(at) + size]), (new + bytes(4)).ljust(size, b"\x00"),
+             "World 1 map: markers 1-1..1-7 (x, y, stage, label n)")
+    for zone, drop in MARKERS_DROP.items():
+        at, old = table(zone)
+        keep = [e for e in old if e[2] not in drop]
+        if len(keep) + len(drop) != len(old):
+            raise BuildError(f"world map zone {zone + 1}: markers {drop} not found")
+        rb.patch(at, b"".join(old), b"".join(keep).ljust(4 * len(old), b"\x00"),
+                 f"world map ZONE{zone + 1}: without the markers of stages "
+                 + ", ".join(f"${s:02X}" for s in drop) + " (World 1's now)")
+    return [f"1-{n} ${s:02X} at ({cx - 4}, {cy + 6})" for n, ((cx, cy), s) in enumerate(zip(MARKERS, stages), 1)]
+
+
 def _p24(rb, a):
     o = off(a)
     return rb.d[o] | rb.d[o + 1] << 8 | rb.d[o + 2] << 16

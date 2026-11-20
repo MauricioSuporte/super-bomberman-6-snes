@@ -168,6 +168,7 @@ def main():
 
     w1 = world1.code(rb, stages["sb6_1-6"], anim_start, clown)
     print("world 1: stages " + ", ".join(world1.chain(rb)))
+    print("world 1: map markers " + ", ".join(world1.markers(rb)))
     for n, i in stages.items():
         print(f"world 1: {n} = {i['metatiles']} metatiles, {i['tiles']} tiles, {i['palettes']} palettes "
               f"({i['approx']} pixels approximated), {i['bytes']} bytes LZ")
