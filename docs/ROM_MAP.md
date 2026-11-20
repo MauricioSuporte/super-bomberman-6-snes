@@ -802,7 +802,8 @@ script accumulator (`61` = add).
   sample (directory 2) of the start jingle never sounds (silent block in
   the lists); directory 3 (other jingles' percussion) is kept when there
   is room, else it names SB1's most alike sample (1-2: SB1's kick). The
-  other World 1 stages keep SB5's ZONE1 song. The list overwrites set
+  World 1 stages without SB1 music (1-6, 1-7) play their own songs (sets `$1E`/`$25`, song `$0E`):
+  SB5's ZONE1 song is no longer heard; its own samples (`$25`, `$26`) are freed (`free_dc_zone1`). The list overwrites set
   `$2C`'s sequence while `$03CE` still says `$2C` (set to `$FF`, music id 6
   would send the set again over the list): `sb1m_song` marks `SB1M_FLAG`
   and, on the next upload of song 5 for a stage without SB1 music, sends set

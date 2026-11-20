@@ -100,6 +100,7 @@ def main():
               f"cents; SB5's jingles + {m['jingle_samples']} bytes of samples"
               + (f" (SB1 samples for SB5's {m['aliased']})" if m['aliased'] else "")
               + f"; {m['aram_left']} bytes of ARAM left; list {m['list']} bytes")
+    sb1_music.free_old(rb)           # SB5's ZONE1 stage music samples (song 5's own; the SB1 lists replace it)
     print("world map music: " + ", ".join(f"{n}'s sound RAM ({b} bytes, {p} parts)" for n, b, p in maps["drivers"]))
     # the music first: the title intro starts its pan sound through the stream code
     music = title_music.apply(rb, os.path.join(ROOT, "assets", "title", "title_music.wav"),

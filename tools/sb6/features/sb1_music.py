@@ -642,6 +642,21 @@ def build(image, path, rom, sb1_dir):
     return tm._list(blocks, bytes([0x00, 0x08])), info
 
 
+# SB5's ZONE1 stage music (music id 6 = set $2C + song 5): every World 1 stage with it now uploads its SB1
+# list instead of song 5 (sb1m_song); song 5's own samples ($25, $26: directories 5, 6, no other song lists
+# them, the jingles kept in the lists use 2, 3, 11-13) are only uploaded by SB5's ZONE1 stages left out of
+# World 1's chain ($0E, $0F, $12-$16). Set $2C stays (the stage scripts still send it; the lists keep its
+# jingles).
+OLD_DATA = [("free_dc_zone1", 0xDC501D, 3690 + 3717, 0xEEEAE4CE,
+             "freed SB5 ZONE1 music samples $25-$26 (song 5)")]
+
+
+def free_old(rb):
+    """After apply() (the lists copy the jingles' samples from song 5): SB5's ZONE1-only samples -> $FF."""
+    for name, start, size, crc, purpose in OLD_DATA:
+        rb.free_old(name, start, size, crc, purpose)
+
+
 def apply(rb, sound_dir):
     """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF."""
     table, infos = bytearray(), []
