@@ -713,14 +713,37 @@ script accumulator (`61` = add).
   types `$35` / `$36` (placed by no SB5 stage; they share set 8 archive and
   palette `$31`, so the two kinds share one sheet, colors merged to 15). Type 05 = SB1 3-6's
   chameleon (1-3 = `$18`, 7 of them): record routine `chameleon`
-  (`asm/sb1_enemies.asm`) runs `$C3:4B5A`, then alternates frog (150
-  frames) / copy of a live player (240): the object gets the player
-  object's resolved mapping (`$7E:2EEA`/`$2F4A` + obj), tile base `$073F`
-  and slot `$06DF`, its own script held (`$07A0` = `$FF`). The hit at
-  `$C3:4D41` can come from outside the actor routine and releases
-  `$06DF`'s slot: `cham_hit` (JSL there, then `gs_enemy`) puts the own slot
-  back first. Actor routine pointer = record bytes 9-11 (called through
-  `JML [$A5]`, X = actor, M/X 8-bit, RTL).
+  (`asm/chameleon.asm`, built after the characters by `sb1_enemies.chameleon`). Actor routine pointer =
+  record bytes 9-11 (called through `JML [$A5]`, X = actor, M/X 8-bit, RTL).
+* SB1's chameleon (SB1 ROM, scene `$15` = 3-6, objects `$1140+$40*n`): walk state `$C6:69FB` (timer
+  `$30` = 192-255 from `$C6:69ED`, form `$31`: 1 frog, 0 bomber), change `$C6:6AE3` -> `$C6:6B29`
+  (standing, `$C6:6B64`): `$36` = 32 frames, then the 32 entries `[frog?, frames]` of `$C6:6BFC`
+  (read backwards when it becomes a bomber), each switching palette `$1F` / tile base `$0F` (frog: own;
+  bomber: P1's or P2's palette at random and the players' tiles, `$C4:293B + 2*dir`) and the animation's
+  first frame. Seen in Mesen: 63 frames as before, new 1 / old 3 x3, new 1 / old 2 x3, 1 / 1 x3,
+  new 2 / old 1 x3, new 3 / old 1 x3, new 32, then it walks (143 frames). A flame (`$C6:0BDE`) kills a
+  frog or a changing chameleon (`$C6:33C0`); a bomber blinks 32 frames (`$C6:6A93`, palette `$0E`) and
+  changes back into a frog.
+* SB5 enemy details used by `asm/chameleon.asm`: `$C3:4C13` is the stop-watch routine (enemies frozen
+  by `$0E20/$0E21`): contact and flames (`$C3:4B7B` with `$1FF3` = `$FF`) without moving, and
+  `$0800,obj` = 0; `$0800,obj` = script steps per frame (1 at creation `$C0:132D`, 2 for a walking
+  bomber); `$15A2,x` bit 2 skips the walker's flame test (`$C3:4BB2`); a flame death sets `$15A2` bit 7
+  and the actor routine `$C3:4D0E` (`$C4:2374`). Main loop `$C0:0B4A` clears `$03D3`, `$C0:0B59` builds
+  the OAM and sets it: the NMI sends the OAM (`$C0:14F9`) only when it is set, so a DMA done in the same
+  NMI only when `$03D3` != 0 matches the OAM shown (`cham_nmi`).
+* Hack, chameleons (`asm/chameleon.asm`): frog walk (`$C3:4B5A`), change (`$C3:4C13`, FLICK = SB1's
+  table without its final 32 standing frames), copy walk (`$C3:4B5A`; a flame kills the copy too, unlike
+  SB1). The copy is drawn only with the pose whose tiles are in its half (`HLOAD`), the frog until one is.
+  The copy: a live seat at random, its character's walk 01-04 by
+  facing from CTAB (per character and facing `[frames, mapping24, source24, columns]`; poses streamed
+  for the players are reused, the others are cut out of the animation's strip: the columns its pieces
+  use, renumbered, checked pixel by pixel; at most 5 columns), tiles in a VRAM half of its own (OBJ
+  pages 12-15 = tiles `$180-$1FF`, 8 halves of 8 x 2 tiles, owner `$7D` set by the first chameleon:
+  1-3's static sprites end at page 9; co-op's `lend_pages` only lends `$7E` pages), at most 3 pose DMAs
+  queued per frame, sent by `cham_nmi` (JSL at `$C0:F41D`, then the bombers' `stream_nmi`); the
+  player's palette slot; own script held (`$07A0` = `$FF`). `cham_hit` (JSL at `$C3:4D41`, then
+  `gs_enemy`) restores the own slot of one killed outside its routine. Checked in Mesen frame by frame
+  (Bomberman = cut poses, character 1 = streamed poses): no frame with the wrong tiles.
 * Stage field (BG2), type `02` script `2A n 27 n 0A map theme` (set 4):
   op `0A` (`$C2:0BED`, `$1B7E` map, `$1B7D` theme; `$C0:3550`/`$357B`).
   Map m = 16 x 13 metatile ids (LZ, row 13 = 0) at the first 24-bit

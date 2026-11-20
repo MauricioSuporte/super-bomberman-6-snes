@@ -71,11 +71,12 @@ endif
     rtl
 +   lda #$00                    ; 3: forget, start the picking task
     sta.l !DX
-    ldx #$B0                    ; and clear the chameleons' state (asm/sb1_enemies.asm, $7F:FB20-$7F:FBCF)
+    rep #$10                    ; and clear the chameleons' state (asm/chameleon.asm, $7F:F800-$7F:FAFF)
+    ldx #$0300
 -   dex
-    sta.l $7FFB20,x
-    cpx #$00
+    sta.l $7FF800,x
     bne -
+    sep #$10
     jsl $C020A1
     dl door_task
     db $60                      ; skipped: $C020A1 returns one byte past the dl (SB5's own callers have an RTS there)

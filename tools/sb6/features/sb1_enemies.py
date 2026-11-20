@@ -29,6 +29,7 @@ from .bombers import _table
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 ASSETS = os.path.join(ROOT, "assets", "enemies")
 ASM = os.path.join(ROOT, "asm", "sb1_enemies.asm")
+CHAM_ASM = os.path.join(ROOT, "asm", "chameleon.asm")
 RECORDS = 0xC3005C
 HIT = 0xC34D41                   # enemy hit (JSL gs_enemy, features/game_sfx.py)
 BASE_TYPE = 0x01                 # records copied from type 01's
@@ -41,7 +42,8 @@ KINDS = {
     "spring": dict(type=0x02, sheet="sb1_2-1_spring", anims=[[(c + 3 * d, n) for c, n in SPRING] for d in range(4)]),
     "pot": dict(type=0x03, sheet="sb1_2-1_pot", anims=[[(c, 8) for c in range(8)]] * 4),
     "clown": dict(type=0x06, sheet="sb1_2-1_clown", anims=[[(2, 8), (3, 8)], [(0, 8), (1, 8)]] * 2),
-    # SB1 3-6's chameleon: a frog that becomes a copy of a live player's bomber (asm/sb1_enemies.asm)
+    # SB1 3-6's chameleon: a frog that becomes a copy of a live player's character (asm/chameleon.asm; its
+    # routine goes into the record once the characters' tables are built: chameleon())
     "frog": dict(type=0x05, sheet="sb1_3-6_frog", routine="chameleon",
                  anims=[[(0, 12), (1, 12), (2, 12), (1, 12), (3, 6), (4, 6), (5, 12), (4, 6), (3, 6)]] * 4),
     # SB1 2-8's clown mask (1-7's boss): an enemy with an empty picture whose routine moves the clown, drawn
@@ -232,12 +234,7 @@ def clown_bg(rb):
 def code(rb, bg):
     from .. import asar
     region = rb.regions["bulk"]
-    hit = bytes(rb.d[off(HIT):off(HIT) + 6])          # JSL gs_enemy (features/game_sfx.py) : NOP NOP
-    if hit[0] != 0x22 or hit[4:] != bytes.fromhex("EA EA"):
-        raise BuildError(f"SB1 enemies: ${HIT:06X} is not game_sfx's JSL ({hit.hex()})")
-    gs = int.from_bytes(hit[1:4], "little")
-    runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}", "GS_ENEMY": f"${gs:06X}",
-                                                "CHAM_TYPE": f"${KINDS['frog']['type']:02X}",
+    runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}",
                                                 "CLOWN_TYPE": f"${KINDS['clownbody']['type']:02X}",
                                                 "CTILES": f"${bg['tiles']:06X}", "COPEN": f"${bg['open']:06X}",
                                                 "CCLOSED": f"${bg['closed']:06X}",
@@ -250,10 +247,7 @@ def code(rb, bg):
         if not (off(start) <= o and o + len(d) <= off(end)):
             raise BuildError(f"sb1_enemies.asm wrote outside its section at file offset {o:06X}")
         out[o:o + len(d)] = d
-    rb.alloc("bulk", bytes(out[off(start):off(end)]), "SB1 enemies: chameleon routine (asm/sb1_enemies.asm)")
-    c = syms["cham_hit"]
-    rb.patch(HIT, hit, bytes([0x22, c & 0xFF, c >> 8 & 0xFF, c >> 16]) + hit[4:],
-             "enemy hit: a chameleon's own palette slot back first (asm/sb1_enemies.asm cham_hit)")
+    rb.alloc("bulk", bytes(out[off(start):off(end)]), "SB1 enemies: clown routines (asm/sb1_enemies.asm)")
     return syms
 
 
@@ -303,13 +297,14 @@ def apply(rb):
         # record: type 01's, with this kind's archive, palette, animations
         anim = ANIM_FIRST + len(all_scripts)
         new = bytes([arc_id, pal_id]) + base_rec[2:4] + bytes([anim]) + base_rec[5:]
-        if "routine" in k:                                   # own actor routine (it runs $C3:4B5A itself)
+        if k.get("routine") in syms:                         # own actor routine (it runs $C3:4B5A itself)
             r = syms[k["routine"]]
             new = new[:9] + bytes([r & 0xFF, r >> 8 & 0xFF, r >> 16]) + new[12:]
         rb.patch(rec, old, new, f"SB1 enemy {name}: type ${k['type']:02X} record (type 01's walk, own pictures)")
         all_maps += built["maps"]
         all_scripts += built["scripts"]
-        info[name] = dict(type=k["type"], tiles=built["tiles"], frames=len(built["maps"]), colors=len(built["colors"]))
+        info[name] = dict(type=k["type"], tiles=built["tiles"], frames=len(built["maps"]), colors=len(built["colors"]),
+                          rec=rec)
     if MAP_FIRST + len(all_maps) > 0x100 or ANIM_FIRST + len(all_scripts) > MAP_FIRST:
         raise BuildError("SB1 enemies: too many mappings / animations")
     mt = _table(rb, all_maps, "SB1 enemies: T 7 mappings from $E0")
@@ -326,3 +321,180 @@ def stage_enemies(stage):
     if stage not in STAGE_ENEMIES:
         return None
     return [bytes([0xA2, x, y, KINDS[k]["type"], 0x00]) for x, y, k in STAGE_ENEMIES[stage]]
+
+
+# ---------------------------------------------------------------------------
+# SB1 3-6's chameleons (1-3): asm/chameleon.asm, built once the characters' tables exist.
+CHAM_STAGE = 0x18                # 1-3
+NMI_HOOK = 0xC0F41D              # JSL in the NMI after the OAM DMA (bombers' stream_nmi)
+HALF_COLS = 8                    # a VRAM half: 8 columns x 2 rows of 8x8 tiles
+WALK = range(1, 5)               # walk right, down, left, up = facing 1-4
+CHAM_DATA = ["free_c9_sheets", "free_c7_sheets", "free_c8_sheets"]
+PIECE = struct.Struct("<hhHB")
+
+
+def _pose_pixels(tiles, pieces):
+    """{(x, y): color index} drawn by pieces [(x, y, tile, attr)]; tiles(tile number) -> 8x8 indices."""
+    out = {}
+    for x, y, t, a in reversed(pieces):          # (the first piece is on top)
+        n = 2 if a & 1 else 1
+        for ty in range(n):
+            for tx in range(n):
+                px = tiles(t + ty * 16 + tx)
+                for yy in range(8):
+                    for xx in range(8):
+                        sx = tx * 8 + xx if not a & 0x40 else (n - 1 - tx) * 8 + 7 - xx
+                        sy = ty * 8 + yy if not a & 0x80 else (n - 1 - ty) * 8 + 7 - yy
+                        if px[yy][xx]:
+                            out[(x + sx, y + sy)] = px[yy][xx]
+    return out
+
+
+def _decode(tile32):
+    return [[sum(((tile32[y * 2 + (p & 1) + (p >> 1) * 16] >> (7 - x)) & 1) << p for p in range(4))
+             for x in range(8)] for y in range(8)]
+
+
+def chameleon(rb, binfo, sheets, en_info):
+    """CTAB (each character's walk in blocks of <= 8 columns), the routine and its hooks (asm/chameleon.asm).
+    Poses streamed for the players already are such blocks; the others are cut out of the animation's 1 KB
+    strip (the columns its pieces use, in order) with their pieces renumbered, and checked pixel by pixel."""
+    from .. import asar
+    t = binfo["tables"]
+
+    def rb8(a):
+        return rb.d[off(a)]
+
+    def rw(a):
+        return rb.d[off(a)] | rb.d[off(a) + 1] << 8
+
+    def rl(a):
+        return rw(a) | rb8(a + 2) << 16
+
+    def sheet_src(s):
+        return int.from_bytes(sheets.entries[8 * (s - 1) + 4:8 * (s - 1) + 7], "little")
+
+    blocks, maps, stats = {}, {}, dict(streamed=0, cut=0, widest=0)
+
+    def block_addr(data):
+        if data not in blocks:
+            blocks[data] = rb.alloc(CHAM_DATA, data, f"chameleons: pose tiles ({len(data) // 64} columns)")
+        return blocks[data]
+
+    def map_addr(blob):
+        if blob not in maps:
+            a = rb.alloc(["objmap3", "objmap2", "objmap"], blob, "chameleons: pose pieces (cut from a strip)")
+            maps[blob] = a & 0x3FFFFF | 0x800000
+        return maps[blob]
+
+    empty = map_addr(bytes([1]) + PIECE.pack(0x4000, 0, 0, 0x20))
+    scripts = {}                                         # (char, facing) -> [(frames, map24, src24, cols)], loop
+    for c in range(10):
+        mt, at = rl(t["charmap"] + 3 * c), rl(t["charanim"] + 3 * c)
+        if not mt or not at:
+            raise BuildError(f"chameleons: character {c} has no tables of its own")
+        so, sn = rw(t["charstream"] + 3 * c), rb8(t["charstream"] + 3 * c + 2)
+        ct = 0x800000 | rw(0x80BB66 + 2 * c)
+        for a in WALK:
+            p = at & 0xFF0000 | rw(at + 2 * (a - 1))
+            seq = []
+            while rb8(p + 1):
+                seq.append((rb8(p), rb8(p + 1)))
+                p += 2
+            loop = rb8(p) // 2
+            if not seq or loop >= len(seq):
+                raise BuildError(f"chameleons: character {c}, animation {a:02X}: empty or bad loop")
+            out = []
+            for m, fr in seq:
+                if not m:
+                    out.append((fr, empty, 0, 0))
+                    continue
+                mp = mt & 0xFF0000 | rw(mt + 2 * (m - 1))
+                e = 0xE40000 | (so + 4 * (m - 1)) if sn and m <= sn else 0
+                if e and rb8(e + 3) & 15:
+                    w = rb8(e + 3) & 15
+                    out.append((fr, mp, rw(e) | (0xEC + (rb8(e + 3) >> 4)) << 16, w))
+                    stats["streamed"] += 1
+                    continue
+                sheet, row = rb8(ct + 2 * (a - 1)), rb8(ct + 2 * (a - 1) + 1)
+                s0 = off(sheet_src(sheet) + row * 0x200)
+                strip = bytes(rb.d[s0:s0 + 0x400])
+                pieces = [PIECE.unpack_from(rb.d, off(mp) + 1 + 7 * i) for i in range(rb8(mp))]
+                if all(x >= 0x1000 for x, *_ in pieces):     # an empty pose (encode_mapping: one piece far right)
+                    out.append((fr, empty, 0, 0))
+                    continue
+                used = set()
+                for x, y, tile, attr in pieces:
+                    rel = tile - row * 16
+                    r, col, n = rel >> 4, rel & 15, 2 if attr & 1 else 1
+                    if not (0 <= r and r + n <= 2 and col + n <= 16):
+                        raise BuildError(f"chameleons: character {c}, pose {m:02X}: a piece outside its strip")
+                    used |= set(range(col, col + n))
+                cols = sorted(used)
+                w = len(cols)
+                if w > HALF_COLS:
+                    raise BuildError(f"chameleons: character {c}, pose {m:02X} uses {w} columns "
+                                     f"(a VRAM half holds {HALF_COLS})")
+                new = {col: i for i, col in enumerate(cols)}
+                data = b"".join(strip[r * 0x200 + col * 32:r * 0x200 + col * 32 + 32] for r in (0, 1) for col in cols)
+                npieces = [(x, y, ((tile - row * 16) >> 4) * 16 + new[(tile - row * 16) & 15], attr)
+                           for x, y, tile, attr in pieces]
+                # the cut pose draws the same pixels as the player's
+                old_px = _pose_pixels(lambda n: _decode(strip[((n - row * 16) >> 4) * 0x200 + ((n - row * 16) & 15) * 32:]
+                                                        [:32]), pieces)
+                new_px = _pose_pixels(lambda n: _decode(data[((n >> 4) * w + (n & 15)) * 32:][:32]), npieces)
+                if old_px != new_px:
+                    raise BuildError(f"chameleons: character {c}, pose {m:02X} drawn differently once cut")
+                blob = bytes([len(npieces)]) + b"".join(PIECE.pack(*q) for q in npieces)
+                out.append((fr, map_addr(blob), block_addr(data), w))
+                stats["cut"] += 1
+                stats["widest"] = max(stats["widest"], w)
+            scripts[(c, a)] = (out, loop)
+
+    # one bank: 40 words (character * 4 + facing - 1) -> entries [frames, map24, src24, cols], [0, loop16]
+    region = next(r for r in CHAM_DATA if r in rb.regions and rb.regions[r].free() >= 4096)
+    base = rb.regions[region].cursor
+    head, body, where = bytearray(), bytearray(), {}
+    pos = (base & 0xFFFF) + 80
+    for c in range(10):
+        for a in WALK:
+            out, loop = scripts[(c, a)]
+            key = (tuple(out), loop)
+            if key not in where:
+                start = pos + len(body)
+                for fr, mp, src, w in out:
+                    body += bytes([fr]) + mp.to_bytes(3, "little") + src.to_bytes(3, "little") + bytes([w])
+                body += bytes([0]) + (start + 8 * loop).to_bytes(2, "little")
+                where[key] = start
+            head += where[key].to_bytes(2, "little")
+    ctab = rb.alloc(region, bytes(head + body), "chameleons: walk poses of each character and facing (CTAB)")
+    if ctab != base or (ctab + len(head) + len(body) - 1) >> 16 != ctab >> 16:
+        raise BuildError("chameleons: CTAB moved or crosses a bank")
+
+    hit = bytes(rb.d[off(HIT):off(HIT) + 6])             # JSL gs_enemy (features/game_sfx.py) : NOP NOP
+    nmi = bytes(rb.d[off(NMI_HOOK):off(NMI_HOOK) + 4])
+    if hit[0] != 0x22 or hit[4:] != bytes.fromhex("EA EA") or nmi[0] != 0x22:
+        raise BuildError(f"chameleons: unexpected hooks ({hit.hex()}, {nmi.hex()})")
+    region = rb.regions["bulk"]
+    runs, syms = asar.assemble_into(rb.d, CHAM_ASM, {
+        "ORG": f"${region.cursor:06X}", "GS_ENEMY": f"${int.from_bytes(hit[1:4], 'little'):06X}",
+        "NMINEXT": f"${int.from_bytes(nmi[1:4], 'little'):06X}", "CHAM_TYPE": f"${KINDS['frog']['type']:02X}",
+        "STAGE": f"${CHAM_STAGE:02X}", "CTAB": f"${ctab:06X}", "CTB": f"${ctab & 0xFF0000:06X}",
+        "EMPTY": f"${empty:06X}"})
+    start, end = region.cursor, syms["end"]
+    out = bytearray(rb.d)
+    for o, d in runs:
+        if not (off(start) <= o and o + len(d) <= off(end)):
+            raise BuildError(f"chameleon.asm wrote outside its section at file offset {o:06X}")
+        out[o:o + len(d)] = d
+    rb.alloc("bulk", bytes(out[off(start):off(end)]), "chameleons: routine, NMI DMA, hit hook (asm/chameleon.asm)")
+
+    def jsl(a):
+        return bytes([0x22, a & 0xFF, a >> 8 & 0xFF, a >> 16])
+    rec, r = en_info["frog"]["rec"], syms["chameleon"]
+    rb.patch(rec + 9, bytes(rb.d[off(rec + 9):off(rec + 12)]), bytes([r & 0xFF, r >> 8 & 0xFF, r >> 16]),
+             "SB1 enemy frog: chameleon actor routine (asm/chameleon.asm)")
+    rb.patch(HIT, hit, jsl(syms["cham_hit"]) + hit[4:],
+             "enemy hit: a chameleon's own palette slot back first (asm/chameleon.asm cham_hit)")
+    rb.patch(NMI_HOOK, nmi, jsl(syms["cham_nmi"]), "NMI: chameleon poses DMA'd with the OAM (asm/chameleon.asm)")
+    return dict(stats, blocks=len(blocks), maps=len(maps), scripts=len(where))

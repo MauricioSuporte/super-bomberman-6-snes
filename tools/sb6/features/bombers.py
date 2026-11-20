@@ -457,7 +457,8 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
                  "bomber: palette ids $80+ of set 0, replaced ids")
     result = dict(chars=chars, strips=0, poses=0, max_pieces=0, inexact=inexact, notes=notes, scripts=0,
                   paltab=paltab if palettes else 0, palcount=len(palettes), stand=None, sheet=bool(info0),
-                  pal_total=len(all_pals), own_id=OWN_ID, first=palettes[0] if palettes else None, stream_clear=syms["stream_clear"] if streaming else 0)
+                  pal_total=len(all_pals), own_id=OWN_ID, first=palettes[0] if palettes else None, stream_clear=syms["stream_clear"] if streaming else 0,
+                  tables=dict(charmap=cmap, charanim=canim, charstream=cstab))
     if info0:
         pieces = [len(p) for p in info0["mappings"].values()]
         result.update(strips=info0["strips"], poses=len(pieces), max_pieces=max(pieces), scripts=len(br.scripts))

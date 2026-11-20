@@ -148,6 +148,9 @@ def main():
                              enemies=en_defs)
     sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
     bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
+    cham = sb1_enemies.chameleon(rb, info, sheets, en_info)   # 1-3's chameleons walk as the characters
+    print(f"chameleons: {cham['streamed']} streamed poses reused, {cham['cut']} cut from strips "
+          f"({cham['blocks']} blocks, up to {cham['widest']} columns), {cham['scripts']} walk scripts")
 
     # after the stock sheets are freed: the title's alternate pose steps also use free_c8_sheets
     tinfo = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot,
