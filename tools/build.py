@@ -117,13 +117,6 @@ def main():
           f"{', '.join(f'${b:02X}:{lo:04X}-{hi:04X}' for b, lo, hi in music['save_segs'])}; "
           f"RMS gain x{music['save_gain']:.2f} -> VOL ${music['save_vol'][0]:02X}, MVOL ${music['save_vol'][1]:02X}")
 
-    tinfo = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot,
-                        os.path.join(args.out, "cache"), music["pre_start"])
-    st = tinfo["stats"]
-    print(f"title: sky {st['sky']} tiles, scene {st['scene']} + 2 x {st['scratch']} for alternate poses, "
-          f"logo {st['logo']}, falling waves {st['waves']}; {st['frames']} intro frames, {st['jobs']} transfers; "
-          f"palette error {tinfo['error']:.0f} + logo {tinfo['logo_error']:.0f} (start {tinfo['start']})")
-
     bomber = bomberman_sprites.apply(rb, os.path.join(ROOT, "assets", "bomberman"))
     print(f"bomberman: {bomber['tiles']} tiles and {bomber['palettes']} palettes changed")
 
@@ -155,6 +148,14 @@ def main():
                              enemies=en_defs)
     sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
     bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
+
+    # after the stock sheets are freed: the title's alternate pose steps also use free_c8_sheets
+    tinfo = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot,
+                        os.path.join(args.out, "cache"), music["pre_start"])
+    st = tinfo["stats"]
+    print(f"title: sky {st['sky']} tiles, scene {st['scene']} + 2 x {st['scratch']} for alternate poses, "
+          f"logo {st['logo']}, falling waves {st['waves']}; {st['frames']} intro frames, {st['jobs']} transfers; "
+          f"palette error {tinfo['error']:.0f} + logo {tinfo['logo_error']:.0f} (start {tinfo['start']})")
 
     wmap = world_map.apply(rb, os.path.join(ROOT, "assets", "world_map"), args.out, ["wmap_f5", "sb1_f4"],
                            music["map_music"])

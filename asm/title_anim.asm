@@ -13,7 +13,7 @@
 ; Job record (8 bytes): VRAM word, rows, bytes per row, source (24 bits); a
 ; row is one DMA, the next row goes 32 words further (a map rectangle).
 ;
-; State: $7F:FD00-$7F:FD3F (docs/FREE_SPACE.md).
+; State: $7F:FD00-$7F:FD43 (docs/FREE_SPACE.md).
 
 asar 1.90
 hirom
@@ -35,10 +35,9 @@ hirom
 !rng    = !V+$12        ; word
 !amask  = !V+$14        ; characters in their alternate pose
 !rot    = !V+$15        ; last character tried
-!sst    = !V+$16        ; 2 scratch areas: 0 free, 2 second tile job, 3 cells, 4 shown
+!sst    = !V+$16        ; 2 players (scratch areas): 0 free, 1/2 tile jobs, 3 cells pending, 4 last step
 !sch    = !V+$18        ; ... character
 !stm    = !V+$1A        ; ... frames left
-!sof    = !V+$1C        ; ... offset of its jobs in the table
 !ctm    = !V+$1E        ; 7 characters: frames until the next alternate pose
 !va     = !V+$26        ; word scratch
 !ln     = !V+$28
@@ -59,13 +58,15 @@ hirom
 !cvis   = !V+$3A        ; 1 = the cursor sprite was on screen in the last frame
 !cforce = !V+$3B        ; frames the pose and colors are still sent again
 !cw     = !V+$3C        ; FF 1A FC: 1 = its frame has been waited
+!smul   = !V+$3D        ; 1 = player 0 shows a pose in several steps (both areas)
+!sof    = !V+$40        ; 2 words: the pending step's record in !ALT
 
 !BG1SC  = $4A           ; map $4800, 32x64
 !BG2SC  = $3A           ; map $3800, 32x64
 !NBA    = $06           ; BG1 chr $6000, BG2 chr $0000
 !HIDDEN = $00FF         ; BG1 V scroll 256 (-1): the empty rows 32-63
 !REST   = $03FF         ; V scroll -1: screen line 1 = map line 0
-!ALTREC = 16            ; bytes per character in !ALT: conflicts, frames, restore job, 2 x (tiles, tiles, cells)
+!ALTREC = 8             ; bytes per character in !ALT: conflicts, several steps, restore job, 2 step lists
 
 org !ORG
 
@@ -487,6 +488,7 @@ title_nmi:
     cmp #$01
     bne .next
     lda.l !cyc
+    ora.l !smul                     ; a pose in steps (!smul = 1): player 0 every frame
     dec a
     and #$01                        ; frames 1, 3: area 0; frames 2, 4: area 1
     sta.l !cs
@@ -528,6 +530,7 @@ idle_start:
     sta.l !sst+1
     sta.l !stm
     sta.l !stm+1
+    sta.l !smul
     ldx.b #!NCHAR-1
 -   jsr rand                        ; first alternate pose within ~4 s
     sta.l !ctm,x
@@ -862,23 +865,91 @@ landed:
     sep #$20
     rts
 
-; One step of scratch area !cs (M/X 8-bit).
+; One service of player !cs (M/X 8-bit). A player shows a character's
+; alternate pose as a list of steps (tables: features/title_anim.py): it sends
+; the next step's tiles (to the scratch area the step uses) while the current
+; step is shown, then its cells when the current step's time is over. A pose
+; in several steps (!ALT+1 = 1) only starts in player 0, with player 1 free,
+; and keeps both areas (!smul) until it ends.
 alt_serve:
     lda.l !cs
     tax
     lda.l !sst,x
     bne +
     brl .free
-+   cmp #$02
++   cmp #$04
+    bne +
+    brl .last
++   cmp #$03
+    beq .switch
+    cmp #$02
     beq .tiles2
-    cmp #$03
-    beq .cells
-    lda.l !stm,x                    ; ---- 4: shown; when the time is over,
-    beq +                           ; the standing pose's cells again
+    lda #$02                        ; ---- 1: the pending step's first tile job
+    sta.l !sst,x
+    rep #$30
+    jsr sptr
+    lda.l !ALT+0,x
+    bra .tjob
+.tiles2:                            ; ---- 2: its second tile job
+    lda #$03
+    sta.l !sst,x
+    rep #$30
+    jsr sptr
+    lda.l !ALT+2,x
+.tjob:
+    cmp #$FFFF
+    beq +
+    jsr dojob
+    sep #$30
+    rts
++   sep #$30                        ; no such job: the next state now
+    brl alt_serve
+.switch:                            ; ---- 3: tiles sent; its cells when the
+    lda.l !stm,x                    ; step on screen is over
+    beq +
+    rts
++   rep #$30
+    jsr sptr
+    phx
+    phy
+    lda.l !ALT+4,x
+    jsr dojob
+    ply
+    plx
+    sep #$20
+    lda.l !ALT+14,x                 ; the next step's frames (0: this was the last)
+    sta.l !t0
+    lda.l !ALT+6,x
+    pha
+    rep #$20
+    txa
+    clc
+    adc #$0008
+    tyx
+    sta.l !sof,x
+    sep #$30
+    lda.l !cs
+    tax
+    pla
+    sta.l !stm,x
+    lda.l !t0
+    beq +
+    lda #$01                        ; more steps: load the next one
+    sta.l !sst,x
+    rts
++   lda #$04
+    sta.l !sst,x
+    rts
+.last:                              ; ---- 4: the last step; when its time is
+    lda.l !stm,x                    ; over, the standing pose's cells again
+    beq +
     rts
 +   lda #$00
     sta.l !sst,x
-    lda.l !sch,x
+    cpx #$00
+    bne +
+    sta.l !smul
++   lda.l !sch,x
     tay
     tax
     lda.l bits,x
@@ -894,47 +965,9 @@ alt_serve:
     asl a
     asl a
     asl a
-    asl a
     tax
     rep #$20
     lda.l !ALT+2,x
-    jsr dojob
-    sep #$20
-    rts
-.tiles2:
-    lda #$03
-    sta.l !sst,x
-    lda.l !sof,x
-    tax
-    rep #$20
-    lda.l !ALT+2,x
-    cmp #$FFFF
-    beq +
-    jsr dojob
-    sep #$20
-    rts
-+   sep #$20                        ; one tile job only: the cells now
-    lda.l !cs
-    tax
-.cells:
-    lda #$04
-    sta.l !sst,x
-    lda.l !sch,x
-    asl a
-    asl a
-    asl a
-    asl a
-    tax
-    lda.l !ALT+1,x
-    pha
-    lda.l !cs
-    tax
-    pla
-    sta.l !stm,x
-    lda.l !sof,x
-    tax
-    rep #$20
-    lda.l !ALT+4,x
     jsr dojob
     sep #$20
     rts
@@ -948,20 +981,28 @@ alt_serve:
 +   sta.l !rot
     tax
     lda.l !ctm,x
-    bne +
+    bne .no
     txa
-    asl a
     asl a
     asl a
     asl a
     tax
     lda.l !ALT+0,x
     and.l !amask
+    bne .no
+    lda.l !ALT+1,x                  ; in several steps: player 0, player 1 free
     beq .start
-+   dey
+    lda.l !cs
+    bne .no
+    lda.l !sst+1
+    beq .start
+.no:
+    dey
     bne -
     rts
-.start:
+.start:                             ; X = !rot * 8
+    lda.l !ALT+1,x
+    pha
     lda.l !rot
     tax
     lda.l bits,x
@@ -969,28 +1010,44 @@ alt_serve:
     sta.l !amask
     lda.l !cs
     tax
-    lda.l !rot
-    sta.l !sch,x
-    asl a
-    asl a
-    asl a
-    asl a
-    clc
-    adc #$04
-    cpx #$00
-    beq +
-    clc
-    adc #$06
-+   sta.l !sof,x
-    pha
-    lda #$02
-    sta.l !sst,x
     pla
+    beq +
+    sta.l !smul
++   lda.l !rot
+    sta.l !sch,x
+    lda #$00
+    sta.l !stm,x
+    lda #$01
+    sta.l !sst,x
+    lda.l !rot                      ; its step list for this player's area
+    asl a
+    asl a
+    asl a
+    sta.l !t0
+    txa
+    asl a
+    clc
+    adc.l !t0
     tax
-    rep #$20
-    lda.l !ALT+0,x
-    jsr dojob
-    sep #$20
+    rep #$30
+    lda.l !ALT+4,x
+    pha
+    jsr sptr
+    pla
+    tyx
+    sta.l !sof,x
+    sep #$30
+    brl alt_serve                   ; its first tile job now
+
+; (M/X 16-bit) X = the step record of player !cs, Y = !cs * 2.
+sptr:
+    lda.l !cs
+    and #$00FF
+    asl a
+    tay
+    tax
+    lda.l !sof,x
+    tax
     rts
 
 print "SYM end ", hex(pc())

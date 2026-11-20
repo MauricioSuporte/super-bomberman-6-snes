@@ -29,7 +29,7 @@ from . import options
 from .title_text import text_tiles
 
 ASM = os.path.join(os.path.dirname(__file__), "..", "..", "..", "asm", "title_anim.asm")
-ANIM_REGIONS = ["title_fa", "title_fb"]  # tiles, maps, tables and code of the animated title
+ANIM_REGIONS = ["title_fa", "title_fb", "free_c8_sheets"]  # tiles, maps, tables and code of the animated title
 
 SET = 5                   # new graphics set used by the SB6 title
 VRAM_TILE_LIMIT = 0x3000  # words: BG1/BG2 maps start at VRAM $3000
@@ -207,8 +207,8 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None, cache_dir=Non
                "CURANIM": str(CURSOR_ANIM_FRAMES), "CURIDLE": str(CURSOR_IDLE_FRAMES),
                "CUREYE": str(CURSOR_CONFIRM_EYE), "CURCONFIRM": str(len(CURSOR_SEQS))}
     defines.update({k: str(v) for k, v in anim["consts"].items()})
-    if 4 + 6 * title_anim.SCRATCH != 16 or anim["consts"]["NCHAR"] > 8:
-        raise BuildError("title: asm/title_anim.asm expects 2 scratch areas and at most 8 characters")
+    if title_anim.SCRATCH != 2 or title_anim.ALTREC != 8 or anim["consts"]["NCHAR"] > 8:
+        raise BuildError("title: asm/title_anim.asm expects 2 scratch areas, 8-byte !ALT records and at most 8 characters")
     runs, syms = asar.assemble_into(rb.d, ASM, defines)
     start, end = region.cursor, syms["end"]
     out = bytearray(rb.d)

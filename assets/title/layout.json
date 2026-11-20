@@ -28,14 +28,15 @@
   },
   "characters_bottom_margin": 10,
   "characters": [
-    {"name": "Pink", "file": "Haneroo_A.png", "size": [ 80, 95 ], "offset": [ -9, -12 ], "falling": "Haneroo_C.png", "alt": "Haneroo_E.png", "alt_offset": [ 5, 0 ], "alt_seconds": 0.5},
+    {"name": "Pink", "file": "Haneroo_A.png", "size": [ 80, 95 ], "offset": [ -9, -12 ], "falling": "Haneroo_C.png", "alt": "Haneroo_E.png", "alt_offset": [ 5, 0 ], "alt_seconds": 1.0, "alt_steps": { "move": "character", "seconds": 0.1, "offsets": [ [0,0], [0,1], [0,2], [0,3], [0,4], [0,5], [0,4], [0,3], [0,2], [0,1] ] }},
     {"name": "Blue", "file": "Keroo_A.png", "size": [ 80, 80 ], "offset": [ -7, 3 ], "falling": "Keroo_C.png", "alt": "Keroo_E.png", "alt_offset": [ 0, 0 ], "alt_seconds": 0.5, "alt_extra": { "file": "Bomb.png", "offset": [ 11, 58 ] }},
-    {"name": "Yellow", "file": "Gyaroo_A.png", "size": [ 80, 80 ], "offset": [ -10, 5 ], "falling": "Gyaroo_C.png", "alt": "Gyaroo_E.png", "alt_offset": [ 0, 0 ], "alt_seconds": 0.5, "alt_extra": { "file": "Block.png", "offset": [ 40, 30 ] }},
+    {"name": "Yellow", "file": "Gyaroo_A.png", "size": [ 80, 80 ], "offset": [ -10, 5 ], "falling": "Gyaroo_C.png", "alt": "Gyaroo_E.png", "alt_offset": [ 0, 0 ], "alt_seconds": 0.5, "alt_extra": { "file": "Block.png", "offset": [ 40, 30 ] }, "alt_steps": { "move": "extra", "seconds": 0.1, "offsets": [ [0,0], [1,0], [2,0], [3,0], [4,0] ] }},
     {"name": "Purple", "file": "Magicaroo_A.png", "size": [ 80, 80 ], "offset": [ 0, 10 ], "falling": "Magicaroo_C.png", "alt": "Magicaroo_E.png", "alt_offset": [ 0, 0 ], "alt_seconds": 2},
     {"name": "Red", "file": "Naguroo_A.png", "size": [ 80, 80 ], "offset": [ 9, 4 ], "falling": "Naguroo_C.png", "alt": "Naguroo_E.png", "alt_offset": [ 0, 0 ], "alt_seconds": 0.5},
-    {"name": "Black", "file": "Waroo_A.png", "size": [ 80, 80 ], "offset": [ 12, -5 ], "falling": "Waroo_C.png", "alt": "Waroo_E.png", "alt_offset": [ 0, 0 ], "alt_seconds": 0.5},
+    {"name": "Black", "file": "Waroo_A.png", "size": [ 80, 80 ], "offset": [ 12, -5 ], "falling": "Waroo_C.png", "alt": "Waroo_E.png", "alt_offset": [ 0, 0 ], "alt_seconds": 0.5, "alt_steps": { "move": "character", "seconds": 0.1, "offsets": [ [0,0], [-1,0], [-2,0], [-3,0], [-4,0] ] }},
     {"name": "Green", "file": "Maroo_A.png", "size": [ 95, 80 ], "offset": [ 9, -14 ], "falling": "Maroo_C.png", "alt": "Maroo_E.png", "alt_offset": [ 1, 3 ], "alt_seconds": 0.5}
   ],
+  "_alt_steps_note": "TitleScreenDropIntro.IdleAlternateRoutine: Pink (Haneroo) rises 1 px every 0.1 s up to 5 and comes back down (1 s), Black (Waroo) moves 1 px left every 0.1 s and jumps back when standing again, Yellow's block (Gyaroo) moves 1 px right every 0.1 s. Offsets are Unity's (x right, y up), one picture per step.",
   "_draw_order_note": "Back to front, as TitleScreenDropIntro.UpdateCharacterSiblingOrder resolves it.",
   "draw_order": [
     "Purple",

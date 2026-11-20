@@ -6,7 +6,8 @@ values in assets/title/layout.json):
   2. the seven characters fall in from above, from the middle outwards
      (falling pose, 0.3 s per wave), and land in their standing pose;
   3. the logo drops in (0.25 s) and keeps cycling its 6 frames (0.08 s each);
-  4. every 2-4 s each character shows its alternate pose for a while.
+  4. every 2-4 s each character shows its alternate pose for a while; some
+     move 1 px every 0.1 s meanwhile (`alt_steps`: one picture per step).
 
 How it is done on the SNES (Mode 1; code in asm/title_anim.asm, run from the
 NMI, one "job" = a few DMAs of at most CHUNK bytes per frame):
@@ -22,7 +23,9 @@ NMI, one "job" = a few DMAs of at most CHUNK bytes per frame):
     a palette entry is a color per frame.
   * Alternate poses: the tiles go to one of two scratch areas of BG2 and the
     bounding box of the changed cells is rewritten (and written back after).
-    Two poses run at once only when their boxes do not touch.
+    Two poses run at once only when their boxes do not touch. A pose in
+    several steps uses both areas (the next step's tiles go to the other
+    one while a step is shown) and runs alone.
 This module composes the pictures, picks the 8 BG palettes for all of them,
 allocates the tile slots and writes the job tables; `simulate()` runs the same
 tables on a software VRAM (the build checks every stage against its picture).
@@ -44,10 +47,13 @@ BG2_SLOTS = 0x380       # tiles 0-$37F = VRAM $0000-$37FF (BG1's old map is tile
 BG1_CHR = 0x6000
 BG1_FIRST, BG1_END = 0x18, 0x200   # OBJ tiles $00-$17 are the menu cursor
 SCRATCH = 2             # alternate poses at once
+ALTREC = 8              # bytes per character in the alternate pose table (asm/title_anim.asm !ALTREC)
 TEXT_ENTRIES = (1, 2, 3)
 FPS = 60
 SWAP_FRAMES = 2         # landing: BG2 map, then BG1 map of the next wave
-LOGO_PALETTES = 2       # the last BG palettes: the logo's animated colors
+EXACT_LOGO_SEQS = 64    # at most this many color sequences: palettes chosen among them (exact_logo_palettes)
+LOGO_PALETTES = 3       # the last BG palettes: the logo's animated colors
+ANIM_WEIGHT = 100         # logo colors that change between frames weigh this much more in the palette fit
 CACHE_VERSION = 4
 
 
@@ -86,6 +92,30 @@ def canon(idx):
 # ---------------------------------------------------------------------------
 # pictures
 # ---------------------------------------------------------------------------
+def snap_logos(logos, asset_dir, files):
+    """The resized logo frames with each opaque pixel set to the closest color
+    sequence (its colors in the 6 frames) of the original pictures.
+
+    The resize blends neighbors into thousands of sequences, which the two
+    animated palettes could only average: the light band running over SUPER and
+    BOMBERMAN faded away. The originals use about 30 sequences, which fit."""
+    src = np.stack([np.array(Image.open(os.path.join(asset_dir, f)).convert("RGBA")) for f in files])
+    ok = (src[..., 3] > 0).all(0)
+    seqs = np.unique(src[:, ok, :3].transpose(1, 0, 2).reshape(ok.sum(), -1), axis=0).astype(np.float64)
+    st = np.stack([np.array(im.convert("RGBA")) for im in logos])
+    op = st[0, ..., 3] > 0
+    px = st[:, op, :3].transpose(1, 0, 2).reshape(op.sum(), -1).astype(np.float64)
+    best = np.empty(len(px), np.int64)
+    for i in range(0, len(px), 4096):
+        best[i:i + 4096] = (((px[i:i + 4096, None, :] - seqs[None]) ** 2).sum(-1)).argmin(1)
+    out = []
+    for k, im in enumerate(logos):
+        a = np.array(im.convert("RGBA"))
+        a[op, :3] = seqs[best][:, 3 * k:3 * k + 3].astype(np.uint8)
+        out.append(Image.fromarray(a, "RGBA"))
+    return out
+
+
 class Pictures:
     def __init__(self, asset_dir):
         self.dir = asset_dir
@@ -131,17 +161,32 @@ class Pictures:
                 landed[self.names[i]] = "file"
             self.stages.append(self.scene(landed, self.sky_top))
         self.final = self.stages[-1]
-        self.alts = []
+        self.alts, self.alt_frames = [], []   # per character: a picture and frames per step
         for name in self.names:
             poses = {m: "file" for m in self.names}
             poses[name] = "alt"
-            self.alts.append(self.scene(poses, self.sky_top))
+            steps, frames = self.steps(name)
+            self.alts.append([self.scene(poses, self.sky_top, {name: st}) for st in steps])
+            self.alt_frames.append(frames)
         self.logos = []
         for f in L["logo"]["frames"]:
             logo, (lx, ly) = compose_logo(asset_dir, L, f)
             cv = Image.new("RGBA", (sw, (ly + logo.height + 7) // 8 * 8), (0, 0, 0, 0))
             cv.paste(logo, (lx, ly))
             self.logos.append(cv)
+        self.logos = snap_logos(self.logos, asset_dir, L["logo"]["frames"])
+
+    def steps(self, name):
+        """[(character shift, extra shift)] (Unity: x right, y up) and frames of each step."""
+        c = self.by_name[name]
+        st = c.get("alt_steps")
+        if not st:
+            return [((0, 0), (0, 0))], [round(c.get("alt_seconds", 0.5) * FPS)]
+        if st["move"] not in ("character", "extra"):
+            raise ValueError(f"title: {name}: alt_steps.move must be 'character' or 'extra'")
+        n = round(st["seconds"] * FPS)
+        out = [(tuple(o), (0, 0)) if st["move"] == "character" else ((0, 0), tuple(o)) for o in st["offsets"]]
+        return out, [n] * len(out)
 
     def sprite(self, name, pose):
         c = self.by_name[name]
@@ -150,8 +195,9 @@ class Pictures:
             im = im.resize(tuple(c["size"]), Image.NEAREST)
         return _binary_alpha(im)
 
-    def scene(self, poses, base):
-        """`poses`: {name: "file" | "falling" | "alt"} drawn back to front on `base`."""
+    def scene(self, poses, base, shift=None):
+        """`poses`: {name: "file" | "falling" | "alt"} drawn back to front on `base`;
+        `shift`: {name: ((dx, dy), (edx, edy))} added to an alternate pose and its extra."""
         canvas = base.copy()
         for name in self.L["draw_order"]:
             pose = poses.get(name)
@@ -159,17 +205,18 @@ class Pictures:
                 continue
             c = self.by_name[name]
             x, y = self.pos[name]
+            (sx, sy), (ex_, ey_) = (shift or {}).get(name, ((0, 0), (0, 0)))
             if pose == "alt":
                 ox, oy = c.get("alt_offset", [0, 0])
-                x, y = x + ox, y - oy
+                x, y = x + ox + sx, y - oy - sy
             canvas = _alpha_paste(canvas, self.sprite(name, pose), x, y)
             extra = c.get("alt_extra")
             if pose == "alt" and extra:
                 # child of the character: anchored at its bottom center, pivot in the middle
                 e = _binary_alpha(Image.open(os.path.join(self.dir, extra["file"])).convert("RGBA"))
                 w, h = c["size"]
-                ex = round(x + w / 2 + extra["offset"][0] - e.width / 2)
-                ey = round(y + h - extra["offset"][1] - e.height / 2)
+                ex = round(x + w / 2 + extra["offset"][0] + ex_ - e.width / 2)
+                ey = round(y + h - extra["offset"][1] - ey_ - e.height / 2)
                 canvas = _alpha_paste(canvas, e, ex, ey)
         return canvas
 
@@ -235,6 +282,50 @@ def quantize(bag, starts, cache_dir, n_slots):
     return res
 
 
+def exact_logo_palettes(px, uniq, wv, n_pal, rng, restarts=24):
+    """Palettes made of the logo's own color sequences (no averages): each
+    palette is a set of at most 15 of them, each cell takes the palette that
+    draws it best (a missing sequence -> the closest one present). Local search
+    (swap one sequence) from random starts. Keeps whole animated ramps (the
+    pink of SUPER, the orange of BOMBERMAN, the green of 6) instead of merging
+    the small ones into still colors."""
+    k = len(uniq)
+    key = {tuple(u): i for i, u in enumerate(uniq)}
+    hist = np.zeros((len(px), k))
+    for c, p in enumerate(px):
+        for v in p:
+            hist[c, key[tuple(v)]] += 1
+    dist = (((uniq[:, None, :] - uniq[None]) ** 2) * wv).sum(-1)     # k x k
+    size = min(15, k)
+
+    def cell_cost(members):
+        return hist @ dist[:, members].min(1)
+
+    def total(pals):
+        return np.min([cell_cost(m) for m in pals], axis=0).sum()
+
+    best = None
+    for _ in range(restarts):
+        pals = [list(rng.choice(k, size, replace=False)) for _ in range(n_pal)]
+        cost = total(pals)
+        improved = True
+        while improved:
+            improved = False
+            for j in range(n_pal):
+                others = np.min([cell_cost(m) for i, m in enumerate(pals) if i != j], axis=0)                     if n_pal > 1 else np.full(len(px), np.inf)
+                for slot in range(size):
+                    for cand in range(k):
+                        if cand in pals[j]:
+                            continue
+                        trial = pals[j][:slot] + [cand] + pals[j][slot + 1:]
+                        c = np.minimum(others, cell_cost(trial)).sum()
+                        if c < cost - 1e-9:
+                            pals[j], cost, improved = trial, c, True
+        if best is None or cost < best[0]:
+            best = (cost, [list(m) for m in pals])
+    return [uniq[sorted(m)] for m in best[1]]
+
+
 def logo_palettes(vec, mask, n_pal, seed=1, rounds=12):
     """Animated palettes for the logo.
 
@@ -269,16 +360,21 @@ def logo_palettes(vec, mask, n_pal, seed=1, rounds=12):
     def fit_all(lab):
         return [fit([px[i] for i in range(len(px)) if lab[i] == j] or [px[0]]) for j in range(n_pal)]
 
-    means = np.array([p.mean(0) for p in px])
-    cen = means[rng.choice(len(means), n_pal, replace=False)]
-    lab = (((means[:, None, :] - cen[None]) ** 2) * wv).sum(-1).argmin(1)
-    for _ in range(rounds):
+    uniq = np.unique(np.concatenate(px), axis=0)
+    if len(uniq) <= EXACT_LOGO_SEQS:
+        pals = exact_logo_palettes(px, uniq, wv, n_pal, rng)
+        lab = np.array([int(np.argmin([err(p, pal) for pal in pals])) for p in px])
+    else:
+        means = np.array([p.mean(0) for p in px])
+        cen = means[rng.choice(len(means), n_pal, replace=False)]
+        lab = (((means[:, None, :] - cen[None]) ** 2) * wv).sum(-1).argmin(1)
+        for _ in range(rounds):
+            pals = fit_all(lab)
+            new = np.array([int(np.argmin([err(p, pal) for pal in pals])) for p in px])
+            if (new == lab).all():
+                break
+            lab = new
         pals = fit_all(lab)
-        new = np.array([int(np.argmin([err(p, pal) for pal in pals])) for p in px])
-        if (new == lab).all():
-            break
-        lab = new
-    pals = fit_all(lab)
     entries = np.zeros((n_pal, 15, vec.shape[-1]))
     for j, pal in enumerate(pals):
         entries[j, :len(pal)] = pal
@@ -372,7 +468,7 @@ def build(asset_dir, starts, reserved, put, cache_dir=None):
 
     sky = register(P.sky)
     stages = [register(im) for im in P.stages]
-    alts = [register(im) for im in P.alts]
+    alts = [[register(im) for im in steps] for steps in P.alts]
     falls = [register(im) for im in P.falling]
     # logo: fixed tiles, colors per frame
     lg = [grid(im) for im in P.logos]
@@ -466,27 +562,27 @@ def build(asset_dir, starts, reserved, put, cache_dir=None):
     # ---- alternate poses --------------------------------------------------
     final_words = bg2_words(stages[-1], range(28))
     alt_info = []
-    for c, layer in enumerate(alts):
-        tl = tiles_of(layer, range(28))
-        new = ordered(t for t in tl if t not in final_set)
-        look = dict(slot)
-        for j, t in enumerate(new):
-            look[t] = ("scratch", j)
-        cells = []
-        for ty in range(28):
-            for tx in range(32):
-                t, pal, hf, vf = cell_tile(layer, ty, tx)
-                ft, fpal, fhf, fvf = cell_tile(stages[-1], ty, tx)
-                if (t, pal, hf, vf) != (ft, fpal, fhf, fvf):
-                    cells.append((tx, ty))
+    for c, layers in enumerate(alts):
+        steps, cells = [], set()
+        for layer in layers:
+            tl = tiles_of(layer, range(28))
+            new = ordered(t for t in tl if t not in final_set)
+            look = dict(slot)
+            for j, t in enumerate(new):
+                look[t] = ("scratch", j)
+            for ty in range(28):
+                for tx in range(32):
+                    if cell_tile(layer, ty, tx) != cell_tile(stages[-1], ty, tx):
+                        cells.add((tx, ty))
+            steps.append(dict(new=new, look=look, layer=layer))
         if not cells:
             raise ValueError(f"title: {P.names[c]}'s alternate pose changes nothing")
-        x0, x1 = min(x for x, _ in cells), max(x for x, _ in cells)
+        x0, x1 = min(x for x, _ in cells), max(x for x, _ in cells)   # the box of every step
         y0, y1 = min(y for _, y in cells), max(y for _, y in cells)
         if (x1 - x0 + 1) % 2:      # keep rows an even number of words (not required, tidy DMAs)
             x1 = x1 + 1 if x1 < 31 else x1
-        alt_info.append(dict(new=new, look=look, box=(x0, y0, x1, y1), layer=layer))
-    scr_size = max(len(a["new"]) for a in alt_info)
+        alt_info.append(dict(steps=steps, box=(x0, y0, x1, y1), frames=P.alt_frames[c], multi=len(steps) > 1))
+    scr_size = max(len(st["new"]) for a in alt_info for st in a["steps"])
     scr_base = [final_hi + i * scr_size for i in range(SCRATCH)]
     if final_hi + SCRATCH * scr_size > BG2_SLOTS:
         raise ValueError(f"title: no room for {SCRATCH} alternate poses of {scr_size} tiles after tile {final_hi}")
@@ -614,7 +710,11 @@ def build(asset_dir, starts, reserved, put, cache_dir=None):
                 words.append(r | g << 5 | b_ << 10)
         logo_cg.append(words)
 
-    alt_table = bytearray()
+    # !ALT: per character (ALTREC bytes) conflicts, 1 = steps in both areas, restore
+    # job, step list starting in area 0 / area 1; then the step lists: tile job,
+    # tile job, cells job ($FFFF = none), frames, 0; frames 0 ends a list.
+    heads, lists = bytearray(), bytearray()
+    list_base = ALTREC * len(alt_info)
     for c, a in enumerate(alt_info):
         x0, y0, x1, y1 = a["box"]
         conf = 0
@@ -622,25 +722,34 @@ def build(asset_dir, starts, reserved, put, cache_dir=None):
             ox0, oy0, ox1, oy1 = o["box"]
             if not (ox1 < x0 or x1 < ox0 or oy1 < y0 or y1 < oy0):
                 conf |= 1 << d
-        dur = round(P.by_name[P.names[c]].get("alt_seconds", 0.5) * FPS)
-        w = x1 - x0 + 1
         vram = BG2_MAP + 32 * y0 + x0
         back = [final_words[ty * 32 + tx] for ty in range(y0, y1 + 1) for tx in range(x0, x1 + 1)]
         restore = J.add(vram, words_bytes(back), rows=y1 - y0 + 1, label=f"title: {P.names[c]} standing again")
-        alt_table += bytes([conf, min(dur, 255), restore & 0xFF, restore >> 8])
-        tiles = b"".join(a["new"])
-        for s in range(SCRATCH):
-            look = {t: (scr_base[s] + v[1] if isinstance(v, tuple) else v) for t, v in a["look"].items()}
-            js = J.chunks(16 * scr_base[s], tiles, f"title: {P.names[c]} alternate pose tiles (scratch {s})")
-            if len(js) > 2:
-                raise ValueError("title: an alternate pose must fit two jobs")
-            js += [0xFFFF] * (2 - len(js))
-            words = [w_ for ty in range(y0, y1 + 1)
-                     for w_ in bg2_words(a["layer"], [ty], look)[x0:x1 + 1]]
-            js.append(J.add(vram, words_bytes(words), rows=y1 - y0 + 1,
-                            label=f"title: {P.names[c]} alternate pose cells (scratch {s})"))
-            alt_table += b"".join(bytes([j & 0xFF, j >> 8]) for j in js)
-        a["conf"], a["dur"] = conf, dur
+        ptrs = []
+        for s0 in ((0,) if a["multi"] else range(SCRATCH)):
+            ptrs.append(list_base + len(lists))
+            for k, (st, fr) in enumerate(zip(a["steps"], a["frames"])):
+                if not 0 < fr < 256:
+                    raise ValueError(f"title: {P.names[c]}'s alternate step {k} lasts {fr} frames (1-255)")
+                s = (s0 + k) % SCRATCH
+                look = {t: (scr_base[s] + v[1] if isinstance(v, tuple) else v) for t, v in st["look"].items()}
+                js = J.chunks(16 * scr_base[s], b"".join(st["new"]),
+                              f"title: {P.names[c]} alternate pose {k} tiles (scratch {s})") if st["new"] else []
+                if len(js) > 2:
+                    raise ValueError("title: an alternate pose must fit two jobs")
+                js += [0xFFFF] * (2 - len(js))
+                words = [w_ for ty in range(y0, y1 + 1)
+                         for w_ in bg2_words(st["layer"], [ty], look)[x0:x1 + 1]]
+                js.append(J.add(vram, words_bytes(words), rows=y1 - y0 + 1,
+                                label=f"title: {P.names[c]} alternate pose {k} cells (scratch {s})"))
+                lists += words_bytes(js) + bytes([fr, 0])
+            lists += bytes(8)
+        ptrs += ptrs[:1] * (2 - len(ptrs))
+        heads += bytes([conf, int(a["multi"])]) + words_bytes([restore] + ptrs)
+        a["conf"] = conf
+    alt_table = heads + lists
+    if len(alt_table) > 0x10000:
+        raise ValueError("title: the alternate pose table passes 64 KB")
 
     def wlist(v):
         return b"".join(bytes([x & 0xFF, x >> 8]) for x in v)
@@ -759,29 +868,34 @@ def simulate(res, out_png=None):
         cgk = list(cg)
         cgk[cg_first:] = L["logo_cg"][k]
         shots.append(render(v2, cgk, rest, rest))
-    # alternate poses, each in each scratch area, alone and next to a compatible one
+    # alternate poses, each in each scratch area it may start in, step by step:
+    # the next step's tiles must not change the step on screen
     tab = res["tables"]["alt"]
-    rec = 4 + 6 * SCRATCH
     n = res["consts"]["NCHAR"]
 
     def w(o):
         return tab[o] | tab[o + 1] << 8
 
-    def show(v, c, s):
-        for part in range(3):
-            j = w(c * rec + 4 + 6 * s + 2 * part)
-            if j != 0xFFFF:
-                J.run(v, j)
-
     for c in range(n):
-        for s in range(SCRATCH):
-            show(v2, c, s)
-            got = render(v2, cg, rest, rest, layers=(2,))
-            if not (got == expected(res, q["alts"][c])).all():
-                raise ValueError(f"title: alternate pose {c} (scratch {s}) is not drawn as composed")
-            if s == 0:
-                shots.append(render(v2, cg, rest, rest))
-            J.run(v2, w(c * rec + 2))
+        h = ALTREC * c
+        for s in ((0,) if tab[h + 1] else range(SCRATCH)):
+            p, k, shown = w(h + 4 + 2 * s), 0, None
+            while tab[p + 6]:
+                for part in range(2):
+                    if w(p + 2 * part) != 0xFFFF:
+                        J.run(v2, w(p + 2 * part))
+                if shown is not None and not (render(v2, cg, rest, rest, layers=(2,)) == shown).all():
+                    raise ValueError(f"title: alternate pose {c} step {k}'s tiles change the step shown")
+                J.run(v2, w(p + 4))
+                shown = expected(res, q["alts"][c][k])
+                if not (render(v2, cg, rest, rest, layers=(2,)) == shown).all():
+                    raise ValueError(f"title: alternate pose {c} step {k} (scratch {s}) is not drawn as composed")
+                if s == 0 and k in (0, len(q["alts"][c]) // 2):
+                    shots.append(render(v2, cg, rest, rest))
+                p, k = p + 8, k + 1
+            if k != len(q["alts"][c]):
+                raise ValueError(f"title: alternate pose {c} lists {k} steps")
+            J.run(v2, w(h + 2))
             if not (render(v2, cg, rest, rest) == b).all():
                 raise ValueError(f"title: alternate pose {c} does not restore the scene")
     if out_png:
