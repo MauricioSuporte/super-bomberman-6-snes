@@ -286,7 +286,14 @@ def build(rb, name, spec):
                 word = (0x100 + n) | PALS[p] << 10 | (0x4000 if hf else 0) | (0x8000 if vf else 0)
                 table[8 * i + 2 * q:8 * i + 2 * q + 2] = struct.pack("<H", word)
     # burning frames (palette 3)
-    frames = _burn_frames(soft)
+    burn = os.path.join(ASSETS, name + "_burn.png")       # SB1's own pictures (5 of its 6, from its VRAM)
+    if os.path.exists(burn):
+        strip = _rgb555(burn)
+        if strip.shape != (16, 80):
+            raise BuildError(f"{name}_burn.png must be 5 pictures of 16 x 16")
+        frames = [strip[:, 16 * k:16 * k + 16] for k in range(5)]
+    else:
+        frames = _burn_frames(soft)
     bset = set()
     for fr in frames:
         bset |= set(fr[fr >= 0].tolist())

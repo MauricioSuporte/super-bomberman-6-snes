@@ -623,6 +623,12 @@ script accumulator (`61` = add).
   block's 4 tiles get their own slots and the same task plays them. The
   task's table (`[stage, frames held, pictures, VRAM word, size, first
   picture]`) is started by world1's op `FF 1A F6 05` (1-7) / `06` (1-4).
+* Burning soft blocks (SB1 stages): SB1 draws them on BG1 (tiles `$1C0-$1CA`,
+  palette 7, 6 pictures of 12/10/8/6/4/2 frames); `sb1_stages` puts 5 of them
+  (`assets/stages/<stage>_burn.png`, from SB1's VRAM) in SB5's 5 burning
+  frames (palette 3).
+* Stage `$17`'s type `06` script: `FF DF` (`$C5:4A94`, theme 5's version of
+  `FF DD`; `$C5:4AB6` rewrites tiles `$12C-$12F`, the 1-5 borders): dropped.
 * Stage `$10`'s type `06` script: `FF DD` (`$C5:49A1`) creates SB5's
   decoration objects; one (`$C5:49D7`) rewrites tiles `$12C-$12F` every
   ~100 frames (the SB1 pillars there turned into arches): dropped, with
@@ -680,12 +686,13 @@ script accumulator (`61` = add).
   returns with M/X 8-bit.
 * Enemies: one routine `$C3:4B5A` for all (type `$16C2,x`, cell `$16AA,x`,
   facing `$1632,x` 1 right 2 down 3 left 4 up, HP `$1662,x`); flame test
-  `$C3:49EC` (Y = cell): `$1052 & 4` = flame (`& 7`: 5 center, 7
-  horizontal arm, 6 vertical), then a hit costs 1 HP and gives 180 frames
+  `$C3:49EC` (Y = cell): `$1052 & 4` = flame (`& 7`: 7 center, 5
+  horizontal arm, 6 vertical; walls hit by flame `$83`, bombs `$50`), then a hit costs 1 HP and gives 180 frames
   (`$085F`) of grace; 0 HP -> `SEC` -> death `$C3:4D1C`/`$4D41`. Knights
-  (type `$08`, SB5 1-11 = `$17`) have 4 HP. Hack: `knight_hit`
-  (`asm/world1.asm`) skips the hit on 1-5 when the explosion's center lies
-  in front of a knight; 1-5 keeps only its two knights (SB1 6-4).
+  (type `$08`, SB5 1-11 = `$17`) have 4 HP (type record byte 14, `$C3:00DA`; the hack: 2). Hack: `knight_hit`
+  (`asm/world1.asm`) skips the hit on 1-5 only when a knight stands on an
+  arm along the way it faces and the center is ahead (checked every frame:
+  a knight turned away mid-explosion is hit); 1-5 keeps only its two knights (SB1 6-4).
 * Enemy type records: 16 bytes at `$C3:005C + 16*(type-1)`, 15 copied to
   `$1D41+` by `$C3:0000` (`[arc, pal, slot mask, T|flags, first anim, ...,
   routine24 ($C3:4B5A), data16, ...]`): set 8 archive (OBJ tiles, LZ; tile
@@ -780,7 +787,7 @@ script accumulator (`61` = add).
   Checked in Mesen: the key-on sequence and timing equal SB1's; stage
   music and in-game SFX after the map.
 * World 1 stages play on Hudson's driver with SB5's stage SFX (SB1's player and enemy deaths: game_sfx). 1-1
-  (stage `$0D`), 1-2 (`$11`), 1-3 (`$18`) and 1-4 (`$10`) play SB1's World 1-4 songs
+  (stage `$0D`), 1-2 (`$11`), 1-3 (`$18`), 1-4 (`$10`) and 1-5 (`$17`) play SB1's World 1, 2, 3, 4 and 6 songs
   converted to Hudson songs (`tools/sb6/features/sb1_music.py` `STAGES`,
   see "Hudson songs"; `asm/title_music.asm` `sb1m_song`, table
   `SB1M_TABLE` = [stage, list] ... `$FF`), hooked at the start of Hudson's

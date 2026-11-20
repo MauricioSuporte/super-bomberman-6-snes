@@ -36,7 +36,7 @@ from . import title_music as tm
 
 # World 1 stages that play SB1 songs: (stage id, song name: assets/sound/sb1_<name>_song.txt, SB1's sound RAM
 # assets/sound/sb1_stage_<name>.bin (from $0800), its sample directory there: SB1 DSP register DIR, World 3 has $2400)
-STAGES = [(0x0D, "w1", 0x2300), (0x11, "w2", 0x2300), (0x18, "w3", 0x2400), (0x10, "w4", 0x2300)]
+STAGES = [(0x0D, "w1", 0x2300), (0x11, "w2", 0x2300), (0x18, "w3", 0x2400), (0x10, "w4", 0x2300), (0x17, "w6", 0x2300)]
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
 # SB5 directory entries the jingles name but never play: only the start jingle's percussion records (no key-on
 # of it in Mesen, the jingle keeps its percussion off) -> a silent block (2187 bytes saved)
@@ -596,17 +596,21 @@ def build(image, path, rom, sb1_dir):
         if any(n["t"] + n["d"] > m["t"] for ns in lines_of(notes).values() for n, m in zip(ns, ns[1:])):
             raise BuildError(f"SB1 music: notes overlap at {units} units a row")
     bar = ROWS_PER_BAR * units
+    if loop % bar:          # a loop point inside a bar (World 6: row 9): the song starts with a rest up to it
+        pad = bar - loop % bar
+        for n in notes:
+            n["t"] += pad
+        loop, end = loop + pad, end + pad
     if loop % bar or end % bar:
         raise BuildError("SB1 music: loop / end not on a bar")
     chans = channels_of(lines_of(notes))
     keys = {ch: line_bars(ns, end // bar, inst_of, tune, volpan, bar) for ch, ns in chans.items()}
     build_all, sizes, sub_sizes = assemble(keys, loop // bar, tempo, bar)
     hl = len(header({ch: 0 for ch in keys}, instruments))
-    head = space.alloc(hl + sum(sizes.values()), "the song's header and tracks")
-    taddr, a = {}, head + hl
-    for ch in sorted(sizes):
-        taddr[ch] = a
-        a += sizes[ch]
+    head = space.alloc(hl, "the song's header")
+    taddr = {}                  # each track wherever it fits (the free ARAM is in pieces)
+    for ch in sorted(sizes, key=lambda ch: -sizes[ch]):
+        taddr[ch] = space.alloc(sizes[ch], f"track {ch}")
     sub_addr = [0] * len(sub_sizes)
     for i in sorted(range(len(sub_sizes)), key=lambda i: -sub_sizes[i]):
         sub_addr[i] = space.alloc(sub_sizes[i], "a subroutine")
@@ -626,7 +630,8 @@ def build(image, path, rom, sb1_dir):
             s = min(srcns, key=lambda s: abs(_zcr(smp[s][0]) - z))
             dirs[4 * d:4 * d + 4] = dirs[4 * dir_of[s]:4 * dir_of[s] + 4]
             aliased[d] = s
-    blocks.append((head, header(taddr, instruments) + b"".join(tr[ch] for ch in sorted(tr))))
+    blocks.append((head, header(taddr, instruments)))
+    blocks += [(taddr[ch], tr[ch]) for ch in sorted(tr)]
     # song table: command 1 = SB1's song, 2.. = SB5's (their headers where SB5 has them)
     blocks.append((SEQ_BASE, struct.pack(f"<{len(heads) + 2}H", SEQ_BASE + 2, head, *heads[1:], 0)))
     blocks += [(0xFD00, bytes(dirs)), (0xFE00, bytes(tunings))]

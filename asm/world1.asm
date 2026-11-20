@@ -264,11 +264,20 @@ knight_hit:
     lda $16C2,x
     cmp #$08
     bne .orig
+    ; flame cells: $1052 & 7 = 7 center, 5 horizontal arm, 6 vertical arm. Blocked (not hit) only when
+    ; the knight stands on an arm along the way it faces and the center is ahead of it: a knight on the
+    ; center, across an arm or turned away from the center (also in the middle of an explosion) is hit
     phx
     lda $1632,x
     dec a
     and #$03
     tax
+    lda.l .axis,x               ; 5 facing left / right, 6 facing up / down
+    sta.l !CNT
+    lda $1052,y
+    and #$07
+    cmp.l !CNT
+    bne .side                   ; on the center or across the arm
     lda.l .step,x
     sta.l !K
     tya
@@ -280,9 +289,11 @@ knight_hit:
     adc.l !K
     tax
     lda.l $7E1052,x
+    bit #$F8
+    bne .side                   ; a wall, block, bomb...: the arm ends behind the knight
     and #$07
-    cmp #$05
-    beq .front
+    cmp #$07
+    beq .front                  ; the center ahead
     and #$04
     beq .side
     lda.l !CNT
@@ -297,6 +308,8 @@ knight_hit:
     plx
 .none:
     jml $C34A04                 ; CLC : RTS (not hit)
+.axis:
+    db $05, $06, $05, $06
 .step:
     db $01, $10, $FF, $F0       ; right, down, left, up
 

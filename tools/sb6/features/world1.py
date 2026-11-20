@@ -307,6 +307,8 @@ def code(rb, arena, anim_start=0, clown=None):
     k = syms["knight_hit"]
     rb.patch(0xC349EC, bytes.fromhex("B9 52 10 29 04"), bytes([0x5C, k & 0xFF, k >> 8 & 0xFF, k >> 16, 0xEA]),
              "enemy flame test: World 1's knights are not hurt from the front (asm/world1.asm knight_hit)")
+    rb.patch(0xC3005C + 16 * (8 - 1) + 14, b"", bytes([KNIGHT_HP]),
+             "enemy type $08 (knights, 1-5; SB5's stage $15 is out of the chain): hearts 4 -> 2")
 
     def jsl(name, n):
         a = syms[name]
@@ -320,6 +322,7 @@ def code(rb, arena, anim_start=0, clown=None):
     return syms
 
 
+KNIGHT_HP = 2            # 1-5's knights: 2 hits (SB5: 4)
 KNIGHT_STAGE = 0x17      # 1-5 (SB1's 6-4): its knights (enemy type $08) take no hit from the front
 # enemies kept (stage: types; the other type 04 roots that place an enemy `A2 x y type` go): 1-5 = SB1's 6-4,
 # its two knights only
@@ -331,6 +334,8 @@ KEEP_ENEMIES = {0x17: {0x08}, 0x10: {0x04}}      # 1-5: SB1 6-4's knights; 1-4: 
 # 1-4: SB5's clouds on BG1 (FF 8D) and its decoration objects (FF DD, $C5:49A1: one of them, $C5:49D7, rewrites
 # tiles $12C-$12F, where SB1's pillars turned into arches)
 DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB"), bytes.fromhex("FF DD")]},
+            # 1-5: SB5's decoration objects of theme 5 (FF DF, $C5:4A94; $C5:4AB6 rewrites tiles $12C-$12F too)
+            0x17: {0x06: [bytes.fromhex("FF DF")]},
             # 1-7: SB5's arena scatters 16 soft blocks (type 01 `10 10`, $0E1F -> $C5:0160); the SB1 4-8 arena
             # has none (its soft block picture is the floor: they were invisible)
             0x68: {0x01: [bytes([0x10])]}}
