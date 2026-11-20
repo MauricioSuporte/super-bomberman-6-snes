@@ -52,6 +52,8 @@ TEXT_ENTRIES = (1, 2, 3)
 FPS = 60
 SWAP_FRAMES = 2         # landing: BG2 map, then BG1 map of the next wave
 EXACT_LOGO_SEQS = 64    # at most this many color sequences: palettes chosen among them (exact_logo_palettes)
+BG_WEIGHT = 4           # title scene palettes: weight of the sky / ground colors around the characters
+BG_FIXED = 3            # ... and how many of them every scene palette keeps (assign_weighted)
 LOGO_PALETTES = 3       # the last BG palettes: the logo's animated colors
 ANIM_WEIGHT = 100         # logo colors that change between frames weigh this much more in the palette fit
 CACHE_VERSION = 4
@@ -250,8 +252,100 @@ def grid(img):
     return rgb, mask
 
 
-def quantize(bag, starts, cache_dir, n_slots):
-    h = hashlib.sha1(repr((CACHE_VERSION, starts, TEXT_ENTRIES, n_slots)).encode())
+def background_colors(P):
+    """Sky / ground colors seen in the cells that mix them with a character
+    (final scene), most used first."""
+    sky = to5(P.sky_top)[0].astype(np.int16)
+    fin = to5(P.final)[0].astype(np.int16)
+    bg = (sky == fin).all(-1)
+    cnt = {}
+    for ty in range(bg.shape[0] // 8):
+        for tx in range(bg.shape[1] // 8):
+            m = bg[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8]
+            if m.any() and not m.all():
+                for c in sky[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8][m]:
+                    cnt[tuple(int(v) for v in c)] = cnt.get(tuple(int(v) for v in c), 0) + 1
+    return [list(c) for c, _ in sorted(cnt.items(), key=lambda x: -x[1])]
+
+
+def assign_weighted(bag, slots, bg_colors, bg_weight, bg_fixed, iterations=25, seed=1, init="mean"):
+    """snesgfx.assign_palettes for the title: the colors of the sky / ground seen
+    around the characters (`bg_colors`) weigh `bg_weight` times more, and the
+    first `bg_fixed` of them are in every palette. A cell mixing a character
+    and the sky draws its sky with its own palette: a missing blue shows a
+    square around the character."""
+    from ..snesgfx import _kmeans_labels
+    cells = [px for _, _, px, _ in bag.cells()]
+    bgk = {tuple(c) for c in bg_colors}
+    fixed = np.array(bg_colors[:bg_fixed], dtype=np.float64).reshape(-1, 3)
+    wts = [np.array([bg_weight if tuple(p) in bgk else 1.0 for p in px]) for px in cells]
+
+    def fit(members, mw, cap):
+        pix = np.concatenate(members)
+        ww = np.concatenate(mw)
+        uniq, inv = np.unique(pix, axis=0, return_inverse=True)
+        cw = np.bincount(inv.reshape(-1), weights=ww)
+        if len(uniq) <= cap:
+            return uniq.astype(np.float64)
+        keep = [tuple(f) for f in fixed]
+        free = [i for i in np.argsort(-cw) if tuple(uniq[i]) not in keep][:cap - len(fixed)]
+        c = np.concatenate([fixed, uniq[free].astype(np.float64)])
+        u = uniq.astype(np.float64)
+        for _ in range(12):
+            lab = (((u[:, None, :] - c[None]) ** 2) * W).sum(-1).argmin(1)
+            new = c.copy()
+            for j in range(len(fixed), len(c)):
+                sel = lab == j
+                if sel.any():
+                    new[j] = (u[sel] * cw[sel, None]).sum(0) / cw[sel].sum()
+            if np.allclose(new, c):
+                break
+            c = new
+        return np.clip(np.rint(c), 0, 31)
+
+    def err(i, pal):
+        d = (((cells[i][:, None, :].astype(np.float64) - pal[None]) ** 2) * W).sum(-1)
+        return (d.min(1) * wts[i]).sum()
+
+    rng = np.random.default_rng(seed)
+    k = len(slots)
+    means = np.array([c.mean(0) for c in cells])
+    if init == "mean":
+        lab = _kmeans_labels(means, means[rng.choice(len(means), k, replace=False)])
+    else:
+        allpx = np.concatenate(cells).astype(np.float64)
+        uniq, counts = np.unique(allpx, axis=0, return_counts=True)
+        from ..snesgfx import _kmeans
+        book = _kmeans(uniq, counts.astype(np.float64), 48,
+                       uniq[rng.choice(len(uniq), min(48, len(uniq)), replace=False)])
+        feats = []
+        for px in cells:
+            d = (((px[:, None, :].astype(np.float64) - book[None]) ** 2) * W).sum(-1)
+            hh = np.bincount(d.argmin(1), minlength=len(book)).astype(np.float64)
+            feats.append(np.sqrt(hh / hh.sum()))
+        feats = np.array(feats)
+        lab = _kmeans_labels(feats, feats[rng.choice(len(feats), k, replace=False)], weights=None)
+
+    def refit(lab):
+        for j, s in enumerate(slots):
+            sel = [i for i in range(len(cells)) if lab[i] == j]
+            if sel:
+                s.colors = fit([cells[i] for i in sel], [wts[i] for i in sel], len(s.free)).astype(np.int16)
+    for _ in range(iterations):
+        refit(lab)
+        new = np.array([int(np.argmin([err(i, s.colors) if len(s.colors) else 1e18 for s in slots]))
+                        for i in range(len(cells))])
+        if (new == lab).all():
+            break
+        lab = new
+    refit(lab)
+    total = sum(err(i, slots[lab[i]].colors) for i in range(len(cells)))
+    return {("u", i, 0): slots[lab[i]].index for i in range(len(cells))}, total
+
+
+def quantize(bag, starts, cache_dir, n_slots, bg_colors=(), bg_weight=1, bg_fixed=0):
+    h = hashlib.sha1(repr((CACHE_VERSION, starts, TEXT_ENTRIES, n_slots, list(map(tuple, bg_colors)),
+                           bg_weight, bg_fixed)).encode())
     items = [px for _, _, px, _ in bag.cells()]
     for px in items:
         h.update(px.tobytes())
@@ -268,7 +362,10 @@ def quantize(bag, starts, cache_dir, n_slots):
     best = None
     for seed, init in starts:
         slots = make_slots()
-        assignment, err = assign_palettes([bag], slots, seed=seed, init=init)
+        if bg_weight == 1 and not bg_fixed:
+            assignment, err = assign_palettes([bag], slots, seed=seed, init=init)
+        else:
+            assignment, err = assign_weighted(bag, slots, bg_colors, bg_weight, bg_fixed, seed=seed, init=init)
         if best is None or err < best[2]:
             best = (assignment, slots, err, (seed, init))
     assignment, slots, err, start = best
@@ -476,7 +573,8 @@ def build(asset_dir, starts, reserved, put, cache_dir=None):
     lcells, lpal, lentries, lidx, lerr = logo_palettes(lvec, lg[0][1], LOGO_PALETTES)
     n_scene = 8 - LOGO_PALETTES
 
-    q = quantize(color_bag, starts, cache_dir, n_scene)
+    bg = background_colors(P)
+    q = quantize(color_bag, starts, cache_dir, n_scene, bg, BG_WEIGHT, BG_FIXED)
     pal_of = q["pal"]
     colors = [np.asarray(c, dtype=np.float64) for c in q["colors"]]
     free = [np.asarray(f) for f in q["free"]]
