@@ -242,7 +242,7 @@ CHAIN = [
 RIVALS = [(0x67, 1), (0x69, 2), (0x6B, 20)]
 RIVAL_OWN_ID = 0x5A                # column 1 = palette id $5A (features/bombers.py OWN_ID; char1 shares his)
 BG1_MAP = 0x3000                   # arena field: BG1 map at VRAM word $3000
-STAGE_OPS = {0x6B: (4, "stands blink"), 0x68: (5, "electric fence")}
+STAGE_OPS = {0x6B: (4, "stands blink"), 0x68: (5, "electric fence"), 0x10: (6, "bumpers animated")}
 BOSSES = [                         # (boss stage, its first portal root, next stage)
     (0x67, 0xC71BE3, 0x69),        # 1-6, first duel (white)
     (0x69, 0xC71F6D, 0x6B),        # 1-6, second duel (black)
@@ -328,7 +328,9 @@ KEEP_ENEMIES = {0x17: {0x08}, 0x10: {0x04}}      # 1-5: SB1 6-4's knights; 1-4: 
 
 # script ops left out (stage: {type: [op prefixes]}): 1-4 is SB1's 4-4 now (features/sb1_stages.py), without
 # SB5's clouds (its type 06 script draws them on BG1 with FF 8D DA 04 / FF 8D DB 04, set 4 arrangements)
-DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB")]},
+# 1-4: SB5's clouds on BG1 (FF 8D) and its decoration objects (FF DD, $C5:49A1: one of them, $C5:49D7, rewrites
+# tiles $12C-$12F, where SB1's pillars turned into arches)
+DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB"), bytes.fromhex("FF DD")]},
             # 1-7: SB5's arena scatters 16 soft blocks (type 01 `10 10`, $0E1F -> $C5:0160); the SB1 4-8 arena
             # has none (its soft block picture is the floor: they were invisible)
             0x68: {0x01: [bytes([0x10])]}}
@@ -382,6 +384,10 @@ def chain(rb):
                 r = rb.alloc("bulk", b"".join(bytes([t]) + p(a) for t, a in ents) + bytes(1),
                              f"World 1: stage ${stage:02X} root with new scripts")
             kept.append(r)
+        if stage in STAGE_OPS:      # 1-4's bumpers (n = 6): a type 04 root with FF 1A F6 n
+            n, what = STAGE_OPS[stage]
+            op = rb.alloc("bulk", bytes([0xFF, 0x1A, 0xF6, n, 0x00]), f"World 1: stage ${stage:02X} {what} (op)")
+            kept.append(rb.alloc("bulk", bytes([0x04]) + p(op) + bytes(1), f"World 1: stage ${stage:02X} {what} (root)"))
         for k, scr in enumerate(sb1_enemies.stage_enemies(stage) or []):
             sa = rb.alloc("bulk", scr, f"World 1: stage ${stage:02X} SB1 enemy {k}")
             kept.append(rb.alloc("bulk", bytes([0x04]) + p(sa) + bytes(1), f"World 1: stage ${stage:02X} enemy root {k}"))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Super Bomberman (USA) song -> note list for tools/sb6/features/sb1_music.py (research tool).
 
-    python tools/sb1_song.py LOG OUT.txt [--loop-search MIN MAX]
+    python tools/sb1_song.py LOG OUT.txt [--loop-search MIN MAX] [--grid 8]
 
 LOG = S-DSP writes of SB1's own driver playing the song from its start, one line per register change:
 "START <cycle>", "W <spc cycle> <reg> <value>" (the .spc way, docs/ROM_MAP.md "Super Bomberman 1's sound
@@ -68,6 +68,8 @@ def main():
     ap.add_argument("log")
     ap.add_argument("out")
     ap.add_argument("--loop-search", nargs=2, type=int, default=(1000, 9000))
+    ap.add_argument("--grid", type=int, default=4, choices=(4, 8, 12, 24),
+                    help="steps a row for the key-ons of fast runs (a note that would land on the previous one of its voice)")
     a = ap.parse_args()
     notes = notes_of(a.log)
     t0 = notes[0]["t"]
@@ -115,8 +117,13 @@ def main():
             return int(round(q)) * 24
         return k * 24 + int(round(f * 4)) * 6    # the few others: quarter rows
 
+    step = 24 // a.grid
+    last_u = {}
     for n, t in zip(notes, ms):
         n["u"] = unit(t)
+        if n["u"] <= last_u.get(n["v"], -1):     # a fast run: the --grid step instead of the row
+            n["u"] = max(int(round((t - ph) / R * a.grid)) * step, last_u[n["v"]] + step)
+        last_u[n["v"]] = n["u"]
         # key-on to release in whole SB1 ticks (both sides jitter alike), then in units
         n["du"] = None if n["rel"] is None else max(1, int(round(round(n["rel"] - n["t"]) * 12.0 / U)))
     loop = min(n["u"] for n in notes if n["tt"] >= start)

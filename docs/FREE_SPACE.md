@@ -94,7 +94,7 @@ sequenced driver).
 | `$7F:FB10-$7F:FB13` | World 1 exit door (`asm/world1.asm`): door x (0 = not chosen), y, scratch (count, index). Reset by the stage's `FF 1A F6 03`. |
 | `$7F:FB20-$7F:FBCF` | SB1 chameleons (`asm/sb1_enemies.asm`), per actor (19): `+$00` set up, `+$18` frames left, `+$30` phase (0 frog, 1 copy), `+$48` seat copied, `+$60`/`+$78` own tile base, `+$90` own palette slot; `+$A8-$AF` scratch. Cleared by World 1's stage start op (`asm/world1.asm`); only chameleon actors (type 05) read it. |
 | `$7F:FBD0-$7F:FBD3` | World 1's 1-6 stands blink (`asm/world1.asm` stand_task): phase, frames left, cycle, brightness. Set by `FF 1A F6 04`. |
-| `$7F:FBD8-$7F:FBE1` | Animated stage tiles (`asm/stage_anim.asm`, 1-7's electric fence): frame counter, then scratch (source, VRAM address, bytes left, entry size). |
+| `$7F:FBD8-$7F:FBE2` | Animated stage tiles (`asm/stage_anim.asm`, 1-4's bumpers, 1-7's electric fence): frame counter, picture, scratch (source, VRAM address, bytes left, entry size), the stage's table row. |
 | `$7F:FBE8-$7F:FBF9` | 1-7's clown boss (`asm/sb1_enemies.asm` clown): center x, y, frames its routine was seen, move tick, set up, `+$06-$0D` queue scratch (source, VRAM, bytes left, entry size; `+$0D` also the nearest distance), drawn this frame, blink counter, mouth frames left, mouth open. Set by `clown_start` (`FF 1A F6 05`). |
 | `$7F:FBFA` | World 1's SB1 music (`asm/title_music.asm` `sb1m_song`, `SB1M_FLAG`): `$A5` = an SB1 song list overwrote set `$2C`'s sequence in ARAM (sent again before the next stage's ZONE1 samples). Any other value = no. |
 | `$0160-$0187` | Louie palettes (`asm/louies.asm`): `$0160` half of each actor (24 bytes, 0 = none), `$0178` users of the 3 halves, `$017B` palette id in each half, `$017E` OBJ slot of the main / spare palette (0 = none), `$0180-$0187` scratch. Zero after reset; forgotten when the slot table loses the `$FF` mark (new stage). |
@@ -132,8 +132,8 @@ SB5's ZONE1 samples while the stage loads): song table `$3000-$300B` (command 1 
 jingles), SB5's jingles where SB5 has them (`$3E00-$4240`), SB1's samples from `$8000`; SB1's header, tracks
 and subroutines and the jingles' samples (SB5 directory entries 2, 3, `$0B-$0D`, 5.5 KB) in the rest of
 `$300C-$43FF` and `$8000-$F4FF`: the song and the jingles use echo delay 1 (buffer `$F500-$FCFF`). The build
-prints the ARAM left per stage (1-1 ~3.1 KB, 1-2 ~0.7 KB, 1-3 ~5.3 KB). ROM: one upload list per stage (~30-35 KB) in
-`stream_ed` / `stream_ec` / `free_c8_sheets` (build/sb6.map), the stage table in `bulk`. Directory / tuning entries 0-`$11` (SB1's samples take the ones the jingles do not use).
+prints the ARAM left per stage (1-1 ~3.1 KB, 1-2 ~0.7 KB, 1-3 ~5.3 KB, 1-4 ~1.5 KB). ROM: one upload list per stage (~30-35 KB) in
+`stream_ed` / `stream_ec` / `stream_ee` (build/sb6.map), the stage table in `bulk`. Directory / tuning entries 0-`$11` (SB1's samples take the ones the jingles do not use).
 It covers part B of the cornered recording (`$D841`), so while it is loaded `gs_song` = `SB1M_SONG` (R kept,
 no B: the cornered sound is cut short, as in songs 15, 16, 21, 23-26).
 

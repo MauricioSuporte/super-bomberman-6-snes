@@ -1,69 +1,102 @@
-; Animated stage tiles (tools/sb6/features/sb1_stages.py `anim`): World 1's
-; 1-7 (SB1 4-8's arena) has an electric fence that SB1 animates by sending a
-; second picture of its tiles every 2 frames. The build gives those tiles
-; one block of BG slots (VRAM word !VRAM, !SIZE bytes; the second frame's
-; tiles in another ROM copy of the block). anim_start (JSL, from world1's
-; op FF 1A F6 05 in the stage's type 04 script) starts a task that every
-; !HALF frames copies the block of the frame due into SB5's VRAM queue
-; (entries at $7E:8000 + write offset $0357: mode word $0084, size, VRAM
-; address, data; the NMI sends them while there is vblank left, $C0:04E0),
-; in entries of at most 256 bytes. It ends when stage !STAGE is over
-; ($1031). State: $7F:FBD8 frame counter, $7F:FBDA-$7F:FBE1 scratch.
+; Animated stage tiles (tools/sb6/features/sb1_stages.py `anim` / `soft_anim`):
+; World 1's 1-7 (SB1 4-8's arena) has an electric fence that SB1 animates by
+; sending a second picture of its tiles every 2 frames; 1-4 (SB1 4-4) the
+; soft block's bumpers, 5 pictures of 3 frames. The build gives a stage's
+; animated tiles one block of BG slots and writes every picture of that
+; block one after the other in ROM (all stages in bank !BANK), with a row of
+; !TABLE: [stage, frames each picture stays, pictures, VRAM word (word),
+; block bytes (word), first picture (long)] ... $FF.
+; anim_start (JSL, from world1's op FF 1A F6 5 / 6 in the stage's type 04
+; script) finds the stage's row and starts a task that every "frames held"
+; frames copies the next picture into SB5's VRAM queue (entries at
+; $7E:8000 + write offset $0357: mode word $0084, size, VRAM address, data;
+; the NMI sends them while there is vblank left, $C0:04E0), in entries of at
+; most 256 bytes. It ends when the stage is over ($1031).
+; State: $7F:FBD8 frame counter, $7F:FBD9 picture, $7F:FBDA-$7F:FBE1
+; scratch, $7F:FBE2 the stage's row offset.
 
 asar 1.90
 hirom
 org !ORG
 
 !CNT   = $7FFBD8
+!PIC   = $7FFBD9
 !SRC   = $7FFBDA              ; word: source offset (bank !BANK)
 !VR    = $7FFBDC              ; word: VRAM word address
 !LEFT  = $7FFBDE              ; word: bytes left
 !N     = $7FFBE0              ; word: bytes in this entry
+!ROW   = $7FFBE2
 !PART  = $0100
 
 anim_start:
     php
     sep #$30
+    ldx #$00
+-   lda.l !TABLE,x
+    cmp #$FF
+    beq .none
+    cmp.l $7E1031
+    beq .found
+    txa
+    clc
+    adc #10
+    tax
+    bra -
+.found:
+    txa
+    sta.l !ROW
     lda #$00
     sta.l !CNT
+    sta.l !PIC
     jsl $C020A1
     dl anim_task
     db $60                      ; skipped ($C020A1 returns past the dl)
+.none:
     plp
     rtl
 
 anim_task:
     php
     sep #$30
+    lda.l !ROW
+    tax
     lda.l $7E1031
-    cmp #!STAGE
+    cmp.l !TABLE,x
     beq +
     jsl $C021CE                 ; stage over: end the task
     bra .out
 +   lda.l !CNT
     inc a
-    cmp #!HALF*2
+    cmp.l !TABLE+1,x
+    bcc .keep
+    lda.l !PIC                  ; next picture
+    inc a
+    cmp.l !TABLE+2,x
     bcc +
     lda #$00
-+   sta.l !CNT
-    beq .zero
-    cmp #!HALF
-    bne .out
-    rep #$30
-    lda.w #!SRC1&$FFFF
-    bra .send
-.zero:
-    rep #$30
-    lda.w #!SRC0&$FFFF
-.send:
-    sta.l !SRC
-    lda.w #!VRAM
++   sta.l !PIC
+    tay
+    rep #$20
+    lda.l !TABLE+7,x            ; first picture + picture * size
+-   cpy #$00
+    beq +
+    clc
+    adc.l !TABLE+5,x
+    dey
+    bra -
++   sta.l !SRC
+    lda.l !TABLE+3,x
     sta.l !VR
-    lda.w #!SIZE
+    lda.l !TABLE+5,x
     sta.l !LEFT
+    rep #$10
 -   jsr part
     lda.l !LEFT
     bne -
+    sep #$30
+    lda #$00
+.keep:
+    sta.l !CNT
 .out:
     plp
     rtl

@@ -19,6 +19,7 @@
 ;   n = 4  (1-6's third duel, type 04) the stands blink (stand_task, below)
 ;   n = 5  (1-7, type 04) start the electric fence's task (asm/stage_anim.asm) and the clown
 ;          boss's (asm/sb1_enemies.asm clown_start)
+;   n = 6  (1-4, type 04) start the animated tiles' task (asm/stage_anim.asm)
 ;   n = 2  (type 0C) players on the door: like op $12 ($C2:0C67), the sum
 ;          of seat + 1 of the live bombers on the cell -> $0373, JSL $C174D1
 ; State: $7F:FB10 door x (0 = not chosen), $7F:FB11 door y, $7F:FB12-$7F:FB13
@@ -59,6 +60,13 @@ if !ANIMSTART
     jsl !ANIMSTART              ; 5: 1-7's electric fence (asm/stage_anim.asm)
 endif
     jsl !CLOWNSTART             ;    and its clown (asm/sb1_enemies.asm clown_start)
+    plp
+    rtl
++   dec a
+    bne +
+if !ANIMSTART
+    jsl !ANIMSTART              ; 6: animated stage tiles only (1-4's bumpers)
+endif
     plp
     rtl
 +   lda #$00                    ; 3: forget, start the picking task

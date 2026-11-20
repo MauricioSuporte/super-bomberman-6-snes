@@ -36,7 +36,7 @@ from . import title_music as tm
 
 # World 1 stages that play SB1 songs: (stage id, song name: assets/sound/sb1_<name>_song.txt, SB1's sound RAM
 # assets/sound/sb1_stage_<name>.bin (from $0800), its sample directory there: SB1 DSP register DIR, World 3 has $2400)
-STAGES = [(0x0D, "w1", 0x2300), (0x11, "w2", 0x2300), (0x18, "w3", 0x2400)]
+STAGES = [(0x0D, "w1", 0x2300), (0x11, "w2", 0x2300), (0x18, "w3", 0x2400), (0x10, "w4", 0x2300)]
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
 # SB5 directory entries the jingles name but never play: only the start jingle's percussion records (no key-on
 # of it in Mesen, the jingle keeps its percussion off) -> a silent block (2187 bytes saved)
@@ -643,7 +643,7 @@ def apply(rb, sound_dir):
     for stage, name, sb1_dir in STAGES:
         image = open(os.path.join(sound_dir, f"sb1_stage_{name}.bin"), "rb").read()
         lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir)
-        a = rb.alloc(["stream_ed", "stream_ec", "free_c8_sheets", "free_c7_sheets"], lst,
+        a = rb.alloc(["stream_ed", "stream_ec", "stream_ee", "obj_f8", "obj_f7"], lst,
                      f"SB1 music of stage ${stage:02X} ({name}): Hudson upload list (sequence, samples)")
         if (a & 0xFFFF) + len(lst) > 0x10000:
             raise BuildError("SB1 music: an upload list crosses a bank")

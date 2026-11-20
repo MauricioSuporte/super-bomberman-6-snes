@@ -616,7 +616,19 @@ script accumulator (`61` = add).
   fence (`asm/stage_anim.asm`): SB1 4-8 sends a second picture of 27
   tiles every 2 frames; the hack keeps the fence's tiles in one block of
   slots at the archive's end (29 tiles) and a task queues the frame due
-  (entries of 256 bytes) every 2 frames.
+  (entries of 256 bytes) every 2 frames. 1-4's soft blocks (SB1 4-4's
+  bumpers, their lights turn): SB1 rewrites BG tiles 2/3/`$12`/`$13` (and
+  6/7/`$16`/`$17`, the same bumper over a shadow) with 5 pictures, 3 frames
+  each (`assets/stages/sb1_4-4_soft_anim.png`, from SB1's VRAM); the soft
+  block's 4 tiles get their own slots and the same task plays them. The
+  task's table (`[stage, frames held, pictures, VRAM word, size, first
+  picture]`) is started by world1's op `FF 1A F6 05` (1-7) / `06` (1-4).
+* Stage `$10`'s type `06` script: `FF DD` (`$C5:49A1`) creates SB5's
+  decoration objects; one (`$C5:49D7`) rewrites tiles `$12C-$12F` every
+  ~100 frames (the SB1 pillars there turned into arches): dropped, with
+  the clouds. SB5's flames (tiles `$050-$07B`, palette 2) carry their own
+  floor in palette 2 entries 5-10 (ZONE1 grass `$03E0`, seen around the
+  explosions): `sb1_stages` writes the SB1 floor's most common color there.
 * Stage IRQ (`$C0:F08D`, vector `JMP ($006D)`, `$033D` = `$A1`): line 0
   draws the HUD (TM `$16`, BG2 = its background: map `$3A` (`$3800`, 32 x
   64), scroll 0); line `$15` writes BG2SC = `$0369`, TM = `$030F` and BG3's
@@ -768,7 +780,7 @@ script accumulator (`61` = add).
   Checked in Mesen: the key-on sequence and timing equal SB1's; stage
   music and in-game SFX after the map.
 * World 1 stages play on Hudson's driver with SB5's stage SFX (SB1's player and enemy deaths: game_sfx). 1-1
-  (stage `$0D`), 1-2 (`$11`) and 1-3 (`$18`) play SB1's World 1 / 2 / 3 songs
+  (stage `$0D`), 1-2 (`$11`), 1-3 (`$18`) and 1-4 (`$10`) play SB1's World 1-4 songs
   converted to Hudson songs (`tools/sb6/features/sb1_music.py` `STAGES`,
   see "Hudson songs"; `asm/title_music.asm` `sb1m_song`, table
   `SB1M_TABLE` = [stage, list] ... `$FF`), hooked at the start of Hudson's
@@ -789,7 +801,9 @@ script accumulator (`61` = add).
   and, on the next upload of song 5 for a stage without SB1 music, sends set
   `$2C` first (else that stage ran SB1's tracks over SB5's samples: random
   SPC code, a black screen after 1-2's door). SB1's sample directory is
-  DSP DIR `$2300` (World 3: `$2400`). SB1's per-world sound RAM images
+  DSP DIR `$2300` (World 3: `$2400`). World 4's song (SB1 song `$0B`) has
+  fast runs of 30 ms notes: `tools/sb1_song.py --grid 8` puts the key-ons
+  that would land on their voice's previous one on an 8-step grid. SB1's per-world sound RAM images
   (`assets/sound/sb1_stage_*.bin`, Mesen snapshot at SB1's first stage
   command) stay as the source of SB1's samples and of future conversions.
 * Hudson songs (measured in Mesen on SB5's driver):

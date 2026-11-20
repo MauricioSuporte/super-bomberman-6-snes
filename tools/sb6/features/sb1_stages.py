@@ -37,7 +37,9 @@ ASSETS = os.path.join(ROOT, "assets", "stages")
 # src_arc / src_pal); new_theme: the theme's tables are new ones in bank $D0 (a freed theme id); script: the
 # stage's type 02 script bytes rewritten to name them
 STAGES = {
-    "sb1_4-4": dict(stage=0x10, theme=2, map=4, gfx=2),
+    # soft_anim: the soft block's pictures (16 x 16 each, the first = _soft.png) shown anim_hold frames each,
+    # in a loop (SB1 4-4's bumpers: 5 pictures, 3 frames; from SB1's VRAM, tiles 2/3/$12/$13)
+    "sb1_4-4": dict(stage=0x10, theme=2, map=4, gfx=2, soft_anim="sb1_4-4_soft_anim", anim_hold=3),
     "sb1_6-4": dict(stage=0x17, theme=5, map=0x0B, gfx=5),
     # 1-7 (SB5 boss arena $68: theme $27, archive $1F and palette $1B shared with the other arenas, map $8F its
     # own) gets SB1's 4-8 arena in theme 4 (free: its room serves theme 5 above), set 4 archive / palette 4
@@ -50,13 +52,14 @@ STAGES = {
                     scripts=[(0xC71BB1, "2A 1B 27 1F 0B 27 0C 8E", "2A F0 27 F0 0B 28 0C 8E"),
                              (0xC71F3B, "2A 1C 27 1F 0B 27 0C 90", "2A F0 27 F0 0B 28 0C 8E"),
                              (0xC72178, "2A 1B 27 1F 0B 27 0C 92", "2A F0 27 F0 0B 28 0C 8E")]),
-    "sb1_4-8": dict(anim="sb1_4-8_shock", stage=0x68, theme=4, map=0x8F, arc=4, pal=4, src_arc=0x1F, src_pal=0x1B, new_theme=True,
+    "sb1_4-8": dict(anim="sb1_4-8_shock", anim_hold=2, stage=0x68, theme=4, map=0x8F, arc=4, pal=4, src_arc=0x1F, src_pal=0x1B, new_theme=True,
                     script=(0xC71D8F, "2A 1B 27 1F 0B 27 0C 8F", "2A 04 27 04 0B 04 0C 8F")),
 }
 SPARE_THEMES = (4,)            # theme 4 (SB5 stages $13 / $14, not played): its tables can hold a bigger theme
 SOFT_ID = 2
 PALS = (4, 5, 6)                # SB1 colors
 BURN_PAL = 3
+FLAME_FLOOR = range(5, 11)      # palette 2 entries of the floor around SB5's flames (tiles $050-$07B)
 BURN_TILES = range(0x16, 0x2A)  # archive tile indices of the 5 burning frames ($116-$129)
 BURN_FIRST = 0x26               # first frame shown; then $22, $1E, $1A, $16
 N_TILES = 0xB0                  # archive tiles $100-$1AF (theme 2's size; VRAM up to $3600 is the stage's)
@@ -73,6 +76,12 @@ def _p24(rb, a):
 def _bgr(rgb):
     r, g, b = (int(x) >> 3 for x in rgb)
     return r | g << 5 | b << 10
+
+
+def _rgb555(path):
+    a = np.asarray(Image.open(path).convert("RGB"))
+    return (a[..., 0].astype(np.int32) >> 3) | (a[..., 1].astype(np.int32) >> 3) << 5 | \
+        (a[..., 2].astype(np.int32) >> 3) << 10
 
 
 def _cells(name):
@@ -180,7 +189,7 @@ def build(rb, name, spec):
     blink = []                      # (column, row, metatile id, id in the alternate picture)
 
     anim = _cells(spec["anim"])[0] if "anim" in spec else None
-    second = {}                     # metatile id -> its cell in the animation's second frame
+    second = {}                     # metatile id -> its cells in the animation's other frames
 
     def meta(cell, col, cell1=None):
         key = (cell.tobytes(), col, None if cell1 is None else cell1.tobytes())
@@ -188,15 +197,19 @@ def build(rb, name, spec):
             ids[key] = new_id()
             cells.append((ids[key], cell, col))
             if cell1 is not None:
-                second[ids[key]] = cell1
+                second[ids[key]] = [cell1]
         return ids[key]
 
+    floors = {}
     for r in range(13):
         for c in range(16):
             cell = field[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
             inner = 1 <= c <= 13 and top <= r <= bottom
             hard = inner and c % 2 == 0 and r % 2 == 0
             col = 0x00 if inner and not hard else 0x80
+            if col == 0:
+                for v in cell.reshape(-1).tolist():
+                    floors[v] = floors.get(v, 0) + 1
             cell1 = None
             if anim is not None:
                 cell1 = anim[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
@@ -208,10 +221,18 @@ def build(rb, name, spec):
                 if (other != cell).any():
                     blink.append((c, r, int(grid[r, c]), meta(other, col)))
     cells.append((SOFT_ID, soft, 0x30))
+    if "soft_anim" in spec:
+        if anim is not None:
+            raise BuildError(f"{name}: one animation per stage")
+        strip = _rgb555(os.path.join(ASSETS, spec["soft_anim"] + ".png"))
+        if strip.shape[0] != 16 or strip.shape[1] % 16 or not (strip[:, :16] == soft).all():
+            raise BuildError(f"{name}: {spec['soft_anim']}.png must be 16 x 16 pictures, the first = the soft block")
+        second[SOFT_ID] = [strip[:, x:x + 16] for x in range(16, strip.shape[1], 16)]
+    floor = max(floors, key=floors.get)
     count = max(i for i, _, _ in cells) + 1
     # ---- palettes and tiles ----
-    tiles8 = [np.concatenate([t, t1]) if i in second else t for i, cell, _ in cells
-              for t, t1 in zip(_split(cell), _split(second.get(i, cell)))]
+    tiles8 = [np.concatenate([t] + [_split(c)[q] for c in second[i]]) if i in second else t for i, cell, _ in cells
+              for q, t in enumerate(_split(cell))]
     pals, where = _palettes(tiles8)
     if len(pals) > len(PALS):
         raise BuildError(f"{name}: {len(pals)} palettes needed")
@@ -225,38 +246,41 @@ def build(rb, name, spec):
     tiles = _Tiles(base, free)
     table = bytearray(8 * count)
     approx = 0
-    pairs, frame1 = {}, {}          # animated tiles: (frame 0, frame 1) -> slot; slot -> frame 1's tile
+    pairs, frame1 = {}, {}          # animated tiles: (frame 0, other frames...) -> slot; slot -> the others' tiles
 
     def flip(t, hf, vf):
         t = t[:, ::-1] if hf else t
         return t[::-1, :] if vf else t
 
-    def add_pair(idx, idx1):
+    def add_pair(idx, others):
         for hf in (False, True):
             for vf in (False, True):
-                k = (encode_4bpp(flip(idx, hf, vf)), encode_4bpp(flip(idx1, hf, vf)))
+                k = tuple(encode_4bpp(flip(x, hf, vf)) for x in [idx] + others)
                 if k in pairs:
                     return pairs[k], hf, vf
         if not tiles.free:
             raise BuildError(f"{name}: no free tile slot left for the animation")
         n = tiles.free.pop()        # from the archive's end: one block of slots
         tiles.data[32 * n:32 * n + 32] = encode_4bpp(idx)
-        frame1[n] = encode_4bpp(idx1)
-        pairs[(encode_4bpp(idx), encode_4bpp(idx1))] = n
+        frame1[n] = [encode_4bpp(x) for x in others]
+        pairs[tuple(encode_4bpp(x) for x in [idx] + others)] = n
         return n, False, False
 
     for animated in (False, True):
         for k, (i, cell, _) in enumerate(cells):
             if (i in second) != animated:
                 continue
-            for q, (t, t1) in enumerate(zip(_split(cell), _split(second.get(i, cell)))):
+            for q, t in enumerate(_split(cell)):
                 p = where[4 * k + q]
                 idx, a = _index(t, pals[p])
                 approx += a
                 if animated:
-                    idx1, a = _index(t1, pals[p])
-                    approx += a
-                    n, hf, vf = add_pair(idx, idx1)
+                    others = []
+                    for c in second[i]:
+                        x, a = _index(_split(c)[q], pals[p])
+                        approx += a
+                        others.append(x)
+                    n, hf, vf = add_pair(idx, others)
                 else:
                     n, hf, vf = tiles.add(idx)
                 word = (0x100 + n) | PALS[p] << 10 | (0x4000 if hf else 0) | (0x8000 if vf else 0)
@@ -276,15 +300,18 @@ def build(rb, name, spec):
             tiles.data[32 * (first + q):32 * (first + q) + 32] = encode_4bpp(idx)
     used = n_tiles - 1 - len(BURN_TILES) - len(tiles.free)
     shock = None
-    if frame1:                      # both frames of the animated block (VRAM: BG tiles $100+ at word $1000)
+    if frame1:                      # every frame of the animated block (VRAM: BG tiles $100+ at word $1000)
         lo, hi = min(frame1), max(frame1)
         if hi - lo + 1 != len(frame1):
             raise BuildError(f"{name}: the animated tiles are not one block")
         f0 = bytes(tiles.data[32 * lo:32 * hi + 32])
-        f1 = bytearray(f0)
-        for n, enc in frame1.items():
-            f1[32 * (n - lo):32 * (n - lo) + 32] = enc
-        shock = dict(vram=0x1000 + 16 * lo, frames=[f0, bytes(f1)], tiles=len(frame1))
+        frames_ = [f0]
+        for k in range(len(next(iter(frame1.values())))):
+            fk = bytearray(f0)
+            for n, encs in frame1.items():
+                fk[32 * (n - lo):32 * (n - lo) + 32] = encs[k]
+            frames_.append(bytes(fk))
+        shock = dict(vram=0x1000 + 16 * lo, frames=frames_, tiles=len(frame1))
     # ---- archive ----
     packed = lz.compress(bytes(tiles.data))
     a = rb.alloc([r for r in ("free_cd_stage2", "free_cd_stage45", "free_c9_sheets", "free_c8_sheets", "obj_f9",
@@ -306,6 +333,11 @@ def build(rb, name, spec):
         o = (row - first_row) * 16
         colors[o:o + 16] = [colors[o]] + list(pal) + [0] * (15 - len(pal))
     put(BURN_PAL, bpal)
+    # the flames (palette 2, SB5's) are drawn over their own floor pixels, colors FLAME_FLOOR: SB5's grass
+    # there showed through the explosions; they take the SB1 floor's most common color
+    o = (2 - first_row) * 16
+    for i in FLAME_FLOOR:
+        colors[o + i] = floor
     for p, pal in zip(PALS, pals):
         put(p, pal)
     for row, pal in spec.get("extra_pals", {}).items():    # rows the field leaves free (1-7: the clown's)
@@ -404,27 +436,32 @@ def apply(rb):
 
 
 ANIM_ASM = os.path.join(ROOT, "asm", "stage_anim.asm")
-ANIM_HALF = 2                   # frames each picture of the animation stays (SB1 4-8's shock: 2)
 
 
 def _anim_code(rb, anims):
-    """asm/stage_anim.asm for the (one) animated stage: its two tile blocks, queued by a task (anim_start)."""
+    """asm/stage_anim.asm: per animated stage [stage, frames held, frames, VRAM word, block size, first
+    block (long)] in a table; every stage's blocks in one bank (the task copies them with MVN)."""
     if not anims:
         return 0
-    if len(anims) > 1:
-        raise BuildError("stage_anim.asm plays one stage's animation")
     from .. import asar
-    spec, a = anims[0]
+    blob, rows = bytearray(), []
+    for spec, a in anims:
+        rows.append((spec, a, len(blob)))
+        blob += b"".join(a["frames"])
     regs = [r for r in ("free_cd_stage2", "free_cd_stage45", "obj_f9", "obj_f8", "bulk") if r in rb.regions]
-    both = rb.alloc(regs, a["frames"][0] + a["frames"][1],
-                    f"stage ${spec['stage']:02X}: animated BG tiles, frames 0 and 1 ({a['tiles']} tiles each)")
-    src = [both, both + len(a["frames"][0])]
-    if src[0] >> 16 != (src[1] + len(a["frames"][1]) - 1) >> 16:
+    src = rb.alloc(regs, bytes(blob), "World 1: animated BG tiles, every frame of " +
+                   ", ".join(f"stage ${spec['stage']:02X} ({len(a['frames'])} x {a['tiles']} tiles)"
+                             for spec, a, _ in rows))
+    if src >> 16 != (src + len(blob) - 1) >> 16:
         raise BuildError("animated tiles cross a bank")
+    table = bytearray()
+    for spec, a, o in rows:
+        table += bytes([spec["stage"], spec["anim_hold"], len(a["frames"])]) + struct.pack(
+            "<HH", a["vram"], len(a["frames"][0])) + (src + o).to_bytes(3, "little")
+    table.append(0xFF)
+    t = rb.alloc("bulk", bytes(table), "World 1: animated stages (stage, hold, frames, VRAM, size, tiles)")
     region = rb.regions["bulk"]
-    defs = {"ORG": f"${region.cursor:06X}", "STAGE": f"${spec['stage']:02X}", "THEME": f"${spec['theme']:02X}",
-            "VRAM": f"${a['vram']:04X}", "SIZE": f"${len(a['frames'][0]):04X}", "SRC0": f"${src[0]:06X}",
-            "SRC1": f"${src[1]:06X}", "BANK": f"${src[0] >> 16:02X}", "HALF": str(ANIM_HALF)}
+    defs = {"ORG": f"${region.cursor:06X}", "TABLE": f"${t:06X}", "BANK": f"${src >> 16:02X}"}
     runs, syms = asar.assemble_into(rb.d, ANIM_ASM, defs)
     start, end = region.cursor, syms["end"]
     out = bytearray(rb.d)
