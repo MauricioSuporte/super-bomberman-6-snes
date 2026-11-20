@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, picker, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, pause, picker, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -172,7 +172,10 @@ def main():
     for n, i in stages.items():
         print(f"world 1: {n} = {i['metatiles']} metatiles, {i['tiles']} tiles, {i['palettes']} palettes "
               f"({i['approx']} pixels approximated), {i['bytes']} bytes LZ")
-    pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"], w1["w1_op"])
+    pz = pause.apply(rb)             # in-stage pause menu (Normal Game): its NMI part goes through pick_nmi
+    print(f"pause: RESUME / RETURN TO WORLD MAP / RETURN TO TITLE in the Normal Game ({pz['tiles']} BG3 glyphs)")
+    pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"], w1["w1_op"],
+                        pz["pause_nmi"])
     print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")
 
     coop.apply(rb, louie["louie_tick"], pick)
@@ -180,7 +183,7 @@ def main():
     options.apply(rb, title.SET)
     print("options: title submenu (DISCORD -> QR code); SB5's Options, Sound Test and Password screens freed")
     world1.text(rb, base_rom, args.out)
-    print("world 1: WORLD instead of ZONE (stage intro, world map label; preview build/world_text_preview.png)")
+    print("world 1: STAGE w-s in the stage intro, WORLD instead of ZONE on the world map label (preview build/world_text_preview.png)")
     for ch in info["chars"] if info else []:
         n = ch["notes"]
         print(f"char{ch['char']}: Bomberman's layout, {n['edited']} animations redrawn in {ch['strips']} KB of tiles, "

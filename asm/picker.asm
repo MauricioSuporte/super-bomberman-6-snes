@@ -1637,6 +1637,9 @@ endif
 if !WMAP_NMI
     jsl !WMAP_NMI                   ; the ZONE1 world map's sea (asm/world_map.asm)
 endif
+if !PAUSE_NMI
+    jsl !PAUSE_NMI                  ; the stage's pause menu (asm/pause.asm)
+endif
     php
     sep #$30
     lda.l !SL+$76                   ; NMIs seen: the player row counts video frames

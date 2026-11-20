@@ -1,19 +1,19 @@
 """World 1 of Super Bomberman 6: "WORLD" instead of "ZONE", the seven-stage chain, SB1-style exit doors.
 
 Text (docs/ROM_MAP.md "Stage intro text"):
-* Stage intro (task `$C5:0CD9`): set 4 arrangement `$E0` = "ZONE" (BG3 tiles `$A6-$AB` / `$B6-$BB`
-  of set 3 archive `$4D`, LZ, VRAM `$5400`) + the dash, centred on column `$10`; the digits are
-  drawn by the task at columns `$11`, `$15`, `$16`. "WORLD" is wider than "ZONE": it takes
-  tiles `$A6-$AB` + `$E7`/`$E8` (top) and `$B6-$BB` + `$F7`/`$F8` (bottom; past the archive's
-  end, so the archive grows by 32 bytes: VRAM `$57B8-$57C7`, unused in stages and on the map). The
-  new archive goes to `bulk`, the old one is freed. The arrangement is 14 wide (WORLD, gap,
-  digit, gap, dash, gap) and lives in `free_e2` (set 4's arrangements are words in bank `$E2`).
+* Stage intro (task `$C5:0CD9`) and SB5's pause: set 4 arrangement `$E0` was "ZONE" (BG3 tiles
+  `$A6-$AB` / `$B6-$BB` of set 3 archive `$4D`, LZ, VRAM `$5400`) + the dash; SB6 writes STAGE w-s
+  instead: the 8 x 16 letters S T A G E of `features/pause.py` (LETTERS, drawn like SB5's big
+  digits) in tiles `$A6-$AA` / `$B6-$BA` ($AB / $BB blanked). The new archive goes to `bulk`, the
+  old one is freed. The arrangement is 8 wide (STAGE, two gaps, dash: the world digit goes in the
+  second gap) and lives in `free_e2` (set 4's arrangements are words in bank `$E2`); the intro task
+  places it and the digits through `intro_label` (asm/pause.asm, stage number without its leading
+  zero, centred on column 16).
 * World map label (BG3, tiles 1-8 / `$11-$18` + the zone digit `$0A+`): set 3 archive `$0D`
   (raw, `$E3:D110`), redrawn in place.
-The new letters are drawn at build time from SB5's own glyphs (O, R, E, M of the intro font):
-W = M upside down, L = E without its upper bars, D = O with round right corners, rendered with
-the fonts' outline/shadow rules (intro: outline all round + drop shadow 2 px down/right; map
-label: colour bands by row + 1-px shadow). Preview: build/world_text_preview.png.
+The map label's letters are drawn at build time from SB5's own glyphs (O, R, E, M of the intro
+font): W = M upside down, L = E without its upper bars, D = O with round right corners, rendered
+with the map font's rules (colour bands by row + 1-px shadow). Preview: build/world_text_preview.png.
 """
 import os
 import struct
@@ -25,15 +25,16 @@ from PIL import Image
 from .. import lz
 from ..rombuild import BuildError
 from ..romlib import off
-from . import sb1_enemies
+from . import pause, sb1_enemies
 
 ARC_TABLE = 0xE3BE60          # archive entries (8 bytes), set 3 window starts at $E3:C158
 SET3 = 0xE3C158
 INTRO_ARC = 0x4D              # set 3: stage intro / HUD font, VRAM $5400 (tile $80), LZ
 MAP_ARC = 0x0D                # set 3: world map label font, VRAM $5000, raw
-INTRO_ARR = 0xE0              # set 4 arrangement "ZONE  -"
-INTRO_TOP = [0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xE7, 0xE8]
-INTRO_BOT = [0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xF7, 0xF8]
+INTRO_ARR = 0xE0              # set 4 arrangement "ZONE  -" -> "STAGE  -"
+INTRO_TOP = [0xA6, 0xA7, 0xA8, 0xA9, 0xAA]   # S T A G E (bottoms + $10)
+DASH_ARR = 0xC6               # set 4 arrangement: "-" alone (the slot of SB5's freed Password $C6)
+PAL_INTRO = 1                 # the letters' BG3 palette (SB5's ZONE / WORLD green)
 
 
 def _entry(rb, set_base, n):
@@ -71,17 +72,6 @@ def _shift(m, dy, dx):
     o = np.zeros_like(m)
     h, w = m.shape
     o[dy:, dx:] = m[:h - dy, :w - dx]
-    return o
-
-
-def _dilate(m):
-    o = m.copy()
-    h, w = m.shape
-    p = np.zeros((h + 2, w + 2), bool)
-    p[1:-1, 1:-1] = m
-    for dy in range(3):
-        for dx in range(3):
-            o |= p[dy:dy + h, dx:dx + w]
     return o
 
 
@@ -132,17 +122,6 @@ def _word(masks, gap, height, scale=(1, 1), top=0):
     return out, x - gap
 
 
-def _render_intro(b):
-    l1 = _dilate(b) & ~b
-    s = _shift(b, 2, 2) & ~b & ~l1
-    l2 = _dilate(s) & ~b & ~s & ~l1
-    out = np.zeros(b.shape, int)
-    out[l1 | l2] = 1
-    out[s] = 2
-    out[b] = 3
-    return out
-
-
 def _render_map(b):
     band = np.array([3] * 5 + [2] * 7 + [3] * 4)[:, None] * np.ones((1, b.shape[1]), int)
     sh = (_shift(b, 1, 0) | _shift(b, 0, 1) | _shift(b, 1, 1)) & ~b
@@ -160,36 +139,46 @@ def text(rb, base_rom, out_dir):
     if (vram, size, src, e[7]) != (0x5400, 0x0770, 0xD5C9DA, 0x03):
         raise BuildError(f"set 3 archive $4D is not the expected one: {bytes(e).hex(' ')}")
     font, used = lz.decompress(bytes(rb.d[off(src):off(src) + 0x1000]), size)
-    font = bytearray(font) + bytearray(32)                       # tiles $F7, $F8
-    for t in (0xE7, 0xE8):
-        if any(font[(t - 0x80) * 16:(t - 0x7F) * 16]):
-            raise BuildError(f"intro font tile ${t:02X} is not blank")
     masks = _glyphs(font)
-    b, width = _word(masks, 2, 16, top=1)
-    print(f'WORLD intro width {width}')
-    b = np.roll(b, max(61 - width, 0), axis=1)                   # right-aligned: the digit follows
-    intro = _render_intro(b)
-    _put2bpp(font, 0x80, INTRO_TOP, INTRO_BOT, intro)
-    new_src = rb.alloc("bulk", lz.compress(bytes(font)), "WORLD: stage intro font (set 3 archive $4D, + tile $F7)")
-    rb.patch(ea, e, bytes([0x00, 0x54, 0x90, 0x07, new_src & 0xFF, (new_src >> 8) & 0xFF, new_src >> 16, 0x03]),
-             "WORLD: set 3 archive $4D = the font with WORLD (two tiles longer)")
+    font = bytearray(font)
+    for c, t in zip("STAGE", INTRO_TOP):
+        top, bot = pause.big_letter(pause.LETTERS[c])
+        font[(t - 0x80) * 16:(t - 0x7F) * 16] = top
+        font[(t + 0x10 - 0x80) * 16:(t + 0x10 - 0x7F) * 16] = bot
+    for t in (0xAB, 0xBB):                                       # ZONE's last column
+        font[(t - 0x80) * 16:(t - 0x7F) * 16] = bytes(16)
+    new_src = rb.alloc("bulk", lz.compress(bytes(font)), "STAGE: stage intro font (set 3 archive $4D)")
+    rb.patch(ea, e, bytes([0x00, 0x54, 0x70, 0x07, new_src & 0xFF, (new_src >> 8) & 0xFF, new_src >> 16, 0x03]),
+             "STAGE: set 3 archive $4D = the font with STAGE")
     # old font data: nothing else names it (one archive entry; the stock OBJ sheet table copy is freed)
     old = bytes(base_rom[off(src):off(src) + used])
     rb.free_old("free_d5_font", src + 1, used - 1, zlib.crc32(old[1:]),
                 "freed SB5 stage intro font with ZONE (set 3 archive $4D, LZ); its first byte stays")
 
-    # ---- the intro arrangement: WORLD (8), gap, digit (col 17), gap, dash, gap; centred on $10 (14 wide: col 8)
-    words = [0x24 << 8 | t for t in INTRO_TOP] + [0x2080] * 3 + [0x208C] + [0x2080] * 2
-    words += [0x24 << 8 | t for t in INTRO_BOT] + [0x2080] * 3 + [0x209C] + [0x2080] * 2
+    # ---- the intro arrangement: STAGE (5), gap, gap (the world digit), dash; asm/pause.asm intro_label places it
+    letter = 0x2000 | PAL_INTRO << 10
+    words = [letter | t for t in INTRO_TOP] + [0x2080] * 2 + [0x208C]
+    words += [letter | t + 0x10 for t in INTRO_TOP] + [0x2080] * 2 + [0x209C]
     lo = bytes(w & 0xFF for w in words)
     hi = bytes(w >> 8 for w in words)
-    arr = bytes([14, 2, 0, 0, 0]) + lz.compress(lo) + lz.compress(hi) + b"\x00"
+    arr = bytes([8, 2, 0, 0, 0]) + lz.compress(lo) + lz.compress(hi) + bytes(1)
     tab = 0xC00000 | (rb.d[off(0xC08000 + 12)] | rb.d[off(0xC08000 + 13)] << 8 | rb.d[off(0xC08000 + 14)] << 16)
     slot = tab + 2 * (INTRO_ARR - 1)
-    a = rb.alloc("free_e2", arr, "WORLD: stage intro arrangement (set 4 $E0)")
+    a = rb.alloc("free_e2", arr, "STAGE: stage intro arrangement (set 4 $E0)")
     if a >> 16 != tab >> 16:
         raise BuildError("WORLD arrangement outside the set 4 bank")
-    rb.patch(slot, bytes([0x27, 0xDA]), bytes([a & 0xFF, (a >> 8) & 0xFF]), "WORLD: set 4 arrangement $E0")
+    rb.patch(slot, bytes([0x27, 0xDA]), bytes([a & 0xFF, (a >> 8) & 0xFF]), "STAGE: set 4 arrangement $E0")
+    # the dash + a blank (2 wide as the digits; 1 wide hangs the drawer) (set 4 $C6, free since features/options.py freed SB5's Password): SB5's digit arrangements
+    # $EA+ are 2 wide (digit, blank), so the world digit's blank covers $E0's dash; intro_label draws this after it
+    dash = bytes([2, 2, 0, 0, 0]) + lz.compress(bytes([0x8C, 0x80, 0x9C, 0x80])) + lz.compress(bytes([0x20] * 4)) + bytes(1)
+    dslot = tab + 2 * (DASH_ARR - 1)
+    old = bytes(rb.d[off(dslot):off(dslot) + 2])
+    if old != bytes([0xFB, 0xC3]):
+        raise BuildError(f"set 4 slot ${DASH_ARR:02X} is not the freed Password arrangement: {old.hex()}")
+    d = rb.alloc("free_e2", dash, "STAGE: stage intro dash (set 4 $C6)")
+    if d >> 16 != tab >> 16:
+        raise BuildError("dash arrangement outside the set 4 bank")
+    rb.patch(dslot, old, bytes([d & 0xFF, (d >> 8) & 0xFF]), "STAGE: set 4 arrangement $C6 = the dash")
 
     # ---- world map label (archive $0D, raw): tiles 1-8 / $11-$18
     ma = _entry(rb, SET3, MAP_ARC)
@@ -207,14 +196,12 @@ def text(rb, base_rom, out_dir):
     rb.patch(msrc, old, new, "WORLD: world map label (set 3 archive $0D tiles 1-8 / $11-$18)")
 
     if out_dir:
-        pal_i = [(255, 0, 255), (0, 24, 16), (64, 96, 0), (88, 216, 0)]
         pal_m = [(40, 0, 60), (60, 0, 0), (180, 90, 90), (255, 200, 200)]
-        img = Image.new("RGB", (64, 34))
+        img = Image.new("RGB", (64, 16))
         for y in range(16):
             for x in range(64):
-                img.putpixel((x, y), pal_i[intro[y, x]])
-                img.putpixel((x, 18 + y), pal_m[label[y, x]])
-        img.resize((256, 136), Image.NEAREST).save(os.path.join(out_dir, "world_text_preview.png"))
+                img.putpixel((x, y), pal_m[label[y, x]])
+        img.resize((256, 64), Image.NEAREST).save(os.path.join(out_dir, "world_text_preview.png"))
 
 
 # ---------------------------------------------------------------------------------------------------------

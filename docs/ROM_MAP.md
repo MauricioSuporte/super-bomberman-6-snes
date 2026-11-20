@@ -374,6 +374,8 @@ script accumulator (`61` = add).
 | `$C7:10E2`, `$C7:0E27` | `24 4C 12 C7` | file confirm -> character selection (`asm/picker.asm`, below) |
 | `$C2:069B` | `7C 46 C1` | script op `FF 1A nn`: nn >= `$F0` runs `pick_op` |
 | `$C0:F421` | `22 E0 04 C0` | NMI: the SB6 picker's VRAM loads, portrait swaps and poses (`pick_nmi`), which first calls `title_nmi` |
+| `$C5:0058` | `A9 01 8D 1D 1D` | pause entry: also opens the SB6 pause menu in the Normal Game (`pm_open`, `asm/pause.asm`) |
+| `$C5:009E` | `20 B7 00 F0` | each paused frame: the pause menu (`pm_tick`) instead of SB5's Start test (Battle keeps it) |
 | `$C0:01FA` | `A9 81 85 AA C2 30` | palette lookup: ids `$80+` of set 0 = bomber palettes (`pal_lookup`, `asm/bombers.asm`) |
 | `$C7:1481` | zone setup script (19 bytes) | calls a copy that runs `FF 1A F5` first (`wmap_op`: map animation, `$0314`, `$0321`, map music driver) |
 | `$C7:14A9`, `$C7:14B9` | zone 1 map script | ZONE1 world map = SB1's (`tools/sb6/features/world_map.py`, below) |
@@ -580,6 +582,70 @@ script accumulator (`61` = add).
   center tower is OBJ (tiles `$180-$1C2`, palette 4); only the sea tile
   changes (VRAM `$2000-$211F`), the clouds do not move. Shown ~250 frames,
   then the stage.
+
+
+## Pause (stages)
+
+* SB5's pause is the native task `$C5:0000` (registered with the stage
+  tasks by `$C5:3A30`; not in stages with `$1D1A` = 8, e.g. 1-6): from its
+  loop `$C5:003B` it waits for Start (`JSR $00B7`: OR of `$36+s` of the
+  seats whose object `$17FA+s` is not `$FF`, bit 0) while `$0AEE & $7F`,
+  `$1D1C` = 0 and `$1D1E` bit 2 clear. Pause (`$C5:0058`): `$1D1D` = 1
+  (the stage freezes), BG3 arrangement `$DF` (PAUSE!, rows 14-15) at
+  `$1D28`/`$1D2A`, WORLD n - nn (rows 11-12, `$C5:00CD`, stages
+  `$0D-$66`; digits `$1CB7` world, `$1CB9`/`$1CBA` stage, from
+  `$80:8A8A` + 2 * `$102F` through `JSL $C04672`), sound group `$10` id 6 + group 2 id 5; then every frame
+  `$C5:009E` tests Start -> `$C5:000C`: `$1D1D` = 0, `$C0:09CC` fills BG3
+  rows 3-31 (queue fill entries), group `$10` id 7 + group 2 id 5. Task
+  yield = `JSL $C02160` (the return address becomes the task's resume
+  point); a plain `RTL` keeps the old one.
+* Stage end: `$1D1E` bit 2 (op `0F n` = `$1031` n + bit 2). The end task
+  (`$C5:3AA7`) then checks `$1D1E & $22` (deaths: lives, game over mode
+  8), else `JSR $3D19` (clear flag of `$102F` only when `$1D1A` bit 6),
+  `$1046` = `$102F`, `JSL $C048CC` (save), fade, mode `$1031`. Mode 3 with
+  `$7E:631A` = 1 starts the Normal Game menu in state 4 (world map,
+  `$C7:0B95`; also used by `$C6:E8F7` after a zone); the script clears it.
+* PPU shadows (copied by the NMI at `$C0:F685` with D = `$0300`): `$0302`
+  `$2105`, `$0306-$0312` `$2123-$212F`, `$0313` CGWSEL, `$0314` CGADSUB,
+  `$0315-$0317` COLDATA r/g/b.
+* BG3 in a stage: tiles `$5000` (2bpp, HUD `$00-$3F`, font `$80-$F8`;
+  `$100-$1FF` = leftovers of other screens), map `$4000` 32x64; palettes
+  0 (HUD: `$18C6` / `$35AD` / `$7FFF`) and 6 (`$00BF` / `$01FF` / `$033F`)
+  are the same in every stage checked (1-1, 1-3, 1-4, 1-7).
+* The VRAM queue can run past the VBlank (e.g. the unpause's fills): the
+  NMI then turns the screen on before the hooks after `$C0:04E0` run, and
+  their VRAM writes are lost; `asm/pause.asm` waits for `$0355` = `$0357`.
+  VRAM reads (`$2139`/`$213A`, VMAIN `$80`): the first word after setting
+  the address comes twice, so one dummy word read first.
+* Hack (`tools/sb6/features/pause.py`, `asm/pause.asm`): in the Normal
+  Game the pause shows the SB6 fan game's menu under PAUSE! (RESUME /
+  RETURN TO WORLD MAP / RETURN TO TITLE, then RETURN TO ...? NO / YES) on
+  BG3 rows 17-21 with an own 8x8 font in tiles `$100-$111` and a frame
+  (BG3 palette 6, tiles `$112-$119`, rows 9-23 x columns 3-28; all saved
+  and put back by the NMI); WORLD n - nn is redrawn every NMI as STAGE
+  n-m (letters S/T/A/G/E of the stage font, tiles `$A6-$AA` / `$B6-$BA`,
+  palette 1, SB5's digits `$82-$8C`; bosses `$67-$70` from World 1's
+  numbers; the rows are built in `!lbuf` by the main loop and sent by
+  DMA: building them in the NMI ran past the VBlank and lost the glyph
+  upload, and the NMI part now quits when `$4212` bit 7 is clear). Darkened
+  panel: inside color window 1 BG1/BG2/OBJ are masked from the main
+  screen (`$0306` = `$0308` = `$22`, TMW `$13`) and drawn on the
+  subscreen (TS `$13`), the main screen is BG3 over the backdrop (CGRAM
+  color 0 made black by the NMI, put back after), and color math adds
+  half the subscreen on the backdrop (`$0313` = `$12`, `$0314` = `$60`,
+  fixed color 0): the scene at half brightness, every OBJ palette
+  included (color math on OBJ only reaches palettes 4-7, which left
+  1-4's tanks bright); the window's left/right per line come from
+  HDMA channel 7 on `$2126`/`$2127` (`$0AEA` = `$80` while paused, kept
+  by the NMI since SB5 reloads it from `$033E`); the stage's own windows,
+  color math (1-4 uses `$0308` = `$20`, `$0313`/`$0314`) and HDMA channels
+  are saved and put back on resume. Yes: `$1D1A` bit 6 off, `$631A` = 1 + mode 3
+  or mode 2 (with `asm/title_anim.asm`'s intro-seen flag `$7F:FD03` = 1:
+  the title comes back without its intro, as in SB6), `$1D1D` = 0,
+  `$1D1E` bit 2. World map: lives, characters and
+  colors are kept; about 5 s of black screen (the Normal menu's loading
+  and the map driver upload, as after a zone); the save menu music is not
+  started on that way in (`asm/title_music.asm` checks `$631A`).
 
 ## Stages: records, portals, clear (World 1)
 
@@ -792,10 +858,17 @@ script accumulator (`61` = add).
   `$5400`, tiles `$80-$F6`: digits, PAUSE!, ZONE `$A6-$AB`, START, TIME,
   HURRY UP!). World map label "ZONE" + digit: BG3 tiles 1-8 / `$11-$18` +
   `$0A`+ of set 3 archive `$0D` (raw, `$E3:D110`).
-* Hack (`tools/sb6/features/world1.py`, `asm/world1.asm`): "WORLD" in both
-  fonts (archive `$4D` re-packed in `bulk` with two more tiles `$F7`/`$F8`,
-  arrangement `$E0` 14 wide in `free_e2`; archive `$0D` tiles redrawn in
-  place); World 1 = `$0D`, `$11`, `$18`, `$10`, `$17` (1-1..1-5, one door
+* Hack (`tools/sb6/features/world1.py`, `asm/world1.asm`): the stage
+  intro and the pause read STAGE w-s: archive `$4D` re-packed in `bulk`
+  with S T A G E (8 x 16, `features/pause.py` LETTERS) in tiles
+  `$A6-$AA` / `$B6-$BA`, arrangement `$E0` = "STAGE  -" (8 wide, in
+  `free_e2`), placed with the digits by `intro_label` (`asm/pause.asm`,
+  `JSL` + `BRA` at `$C5:0CEB`: centred on column 16, the stage without
+  its leading 0; SB5's digit arrangements `$EA+` are 2 wide, digit +
+  blank, so the world digit's blank covers `$E0`'s dash and the dash is
+  drawn again after it as set 4 `$C6` = "-" + blank, the slot of the
+  freed Password arrangement; a 1-wide arrangement hangs `$C0:0009`); "WORLD" on the world map label (archive `$0D` tiles
+  redrawn in place); World 1 = `$0D`, `$11`, `$18`, `$10`, `$17` (1-1..1-5, one door
   each: op `FF 1A F6 n`, the door hides in a random soft block, picked by a
   native task once the map is in), then bosses `$67` -> `$69` (1-6) -> `$68`
   (1-7) -> `$1C`. 1-7 has no rival (its `FF 7C` root and the portal root

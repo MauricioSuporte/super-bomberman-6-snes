@@ -163,6 +163,8 @@ endif
     lda.l !MODE
     cmp #!SAVE_MODE
     bne +
+    lda.l $7E631A           ; back to the world map (zone done, pause menu): the menu
+    bne +                   ; goes straight to the map, no save music
     lda #$01                ; Normal Game menu: the save music once the set is in
     sta.l !pend
 +   lda.l !active
