@@ -755,6 +755,14 @@ script accumulator (`61` = add).
   `$63` (its beam tiles, OBJ `$160+`, `$D6:CAA7`). Op `12 x y`
   (`$C2:0C67`): sum of seat + 1 of the bombers on the cell -> `$0373`,
   `JSL $C174D1`. Player cell = (`$182A`+8)>>4, ((`$1872`+8)&`$F0`)>>4.
+* Soft block scatter `$C5:0141` (op `10 n`): `$7E:2700` per cell, `$80`
+  wall (`$1052` is filled later), `$10` kept clear (`$C5:01B4`: row 12, each
+  enemy's cell, the 3x3 around each bomber, offsets at `$80:8A7A`), `$90`
+  soft block placed; `$0E1F` blocks go to random cells without `$F0`. Hack:
+  `c5_reserve` at `$C5:0171` (`JSR $01B4`) -> `e4_reserve` also keeps clear,
+  per seat, the shortest straight run of 1-4 free cells with a free cell
+  beside its end (bomb on the start, hide around the corner: safe for any
+  fire range); 1-2's lower-left corner (extra walls) needs 4.
 * Soft blocks are random each play (`$1052` = `$30`, walls `$80`); the
   collision map is filled ~50 frames after the type `04` scripts. Items:
   `$145A` + cell. RNG: `JSL $C01DC4` (A = random byte).
@@ -792,7 +800,7 @@ script accumulator (`61` = add).
   page 1: a second table with the same ids, chosen by `enemy_map` when the
   object's animation is `!ENANIM2` or above) and SB1's routines
   (`sb1_spring` / `sb1_pot` / `sb1_face`, `asm/sb1_enemies.asm`, below);
-  1-2 (`$11`) places 4 springs, 2 pots, 2 clowns on SB1's start cells
+  1-2 (`$11`) places 2 springs, 2 pots, 2 clowns on SB1's start cells (SB1 has 4 springs: 8 enemies dipped to 44 fps with 4 players)
   (`STAGE_ENEMIES`). 1-4 (`$10`) keeps SB5's 2
   tanks (type 04, as SB1 4-4) and adds SB1 4-4's 4 UFOs and bomb robot:
   types `$35` / `$36` (placed by no SB5 stage; they share set 8 archive and
@@ -1326,10 +1334,18 @@ The full list with sizes is generated in `build/sb6.map`.
 
 ## Known 4-player failures
 
+Start safety (`tools/coop4_check.py` spawn_safety) passes on every World 1 stage: SB1 enemy starts next to the
+lower corners were moved (1-2 spring (13,9) -> (11,7); 1-3 chameleons (13,8), (1,8), (11,11) -> (11,7), (3,7),
+(7,11); 1-4 UFOs (3,9), (11,11) -> (5,7), (7,11)).
+
+1-3's chameleons are created by number of players: `coop.CHAMELEONS` (by roster `$012A`: 2 = 1-2 players
+-> 7, 3 -> 6, 4 -> 5), `c3_spawn` at `$C3:0452` (the enemy creation `$C3:0450`, A = type) -> `e4_spawn`: a
+type 05 in stage `$18` past the count fails as with no free actor (`$C3:0512`, not counted in `$1D50`).
+P3/P4 join `$1D25` only after the spawns. Measured (4 players, 6 chameleons): 50-52 fps; 7 with 3: 47.
+
 `python tools/coop4_check.py` (4 seats, nobody dies, everyone walks and drops a bomb a second; 2026-11-20):
 
 | Stage | Worst | Why | Proposal |
 |---|---|---|---|
-| 1-3 (`$18`) | 32 fps | 7 chameleons disguised as bombers (up to 8 sprites each) + 4 bombers: ~90 sprites through `$C0:152E`, plus their pose DMAs | 4 chameleons with 4 players, or disguises with smaller poses |
 | 1-4 (`$10`) | 41 fps, no Louie colors | the 2 tanks' 32-color palette (slots 3-4) + UFO / robot (slot 5): no slot for the Louie palette | tanks in 15 colors (1 slot), or UFO / robot sharing the tanks' palette; fewer UFOs |
 

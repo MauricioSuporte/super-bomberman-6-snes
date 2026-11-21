@@ -411,6 +411,13 @@ c5_clock:
     jmp $42DD
 +   jmp $42F9
 
+; $C5:0171 (JSR $01B4 in the soft block scatter $C5:0141: keep-clear 3x3 of
+; each bomber): then e4_reserve keeps an escape clear for every seat.
+c5_reserve:
+    jsr $01B4
+    jsl e4_reserve
+    rts
+
 print "SYM end_c5 ", hex(pc())
 
 ; ===========================================================================
@@ -533,6 +540,16 @@ c3_walk:
     lda #$00                        ; (keeps C)
     sta.l $7FF76F
     rts
+
+; $C3:0452 (STA $1D51 in the enemy creation $C3:0450, A = type): e4_spawn
+; may refuse it (C set): the creation fails as with no free actor.
+c3_spawn:
+    jsl e4_spawn
+    bcs +
+    rts
++   pla
+    pla
+    jmp $0512                       ; LDA #$FF / PLX / PLY / RTS
 
 ; $C3:4393 (LDA $1D25 / STA $7E4DA2): the campaign record keeps the
 ; stock one/two-player mask.
@@ -774,6 +791,48 @@ print "SYM end_c0 ", hex(pc())
 ; ===========================================================================
 org !E4
 
+; (from c3_spawn, A = type; any DB: long addresses) 1-3's chameleons (type 05, stage $18) stop at
+; cham_max[roster] (4 bombers and 7 chameleons copying them: over 90 sprites,
+; tools/coop4_check.py). C set = not created ($1D50 does not count it).
+; Keeps A, X, Y.
+e4_spawn:
+    sta.l $7E1D51
+    cmp #$05
+    bne .ok
+    lda.l $7E1031
+    cmp #$18
+    bne .ok
+    phx
+    lda.l $7E012A                   ; roster: 2 (1-2 players), 3, 4 (P3/P4
+    tax                             ;   join $1D25 only after the spawns)
+    lda.l cham_max,x
+    sta $A6
+    stz $A5
+    ldx #$05
+-   lda.l $7E17FA,x
+    bmi +
+    lda.l $7E16C2,x
+    cmp #$05
+    bne +
+    inc $A5
++   txa
+    cmp.l $7E198C
+    inx
+    bcc -
+    plx
+    lda $A5
+    cmp $A6
+    bcc .ok
+    lda.l $7E1D51
+    sec
+    rtl
+.ok:
+    lda.l $7E1D51
+    clc
+    rtl
+cham_max:
+    db 7,7,!CHAM2,!CHAM3,!CHAM4     ; by roster (2 = 1-2 players)
+
 seat_bits:
     db $01,$02,$04,$08,$10
 corner_x:
@@ -870,6 +929,102 @@ e4_set_masks:
     rtl
 
 
+; ---- spawn safety (from c5_reserve, before the random soft blocks) --------
+; SB5 keeps only the 3x3 around a bomber clear ($7E:2700 | $10 = no soft
+; block): in a corner with an extra wall (1-2's lower left) that leaves a
+; corridor where any bomb kills its owner. For each seat, the shortest
+; straight run of k <= 4 free cells from its cell with a free cell beside
+; its end is kept clear too: bomb on the start cell, hide around the corner
+; (out of the blast for any fire range). tools/coop4_check.py checks it.
+e4_reserve:
+    php
+    phb
+    phk
+    plb                             ; (res_dir / res_side)
+    sep #$30
+    ldx #$03
+.seat:
+    lda.l $7E17FA,x
+    bpl +
+    jmp .next
++
+    lda.l $7E16AA,x
+    sta.l $7E0000|!t0               ; start cell
+    phx
+    lda #$01
+    sta.l $7E0000|!t1               ; k
+.len:
+    ldy #$00                        ; direction 0-3
+.dir:
+    lda.l $7E0000|!t0
+    sta.l $7E0000|!t3
+    lda.l $7E0000|!t1
+    sta.l $7E0000|!t2
+-   lda.l $7E0000|!t3               ; k cells along the direction free?
+    clc
+    adc.w res_dir,y
+    sta.l $7E0000|!t3
+    tax
+    lda.l $7E2700,x                 ; $80: wall (the map at $1052 comes later)
+    and #$80
+    bne .nodir
+    lda.l $7E0000|!t2
+    dec a
+    sta.l $7E0000|!t2
+    bne -
+    lda.l $7E0000|!t3               ; a free cell beside the end?
+    clc
+    adc.w res_side,y
+    tax
+    lda.l $7E2700,x                 ; $80: wall (the map at $1052 comes later)
+    and #$80
+    beq .found
+    lda.l $7E0000|!t3
+    sec
+    sbc.w res_side,y
+    tax
+    lda.l $7E2700,x                 ; $80: wall (the map at $1052 comes later)
+    and #$80
+    beq .found
+.nodir:
+    iny
+    cpy #$04
+    bcc .dir
+    lda.l $7E0000|!t1
+    inc a
+    sta.l $7E0000|!t1
+    cmp #$05
+    bcc .len
+    bra .done
+.found:
+    jsr .keep                       ; the side cell, then the run back to the start
+-   lda.l $7E0000|!t3
+    tax
+    jsr .keep
+    lda.l $7E0000|!t3
+    sec
+    sbc.w res_dir,y
+    sta.l $7E0000|!t3
+    cmp.l $7E0000|!t0
+    bne -
+.done:
+    plx
+.next:
+    dex
+    bmi +
+    jmp .seat
++   plb
+    plp
+    rtl
+.keep:
+    lda.l $7E2700,x
+    ora #$10
+    sta.l $7E2700,x
+    rts
+
+res_dir:  db $01, $FF, $10, $F0     ; right, left, down, up
+res_side: db $10, $10, $01, $01     ; (and minus it)
+
 incsrc "coop_e4.asm"
 
 print "SYM end_e4 ", hex(pc())
@@ -900,4 +1055,8 @@ print "SYM c3_fill ", hex(c3_fill)
 print "SYM c3_record ", hex(c3_record)
 print "SYM c3_near ", hex(c3_near)
 print "SYM c3_walk ", hex(c3_walk)
+print "SYM c3_spawn ", hex(c3_spawn)
+print "SYM c5_reserve ", hex(c5_reserve)
+print "SYM e4_reserve ", hex(e4_reserve)
+print "SYM e4_spawn ", hex(e4_spawn)
 print "SYM c0_damage ", hex(c0_damage)

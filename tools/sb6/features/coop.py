@@ -32,6 +32,10 @@ ROSTER = 0x012A
 MOFS = 0x0128
 COUNT = 0x0129
 
+# 1-3 (stage $18): chameleons created by number of players (SB1 3-6 places 7, sb1_enemies.STAGE_ENEMIES order;
+# asm/coop.asm c3_spawn). Measured with tools/coop4_check.py (PLAYERS=n): the most that stay >= 50 fps.
+CHAMELEONS = {2: 7, 3: 6, 4: 5}             # by roster: 2 = 1 or 2 players
+
 # `CPX/CPY #$02` + branch: loops over P1/P2 only (recomp seat_loops,
 # enemy_loops and the living-seat count $C5:02FF).
 SEAT_LOOPS = [
@@ -90,6 +94,8 @@ def _jsl(a):
 def _assemble(rb, louie_tick, pick):
     defines = {name.upper(): _h(rb.regions[reg].cursor, 6) for name, reg in SECTIONS.items()}
     defines["LOUIE_TICK"] = _h(louie_tick, 6)
+    for n, most in CHAMELEONS.items():
+        defines[f"CHAM{n}"] = str(most)
     for name in ("pick_tick", "pick_apply", "pick_spawn"):
         defines[name.upper()] = _h(pick[name], 6)
     runs, syms = asar.assemble_into(rb.d, ASM, defines)
@@ -252,6 +258,7 @@ def apply(rb, louie_tick, pick):
     # Bank C5
     rb.patch(0xC53B2D, bytes.fromhex("AD 23 1D"), _jsr(s("c5_charge")), "co-op: retry charges P3/P4")
     rb.patch(0xC53D5B, bytes.fromhex("FA AB 6B"), _jmp(s("c5_settle")), "co-op: settle P3/P4 after the map copy")
+    rb.patch(0xC50171, bytes.fromhex("20 B4 01"), _jsr(s("c5_reserve")), "co-op: every seat keeps an escape clear of soft blocks")
     rb.patch(0xC56AE3, bytes.fromhex("20 F5 6A B0 0A"), _jmp(s("c5_service")) + b"\xEA\xEA",
              "co-op: sprite page service")
     rb.patch(0xC542F5, bytes.fromhex("E0 18 90 E4"), _jmp(s("c5_clock")) + b"\xEA",
@@ -266,6 +273,7 @@ def apply(rb, louie_tick, pick):
              "co-op: seat distances skip far seats (SB1 enemies, walkers)")
     rb.patch(0xC34B5A, bytes.fromhex("9C F2 1F 20 7B 4B"), _jsr(s("c3_walk")) + bytes([0xEA] * 3),
              "co-op: SB5's walker lets c3_near skip far seats")
+    rb.patch(0xC30452, bytes.fromhex("8D 51 1D"), _jsr(s("c3_spawn")), "co-op: 1-3's chameleons by number of players")
     rb.patch(0xC34393, bytes.fromhex("AD 25 1D"), _jsr(s("c3_record")), "co-op: campaign record mask")
     rb.patch(0xC0374D, bytes.fromhex("E0 05 90 27"), _jmp(s("c0_damage")) + b"\xEA",
              "co-op: point damage skips mounts")

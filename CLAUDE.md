@@ -94,10 +94,19 @@ Per-frame cost matters as much (4 bombers, their bombs, the enemies: 16x16
 pieces, no per-frame loops over every actor). After changing a stage, its
 enemies or per-frame code, run `python tools/coop4_check.py [stage ...]`
 (Mesen, 4 seats, nobody dies, everyone bombs; fails under 50 fps, without
-Louie colors or with P3/P4 on borrowed colors). A stage that cannot pass is
+Louie colors, with P3/P4 on borrowed colors, or with an unsafe start). A stage that cannot pass is
 not shipped quietly: propose a change to the owner (fewer enemies, shared
 palettes, simpler poses) and list it under "Known 4-player failures" in
 docs/ROM_MAP.md.
+
+**Every seat's start must be safe (all 4 corners, every stage).** No seat may
+start where it has to die to open a way, or next to an enemy. The check
+fails a seat that, with every random soft block it could get, cannot drop a
+bomb and hide from it (any fire range) within 5 + 5 cells, or that has an
+enemy starting fewer than 6 walking cells away (soft blocks ignored).
+`e4_reserve` (asm/coop.asm) keeps a bomb-and-hide run clear for each seat
+when the soft blocks are scattered; enemy starts go where the check allows
+(`sb1_enemies.STAGE_ENEMIES`). Never ship a stage failing this.
 
 New/edited characters: follow `.claude/skills/sb6-character/SKILL.md`
 (walk test: `tools/mesen/walk_capture.lua` + `tools/walk_check.py`).

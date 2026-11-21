@@ -75,15 +75,19 @@ ORDER = sorted(KINDS, key=lambda n: KINDS[n].get("page", 0))   # page 0 kinds fi
 CLOWN = ("sb1_2-8_clown", "sb1_2-8_clown_closed")   # BG2 pictures, mouth open / closed (112 x 92, same box)
 CLOWN_CENTER = (56, 44)          # the body's cell center in the picture
 CLOWN_PALS = (3, 6)              # BG palettes of the 1-7 arena it takes (features/sb1_stages.py "sb1_4-8")
-# 1-2 (stage $11): SB1 2-1's 4 spring heads, 2 pots, 2 clown faces where SB1 puts them (`A2 x y type` roots,
+# Starts closer than 6 cells to a seat (4 players: lower corners too) are moved to the nearest cell that is not,
+# tools/coop4_check.py spawn safety.
+# 1-2 (stage $11): 2 of each of SB1 2-1's kinds (SB1 has 4 spring heads; the 2 at (7, 6) and (3, 9) are left out
+# so that 4 players keep 50+ fps, tools/coop4_check.py), where SB1 puts them (`A2 x y type` roots,
 # world1.chain; SB1 column - 1)
 STAGE_ENEMIES = {0x11: [(5, 6, "pot"), (5, 3, "pot"), (1, 8, "clown"), (4, 5, "clown"), (7, 7, "spring"),
-                        (13, 9, "spring"), (7, 6, "spring"), (3, 9, "spring")],
+                        (11, 7, "spring")],                 # SB1 (13, 9): 2 cells from P4
                  # 1-3 (stage $18): SB1 3-6's 7 chameleons
-                 0x18: [(13, 8, "frog"), (9, 5, "frog"), (9, 9, "frog"), (5, 7, "frog"), (1, 8, "frog"),
-                        (7, 3, "frog"), (11, 11, "frog")],
+                 0x18: [(11, 7, "frog"), (9, 5, "frog"), (9, 9, "frog"), (5, 7, "frog"), (3, 7, "frog"),
+                        (7, 3, "frog"), (7, 11, "frog")],   # SB1 (13, 8), (1, 8), (11, 11): next to P3/P4
                  # 1-4 (stage $10): SB1 4-4's 4 UFOs and its robot, with SB5's 2 tanks (world1.KEEP_ENEMIES)
-                 0x10: [(3, 5, "ufo"), (11, 5, "ufo"), (3, 9, "ufo"), (11, 11, "ufo"), (7, 6, "robot")],
+                 0x10: [(3, 5, "ufo"), (11, 5, "ufo"), (5, 7, "ufo"), (7, 11, "ufo"), (7, 6, "robot")],
+                 # (SB1 (3, 9), (11, 11): next to P3/P4)
                  # 1-7 (stage $68, boss): the clown instead of SB5's rival
                  0x68: [(7, 4, "clownbody")]}
 
