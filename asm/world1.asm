@@ -71,10 +71,10 @@ endif
     rtl
 +   lda #$00                    ; 3: forget, start the picking task
     sta.l !DX
-    rep #$10                    ; and clear the chameleons' state (asm/chameleon.asm, $7F:F800-$7F:FAFF)
-    ldx #$0300
+    rep #$10                    ; and clear the SB1 enemies' state (asm/sb1_enemies.asm $7F:F700-$7F:F77F,
+    ldx #$0400                  ; asm/chameleon.asm $7F:F800-$7F:FAFF)
 -   dex
-    sta.l $7FF800,x
+    sta.l $7FF700,x
     bne -
     sep #$10
     jsl $C020A1

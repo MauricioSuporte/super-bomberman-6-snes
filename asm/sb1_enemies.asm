@@ -399,10 +399,512 @@ clown_hit:
     sec
     rtl
 
+; ---------------------------------------------------------------------------
+; SB1 2-1's enemies in World 1's 1-2, moved as SB1 moves them (SB1 ROM, objects $1000+$40*n; docs/ROM_MAP.md
+; "SB1's 2-1 enemies"): sb1_spring / sb1_pot / sb1_face are the actor routines of their records (types 02,
+; 03, 06; called through JML [$A5], X = actor, Y = object, M/X 8-bit, DB = $80, RTL). Every frame: SB5's
+; contact and flame step ($C3:4B7B, as SB5's walker $C3:4B5A), then SB1's brain and step, then SB5's sprite
+; position and cell bit ($C3:4CFC). SB1's coordinates are SB5's + 8 (cell centers), its directions 0 up,
+; 1 right, 2 down, 3 left (SB5's facing: 4, 1, 2, 3). SB1's step ($C6:360E): 1/2 px a frame (speed 0 of
+; $C6:36BB), first 1 px toward the center of the column (row) when going up or down (sideways); a step
+; that ends within 16 px of another enemy is taken back, and then 1 time in 4 (a random direction equal to
+; its own) or when the way on is shut it turns around. A cell shuts the way ($C6:1562-$15CE: the next cell
+; once the center is reached) when its $1052 has the kind's bits: SB5's enemy mask $E8 for SB1's $E0
+; (walls, soft blocks, bombs), $C8 for the pot's $A0 (it goes through soft blocks). Animations restart at
+; every new direction after a step (SB1 $C6:2814).
+;   spring head ($C6:3947): straight on; at a wall, across toward the nearest live player (|dx| + |dy|,
+;     $C6:39C0) when that way is open and the player is not in line, else a quarter turn clockwise;
+;   pot ($C6:37B0): every 16-79 frames, on a cell's center, a random direction; at a wall a random one;
+;   clown face ($C6:3774): at a wall turns around, every 3-6th wall a quarter turn clockwise instead.
+!WSET  = $7FF700          ; per actor (24 bytes each): $A5 once set up
+!WDIR  = $7FF718          ; SB1 direction
+!WT    = $7FF730          ; SB1's $21: the pot's turn timer, the face's walls left
+!WLAST = $7FF748          ; SB1's $22: direction of the animation shown ($FF: none yet)
+!WKIND = $7FF760          ; scratch: 0 spring, 1 pot, 2 face
+!WMASK = $7FF761          ; scratch: $1052 bits that shut the way
+!WSAV  = $7FF762          ; scratch: x sub, x, y sub, y before a step
+!WNEW  = $7FF766          ; scratch: direction tried
+!WBEST = $7FF767          ; scratch: nearest seat
+!WDIST = $7FF768          ; scratch: its distance (word)
+!WTMP  = $7FF76A          ; scratch (word)
+!WSX   = $7FF76C          ; scratch: own x, y, actor
+!WSY   = $7FF76D
+!WSELF = $7FF76E
+!WNEAR = $7FF76F          ; 1 while $C3:4B7B runs for one of these: co-op's c3_near skips far seats
+
+macro c3(addr)            ; JSR to a bank $C3 routine ending in RTS: it returns to the RTL at $C3:4B7A
+    phk
+    per ?back-1
+    pea $4B79
+    jml <addr>
+?back:
+endmacro
+
+sb1_spring:
+    lda #$00
+    bra sb1w
+sb1_pot:
+    lda #$01
+    bra sb1w
+sb1_face:
+    lda #$02
+sb1w:
+    sta.l !WKIND
+    lda $0E20
+    ora $0E21
+    beq +
+    jml $C34C13                 ; stop-watch: SB5's frozen enemy (contact and flames only), as $C5:4319
++   stz $1FF2
+    lda #$01
+    sta.l !WNEAR
+    %c3($C34B7B)                ; contact with the players, flames
+    lda #$00                    ; (keeps C)
+    sta.l !WNEAR
+    bcc +
+    rtl                         ; dead
++   lda.l !WSET,x
+    cmp #$A5
+    beq +
+    jsr wsetup
++   lda.l !WKIND
+    beq .spring
+    dec a
+    beq .pot
+    jsr face
+    bra .done
+.pot:
+    jsr pot
+    bra .done
+.spring:
+    jsr spring
+.done:
+    lda.l !WDIR,x               ; SB5's facing
+    bne +
+    lda #$04
++   sta $1632,x
+    %c3($C34CFC)                ; sprite position, the cell's enemy bit
+    rtl
+
+; first frame: SB1's start (every enemy facing down, its animation from the start; $21 = $40 for the pot,
+; 3 for the face, $22 = $FF), whole pixels
+wsetup:
+    lda #$A5
+    sta.l !WSET,x
+    lda #$02
+    sta.l !WDIR,x
+    lda #$FF
+    sta.l !WLAST,x
+    lda.l !WKIND
+    cmp #$01
+    bne +
+    lda #$40
+    bra .t
++   lda #$03
+.t:
+    sta.l !WT,x
+    stz $1812,x
+    stz $185A,x
+    lda #$02
+    jmp anim
+
+spring:
+    lda #$E8
+    sta.l !WMASK
+    lda.l !WDIR,x
+    jsr blocked
+    bne .wall
+    jsr step
+    bcs +
+    jsr show
++   rts
+.wall:
+    jsr nearest
+    bcc .turn
+    lda.l !WDIR,x
+    lsr a
+    bcs .across
+    lda $182A,y                 ; going up / down: right or left toward the player
+    cmp $182A,x
+    beq .turn
+    lda #$01
+    bcs .try
+    lda #$03
+    bra .try
+.across:
+    lda $1872,y                 ; going right / left: down or up
+    cmp $1872,x
+    beq .turn
+    lda #$02
+    bcs .try
+    lda #$00
+.try:
+    sta.l !WNEW
+    jsr blocked
+    bne .turn
+    lda.l !WNEW
+    sta.l !WDIR,x
+    rts
+.turn:
+    lda.l !WDIR,x
+    inc a
+    and #$03
+    sta.l !WDIR,x
+    rts
+
+pot:
+    lda #$C8
+    sta.l !WMASK
+    lda.l !WT,x
+    dec a
+    sta.l !WT,x
+    bne .go
+    inc a
+    sta.l !WT,x
+    lda $182A,x                 ; only on a cell's center
+    ora $1872,x
+    and #$0F
+    bne .go
+    jsl $C01DC4
+    and #$3F
+    clc
+    adc #$10
+    sta.l !WT,x
+    jsl $C01DC4
+    and #$03
+    sta.l !WDIR,x
+.go:
+    lda.l !WDIR,x
+    jsr blocked
+    beq +
+    jsl $C01DC4
+    and #$03
+    sta.l !WDIR,x
+    rts
++   jsr step
+    bcs +
+    jsr show
++   rts
+
+face:
+    lda #$E8
+    sta.l !WMASK
+    lda.l !WDIR,x
+    jsr blocked
+    beq .go
+    lda.l !WT,x
+    dec a
+    sta.l !WT,x
+    bne .back
+    lda.l !WDIR,x
+    inc a
+    and #$03
+    sta.l !WDIR,x
+    jsl $C01DC4
+    and #$03
+    clc
+    adc #$03
+    sta.l !WT,x
+    rts
+.back:
+    lda.l !WDIR,x
+    eor #$02
+    sta.l !WDIR,x
+    rts
+.go:
+    jsr step
+    bcs +
+    jsr show
++   rts
+
+; after a step: a direction other than the animation's -> its animation from the start
+show:
+    lda.l !WDIR,x
+    cmp.l !WLAST,x
+    beq +
+    sta.l !WLAST,x
+    jsr anim
++   rts
+
+; A = direction: the kind's animation of that facing, from its first frame
+anim:
+    cmp #$00
+    bne +
+    lda #$04
++   dec a
+    sta.l !WTMP
+    phx
+    lda.l !WKIND
+    tax
+    lda.l .base,x
+    plx
+    clc
+    adc.l !WTMP
+    ldy $17FA,x
+    phx
+    phy
+    jsl $C011EC
+    sep #$30
+    ply
+    plx
+    rts
+.base:
+    db !ASPRING, !APOT, !AFACE
+
+; A = direction: A = the bits of !WMASK in the cell SB1 tests that way (Z set: open); Y lost
+blocked:
+    cmp #$01
+    beq .r
+    cmp #$02
+    beq .d
+    cmp #$03
+    beq .l
+    lda $1872,x                 ; up: row of y - 1, column of x + 8
+    dec a
+    and #$F0
+    sta.l !WTMP
+    lda $182A,x
+    clc
+    adc #$08
+    bra .col
+.d:
+    lda $1872,x                 ; down: row of y + 16
+    clc
+    adc #$10
+    and #$F0
+    sta.l !WTMP
+    lda $182A,x
+    clc
+    adc #$08
+    bra .col
+.r:
+    lda $1872,x                 ; right: column of x + 16, row of y + 8
+    clc
+    adc #$08
+    and #$F0
+    sta.l !WTMP
+    lda $182A,x
+    clc
+    adc #$10
+    bra .col
+.l:
+    lda $1872,x                 ; left: column of x - 1
+    clc
+    adc #$08
+    and #$F0
+    sta.l !WTMP
+    lda $182A,x
+    dec a
+.col:
+    lsr a
+    lsr a
+    lsr a
+    lsr a
+    ora.l !WTMP
+    tay
+    lda $1052,y
+    and.l !WMASK
+    rts
+
+; SB1's step: carry set when it was taken back (another enemy within 16 px)
+step:
+    lda $1812,x
+    sta.l !WSAV
+    lda $182A,x
+    sta.l !WSAV+1
+    lda $185A,x
+    sta.l !WSAV+2
+    lda $1872,x
+    sta.l !WSAV+3
+    lda.l !WDIR,x
+    lsr a
+    bcs .side
+    lda $182A,x                 ; up / down: 1 px toward the column's center
+    and #$0F
+    beq +
+    cmp #$08
+    bcs .xin
+    dec $182A,x
+    bra +
+.xin:
+    inc $182A,x
++   lda.l !WDIR,x
+    bne .down
+    lda $185A,x
+    sec
+    sbc #$80
+    sta $185A,x
+    lda $1872,x
+    sbc #$00
+    sta $1872,x
+    bra .moved
+.down:
+    lda $185A,x
+    clc
+    adc #$80
+    sta $185A,x
+    lda $1872,x
+    adc #$00
+    sta $1872,x
+    bra .moved
+.side:
+    lda $1872,x                 ; right / left: 1 px toward the row's center
+    and #$0F
+    beq +
+    cmp #$08
+    bcs .yin
+    dec $1872,x
+    bra +
+.yin:
+    inc $1872,x
++   lda.l !WDIR,x
+    cmp #$01
+    bne .left
+    lda $1812,x
+    clc
+    adc #$80
+    sta $1812,x
+    lda $182A,x
+    adc #$00
+    sta $182A,x
+    bra .moved
+.left:
+    lda $1812,x
+    sec
+    sbc #$80
+    sta $1812,x
+    lda $182A,x
+    sbc #$00
+    sta $182A,x
+.moved:
+    jsr touching
+    bcs .back
+    rts
+.back:
+    lda.l !WSAV
+    sta $1812,x
+    lda.l !WSAV+1
+    sta $182A,x
+    lda.l !WSAV+2
+    sta $185A,x
+    lda.l !WSAV+3
+    sta $1872,x
+    jsl $C01DC4
+    and #$03
+    cmp.l !WDIR,x
+    beq .rev
+    lda.l !WDIR,x
+    jsr blocked
+    beq .stay
+.rev:
+    lda.l !WDIR,x
+    eor #$02
+    sta.l !WDIR,x
+.stay:
+    sec
+    rts
+
+; carry set: another live enemy (actors 5 to $198C with an enemy type) within 16 px both ways
+touching:
+    lda $182A,x
+    sta.l !WSX
+    lda $1872,x
+    sta.l !WSY
+    txa
+    sta.l !WSELF
+    ldy #$05
+.loop:                              ; (every enemy, every frame: cheapest tests first)
+    lda $17FA,y
+    bmi .next
+    lda $182A,y
+    sec
+    sbc.l !WSX
+    bcs +
+    eor #$FF
+    inc a
++   cmp #$10
+    bcs .next
+    lda $1872,y
+    sec
+    sbc.l !WSY
+    bcs +
+    eor #$FF
+    inc a
++   cmp #$10
+    bcs .next
+    tya
+    cmp.l !WSELF
+    beq .next
+    lda $16C2,y
+    beq .next
+    lda $15A2,y
+    bmi .next
+    sec
+    rts
+.next:
+    cpy $198C
+    iny
+    bcc .loop
+    clc
+    rts
+
+; Y = the live player nearest (|dx| + |dy|; the lowest seat on a tie), carry clear when none
+nearest:
+    lda #$FF
+    sta.l !WBEST
+    sta.l !WDIST
+    sta.l !WDIST+1
+    ldy #$00
+.loop:
+    lda $17FA,y
+    bmi .next
+    lda $15A2,y
+    bmi .next
+    lda $182A,y
+    sec
+    sbc $182A,x
+    bcs +
+    eor #$FF
+    inc a
++   sta.l !WTMP
+    lda #$00
+    sta.l !WTMP+1
+    lda $1872,y
+    sec
+    sbc $1872,x
+    bcs +
+    eor #$FF
+    inc a
++   rep #$20
+    and #$00FF
+    clc
+    adc.l !WTMP
+    cmp.l !WDIST
+    bcs +
+    sta.l !WDIST
+    sep #$20
+    tya
+    sta.l !WBEST
++   sep #$20
+.next:
+    iny
+    cpy #$05
+    bcc .loop
+    lda.l !WBEST
+    tay
+    cmp #$FF
+    beq +
+    sec
+    rts
++   clc
+    rts
+
 end:
 
 print "SYM clown ", hex(clown)
 print "SYM clown_start ", hex(clown_start)
 print "SYM clown_tick ", hex(clown_tick)
 print "SYM clown_hit ", hex(clown_hit)
+print "SYM sb1_spring ", hex(sb1_spring)
+print "SYM sb1_pot ", hex(sb1_pot)
+print "SYM sb1_face ", hex(sb1_face)
 print "SYM end ", hex(end)

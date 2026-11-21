@@ -784,18 +784,60 @@ script accumulator (`61` = add).
   01 `$0D/$0E`, 02 `$0F/$12`, 03 `$13/$14/$16`, 04 `$10`, 05 `$11/$12/$16`,
   06 `$14`, 07 `$18-$1B`, 08 `$15/$17`. T 7: animations 1-`$27`, mappings
   1-`$D5`.
-* Hack (`features/sb1_enemies.py`, `tools/sb1_enemy_assets.py`): types 02,
+* Hack (`features/sb1_enemies.py`, `tools/sb1_enemy_frames.py`): types 02,
   03, 06 = type 01's record with SB1 2-1's spring head / pot / clown face
   (archives 4, 5, 8 and palettes 2, 3, 6 of set 8 rewritten; T 7
   animations `$60+` and mappings `$D6+` in `objmap`, read through
-  `enemy_anim` / `enemy_map` in `asm/bombers.asm`); 1-2 (`$11`) places 4
-  springs, 2 pots, 2 clowns (`STAGE_ENEMIES`). 1-4 (`$10`) keeps SB5's 2
+  `enemy_anim` / `enemy_map` in `asm/bombers.asm`; these three are mapping
+  page 1: a second table with the same ids, chosen by `enemy_map` when the
+  object's animation is `!ENANIM2` or above) and SB1's routines
+  (`sb1_spring` / `sb1_pot` / `sb1_face`, `asm/sb1_enemies.asm`, below);
+  1-2 (`$11`) places 4 springs, 2 pots, 2 clowns on SB1's start cells
+  (`STAGE_ENEMIES`). 1-4 (`$10`) keeps SB5's 2
   tanks (type 04, as SB1 4-4) and adds SB1 4-4's 4 UFOs and bomb robot:
   types `$35` / `$36` (placed by no SB5 stage; they share set 8 archive and
   palette `$31`, so the two kinds share one sheet, colors merged to 15). Type 05 = SB1 3-6's
   chameleon (1-3 = `$18`, 7 of them): record routine `chameleon`
   (`asm/chameleon.asm`, built after the characters by `sb1_enemies.chameleon`). Actor routine pointer =
   record bytes 9-11 (called through `JML [$A5]`, X = actor, M/X 8-bit, RTL).
+* SB1's 2-1 enemies (SB1 ROM, scene `$08`, objects `$1000+$40*n`, list from `$0F40` linked by `+$06`;
+  `$00` routine24, `$08` animation (+1), `$0B` entries, `$0C` entry, `$0D` frames left, `$0E` priority,
+  `$0F` tile slot, `$10-$11` x (sub, px), `$13-$14` y, `$16` direction table (4 animation words, bank `$18`),
+  `$19` speed, `$1E`/`$1F` palette add, `$20` direction 0 up 1 right 2 down 3 left, `$21` timer, `$22`
+  direction of the animation shown): create (stage list, cell center `(x & $F0) | 8`, `$20` = 2) ->
+  init (`$16`, first animation, `$21`, `$22` = `$FF`, `$19` = 0) -> routine: brain, flame `$C6:0BDE`,
+  contact `$C6:34FC` with `$40` = `$0C0C` (a player within 12 px both ways dies), draw `$C6:2576`.
+  Spring head `$C6:6428` (brain `$C6:3947`, table `$C6:7D1B`, animations `$C6:4386/43A7/43C8/43E9` by
+  direction: 8 entries, 5 pictures, frames 16 3 4 6 8 6 4 3), pot `$C6:653A` (brain `$C6:37B0`, `$21` =
+  `$40`, `$C6:448A`: 8 pictures x 9), clown face `$C6:7181` (brain `$C6:3774`, `$21` = 3, `$C6:4AFC`: 13
+  entries, 8 pictures, 21 7 7 7 7 7 21 10 12 10 21 13 12). Animation = [count] + [frame24, frames]; frame
+  = [count] + [dx, dy, slot, tile, attr] (`$C6:25EA`, see `tools/sb1_enemy_frames.py`); `$C6:2814`
+  restarts it (every turn after a step, even to the same animation). Way shut `$C6:3495` (`$42` bits of
+  the cell word at `$0916 + 64 * row + 2 * column`, `$80` wall, `$40` soft block, `$20` bomb; tested
+  cells `$C6:1562` up (x, y - 9), `$15CE` right (x + 8, y), `$1586` down (x, y + 8), `$15AA` left (x - 9,
+  y)): `$E0` for spring and face, `$A0` for the pot (it walks through soft blocks). Step `$C6:360E`:
+  speed table `$C6:36BB` (speed 0 = `$80` = 1/2 px), first 1 px toward the column's (row's) center, then
+  `$C6:34BD`: another listed object within 16 px both ways -> position back, a random direction equal to
+  its own or the way shut -> turned around, carry set (no animation update). Brains: spring = way shut
+  -> nearest live player (`$C6:39C0`, P1 / P2 by |dx| + |dy|) -> across toward it (`$C6:35EA`
+  right / left, `$C6:35FD` down / up; in line = quarter turn clockwise), taken if open, else quarter turn
+  clockwise; pot = `$21` - 1, at 0 on a cell's center (`$C4:23F7`) `$21` = 16-79 and a random direction,
+  way shut -> random direction; face = way shut -> `$21` - 1: not 0 = turn around, 0 = quarter turn
+  clockwise and `$21` = 3-6. Death `$C6:33C0`: 32 frames standing, palette `$0E` every other frame.
+* Hack, SB1 2-1's enemies (`asm/sb1_enemies.asm` `sb1w`): stop-watch -> `$C3:4C13`; else SB5's
+  `$C3:4B7B` (contact, flames: SB5's rule, |dx| and |dy| < 8 (`$C3:47C9`), not SB1's 12), SB1's brain and
+  step on SB5's coordinates (SB1's - 8: centers at `& $0F` = 0; `$1812`/`$185A` the sub-pixels), the
+  other enemies = actors 5-`$198C` with `$16C2` != 0, alive; masks `$E8` / `$C8` of `$1052` (SB5's
+  enemy mask, without `$20` soft blocks for the pot), SB5 facing from the direction, then `$C3:4CFC`.
+  Bank `$C3` RTS routines are called by pushing `$4B79` (the RTL at `$C3:4B7A`) and the return address.
+  Animations: kind's first + facing - 1 (`$C0:11EC`). Sheets from SB1's tables (32 x 64 cells; SB1
+  piece (dx, dy) = SB5 piece (dx, dy - 1)), cut on the grid that needs the fewest new tiles, then into
+  16x16 pieces (`_cover` / `_kind_big`) within the OBJ pages the 8x8 cut takes: about 2 sprites per enemy
+  instead of 6-10 (with 4 players and 8 enemies `$C0:152E`, the OAM builder, made the main loop miss
+  every other frame). Pot and clown share one OBJ palette (set 8 palette 3, `pal` in `KINDS`, 25 colors
+  merged to 15 by `_group_colors`; the clown's palette 6 keeps SB5's colors, unread): with 4 players 1-2
+  needs stage, 4 bombers and the Louie palette (an egg appears only if a slot 3-7 is free,
+  `louie_egg_ok`), which leaves 2 slots for its enemies.
 * SB1's chameleon (SB1 ROM, scene `$15` = 3-6, objects `$1140+$40*n`): walk state `$C6:69FB` (timer
   `$30` = 192-255 from `$C6:69ED`, form `$31`: 1 frog, 0 bomber), change `$C6:6AE3` -> `$C6:6B29`
   (standing, `$C6:6B64`): `$36` = 32 frames, then the 32 entries `[frog?, frames]` of `$C6:6BFC`
@@ -1068,7 +1110,17 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   `$C1:0035` paint P4's reclaimed slot black). When a stage request fails, `c0_palfail` moves P3/P4
   off the slots it needs onto P1's slot (they show P1's colors; `$C4:37B0`
   does not repaint it) and searches again; `e4_tick` (main loop `$C0:0B44`)
-  gives them a free slot 4-7 back every 16 frames. `$C5:060E` is not a
+  gives them a free slot 4-7 back every 16 frames, and saves that slot's blink backup (`$C1:0015`):
+  the death / blink restore `$C1:0035` copies it back, and without it a P3/P4 that reclaimed slot 6/7
+  (1-2: its 3 enemy palettes take 3-5) died black.
+* `$C3:46CC` (distances from enemy X to seat Y into the `$0110+` arrays, 4 seats x every enemy x every
+  frame) -> `c3_near`: while `$7F:F76F` = 1 a seat 16 px or more away on either axis keeps `$FF`. Set
+  around `$C3:4B7B` by the SB1 enemies (`sb1w`) and by SB5's walker `$C3:4B5A` (`c3_walk`), whose moves
+  (`$C3:4DA2`, `$C3:4610`) never read the arrays; only the contact test `$C3:47C9` (< 8 px) does. The
+  chasers' nearest-seat routine `$C3:4641` (callers `$C3:0DAB` .. `$C3:41CA`) is never under the flag.
+  1-2 with 4 players dropping bombs: 35 -> 50-60 fps.
+* `$C3:475C` (clears the 24 bytes of seat distances at `$0110`, every enemy every frame) is unrolled
+  in co-op's `c3_fill`. `$C5:060E` is not a
   per-frame hook: that task only runs while a player is dead.
 * OBJ tile pages: `$1D00-$1D0F` owner of each 1 KB page at VRAM
   `$6000+$200*i` (object id, `$FF` free, `$7F` pending free, `$7E`
@@ -1271,3 +1323,13 @@ The full list with sizes is generated in `build/sb6.map`.
   animations `$C0:171D` (bomber object set `$10`).
 * Bomber palettes: set 0 (`$81:8000`), id = `$C0:BB4E[char] + color`;
   Bomberman ids 1-7, `[dest $80, count 9, colors]`.
+
+## Known 4-player failures
+
+`python tools/coop4_check.py` (4 seats, nobody dies, everyone walks and drops a bomb a second; 2026-11-20):
+
+| Stage | Worst | Why | Proposal |
+|---|---|---|---|
+| 1-3 (`$18`) | 32 fps | 7 chameleons disguised as bombers (up to 8 sprites each) + 4 bombers: ~90 sprites through `$C0:152E`, plus their pose DMAs | 4 chameleons with 4 players, or disguises with smaller poses |
+| 1-4 (`$10`) | 41 fps, no Louie colors | the 2 tanks' 32-color palette (slots 3-4) + UFO / robot (slot 5): no slot for the Louie palette | tanks in 15 colors (1 slot), or UFO / robot sharing the tanks' palette; fewer UFOs |
+

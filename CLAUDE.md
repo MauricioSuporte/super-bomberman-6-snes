@@ -86,6 +86,19 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 
 ## Testing
 
+**SB6 is played as the Normal Game with 4 players and Louies: every stage has
+to stay playable that way.** OBJ palette slots: 0 stage, P1-P4 one each, one
+Louie palette (two Louie colors at once, `asm/louies.asm`) -> at most 2 slots
+for a stage's enemies (kinds can share one, `pal` in `sb1_enemies.KINDS`).
+Per-frame cost matters as much (4 bombers, their bombs, the enemies: 16x16
+pieces, no per-frame loops over every actor). After changing a stage, its
+enemies or per-frame code, run `python tools/coop4_check.py [stage ...]`
+(Mesen, 4 seats, nobody dies, everyone bombs; fails under 50 fps, without
+Louie colors or with P3/P4 on borrowed colors). A stage that cannot pass is
+not shipped quietly: propose a change to the owner (fewer enemies, shared
+palettes, simpler poses) and list it under "Known 4-player failures" in
+docs/ROM_MAP.md.
+
 New/edited characters: follow `.claude/skills/sb6-character/SKILL.md`
 (walk test: `tools/mesen/walk_capture.lua` + `tools/walk_check.py`).
 

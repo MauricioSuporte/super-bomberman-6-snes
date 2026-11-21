@@ -25,7 +25,11 @@ EGG = 9                      # character of an egg: one [sheet, row] pair
 # Test aid: extra items hidden in the soft blocks of a campaign stage
 # ($1031: $0D = ZONE1 - 1), as (item, count): $15 egg, $0C power glove.
 # Empty the dict to get the cartridge's items back.
-TEST_ITEMS = {0x0D: [(0x15, 5), (0x0C, 5)]}
+TEST_ITEMS = {}
+# Test aid: no bomber dies (flames, enemies): the hit takes the path of a bomber
+# still invincible ($C4:2D2B: blink for $78 frames; a rider still loses the
+# Louie first). False = the cartridge's rule.
+TEST_IMMORTAL = False
 
 
 def _rows(rom):
@@ -91,7 +95,16 @@ def apply(rb, base_rom, sheets):
     rb.patch(0xC436B7, bytes.fromhex("20 B0 37"), b"\xEA\xEA\xEA", "bomber: death keeps the player's colors")
     rb.patch(0xC42EB7, bytes.fromhex("A9 07"), bytes.fromhex("A9 0F"), "bomber: blink blacks out all 16 colors")
     _test_eggs(rb)
+    _test_immortal(rb)
     return syms
+
+
+def _test_immortal(rb):
+    """`$C4:2D2B` (LDA $7E6253 / BNE $2D3E: a hit bomber survives when that flag,
+    `$0E23` or its invincibility `$1662` is set) always survives."""
+    if TEST_IMMORTAL:
+        rb.patch(0xC42D2B, bytes.fromhex("AF 53 62 7E D0 0D"), bytes.fromhex("80 11 EA EA EA EA"),
+                 "test: bombers never die (hit = invincible blink)")
 
 
 def _test_eggs(rb):

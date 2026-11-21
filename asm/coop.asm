@@ -463,7 +463,22 @@ org !C3
 
 ; $C3:4B8F (JSR $475C): clear the distances, then fill seats 2+.
 c3_fill:
-    jsr $475C
+    php                             ; ($C3:475C's 24-byte loop, unrolled: run
+    rep #$20                        ;   for every enemy every frame)
+    lda #$FFFF
+    sta $0110
+    sta $0112
+    sta $0114
+    sta $0116
+    sta $0118
+    sta $011A
+    sta $011C
+    sta $011E
+    sta $0120
+    sta $0122
+    sta $0124
+    sta $0126
+    plp
     phy
     ldy #$02
 -   cpy !roster
@@ -475,6 +490,48 @@ c3_fill:
 ++  iny
     bra -
 +   ply
+    rts
+
+; $C3:46CC (STA $9F / LDA $1842,X: distances from enemy X to seat Y, into
+; $0110+ seat arrays, 4 seats x every enemy x every frame): while an SB1 enemy
+; asks ($7F:F76F = 1: asm/sb1_enemies.asm, c3_walk), a seat 16 px or more away on
+; either axis keeps the cleared $FF (only the contact test, < 8 px, reads them).
+c3_near:
+    sta $9F
+    lda.l $7FF76F
+    beq .full
+    lda $182A,y
+    sec
+    sbc $182A,x
+    bcs +
+    eor #$FF
+    inc a
++   cmp #$10
+    bcs .far
+    lda $1872,y
+    sec
+    sbc $1872,x
+    bcs +
+    eor #$FF
+    inc a
++   cmp #$10
+    bcs .far
+.full:
+    lda $1842,x
+    jmp $46D1
+.far:
+    rts
+
+; $C3:4B5A (STZ $1FF2 / JSR $4B7B: SB5's walker, contact and flames): its
+; moves ($C3:4DA2, $C3:4610) never read the seat distances, so c3_near may skip
+; far seats for it too. C = died, as $C3:4B7B.
+c3_walk:
+    stz $1FF2
+    lda #$01
+    sta.l $7FF76F
+    jsr $4B7B
+    lda #$00                        ; (keeps C)
+    sta.l $7FF76F
     rts
 
 ; $C3:4393 (LDA $1D25 / STA $7E4DA2): the campaign record keeps the
@@ -841,4 +898,6 @@ print "SYM c2_story ", hex(c2_story)
 print "SYM c2_bslot ", hex(c2_bslot)
 print "SYM c3_fill ", hex(c3_fill)
 print "SYM c3_record ", hex(c3_record)
+print "SYM c3_near ", hex(c3_near)
+print "SYM c3_walk ", hex(c3_walk)
 print "SYM c0_damage ", hex(c0_damage)

@@ -292,6 +292,9 @@ reclaim:
     plx
     lda.l $7E16DA,x
     jsl c4_colors
+    lda.l $7E0000|!t9               ; and its blink backup ($C1:0015), which
+    ora #$08                        ;   the death / blink restore ($C1:0035)
+    jsl $C10015                     ;   copies back (else: a black bomber)
 .next:
     inx
     jmp .seat

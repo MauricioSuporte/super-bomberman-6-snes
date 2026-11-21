@@ -262,6 +262,10 @@ def apply(rb, louie_tick, pick):
     rb.patch(0xC21697, bytes.fromhex("AD 24 1D"), _jmp(s("c2_spawn")), "co-op: stage spawns")
     rb.patch(0xC21F2B, bytes.fromhex("AD 25 1D"), _jsr(s("c2_story")), "co-op: story scripts see 1/3")
     rb.patch(0xC34B8F, bytes.fromhex("20 5C 47"), _jsr(s("c3_fill")), "co-op: distances of P3/P4")
+    rb.patch(0xC346CC, bytes.fromhex("85 9F BD 42 18"), _jmp(s("c3_near")) + b"\xEA\xEA",
+             "co-op: seat distances skip far seats (SB1 enemies, walkers)")
+    rb.patch(0xC34B5A, bytes.fromhex("9C F2 1F 20 7B 4B"), _jsr(s("c3_walk")) + bytes([0xEA] * 3),
+             "co-op: SB5's walker lets c3_near skip far seats")
     rb.patch(0xC34393, bytes.fromhex("AD 25 1D"), _jsr(s("c3_record")), "co-op: campaign record mask")
     rb.patch(0xC0374D, bytes.fromhex("E0 05 90 27"), _jmp(s("c0_damage")) + b"\xEA",
              "co-op: point damage skips mounts")
