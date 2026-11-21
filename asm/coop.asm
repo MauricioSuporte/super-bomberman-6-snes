@@ -1013,7 +1013,8 @@ e4_reserve:
     dex
     bmi +
     jmp .seat
-+   plb
++   jsr shield
+    plb
     plp
     rtl
 .keep:
@@ -1021,6 +1022,120 @@ e4_reserve:
     ora #$10
     sta.l $7E2700,x
     rts
+
+; Then every seat is shut in by soft blocks: its pocket (the cells kept clear, $10 and not $80, reachable
+; from its cell within !SHMAX steps) gets a soft block, as the scatter's ($7E:2400 = 2, $7E:2700 | $90,
+; one less of $0E1F for the random ones), on every cell around it the scatter could fill (no $F0 bit):
+; an enemy must burn through one to reach a bomber at the start. Only when the scatter runs ($1D1A & $0C
+; = 0) and while $0E1F lasts. tools/coop4_check.py checks it.
+!SHQ   = $7FF7D0          ; pocket cells (queue), !SHN at most
+!SHD   = $7FF7E8          ; their steps from the seat
+!SHN   = 24
+!SHMAX = 6
+!SHI   = $7FF7CC          ; queue head, length, cell, direction
+!SHL   = $7FF7CD
+!SHC   = $7FF7CE
+!SHR   = $7FF7CF
+shield:
+    lda.l $7E1D1A
+    and #$0C
+    beq +
+    rts
++   ldx #$03
+.seat:
+    lda.l $7E17FA,x
+    bpl +
+    jmp .next
++   phx
+    lda.l $7E16AA,x
+    sta.l !SHQ
+    lda #$00
+    sta.l !SHD
+    sta.l !SHI
+    lda #$01
+    sta.l !SHL
+.pop:
+    lda.l !SHI
+    cmp.l !SHL
+    bcc +
+    jmp .done
++
+    tax
+    inc a
+    sta.l !SHI
+    lda.l !SHQ,x
+    sta.l !SHC
+    lda.l !SHD,x
+    sta.l $7E0000|!t4               ; its steps
+    ldy #$03
+.dir:
+    tya
+    sta.l !SHR
+    lda.l !SHC
+    clc
+    adc.w res_dir,y
+    sta.l $7E0000|!t5               ; the neighbour
+    tax
+    lda.l $7E2700,x
+    bmi .skip                       ; wall (or a soft block already)
+    and #$10
+    beq .edge
+    jsr .known                      ; kept clear: in the pocket (once), if not too far
+    beq .skip
+    lda.l $7E0000|!t4
+    cmp #!SHMAX
+    bcs .skip
+    lda.l !SHL
+    cmp #!SHN
+    bcs .skip
+    tax
+    inc a
+    sta.l !SHL
+    lda.l $7E0000|!t5
+    sta.l !SHQ,x
+    lda.l $7E0000|!t4
+    inc a
+    sta.l !SHD,x
+    bra .skip
+.edge:
+    lda.l $7E2700,x                 ; around it: a soft block if the scatter could put one there
+    and #$F0
+    bne .skip
+    lda.l $7E0E1F
+    beq .skip
+    dec a
+    sta.l $7E0E1F
+    lda #$02
+    sta.l $7E2400,x
+    lda.l $7E2700,x
+    ora #$90
+    sta.l $7E2700,x
+.skip:
+    lda.l !SHR
+    tay
+    dey
+    bmi +
+    jmp .dir
++   jmp .pop
+.done:
+    plx
+.next:
+    dex
+    bmi +
+    jmp .seat
++   rts
+; Z set: the cell in !t5 is in the queue already
+.known:
+    ldx #$00
+-   lda.l !SHQ,x
+    cmp.l $7E0000|!t5
+    beq +
+    inx
+    txa
+    cmp.l !SHL
+    bcc -
+    lda #$01                        ; (Z clear)
++   rts
 
 res_dir:  db $01, $FF, $10, $F0     ; right, left, down, up
 res_side: db $10, $10, $01, $01     ; (and minus it)
@@ -1058,5 +1173,6 @@ print "SYM c3_walk ", hex(c3_walk)
 print "SYM c3_spawn ", hex(c3_spawn)
 print "SYM c5_reserve ", hex(c5_reserve)
 print "SYM e4_reserve ", hex(e4_reserve)
+print "SYM shield ", hex(shield)
 print "SYM e4_spawn ", hex(e4_spawn)
 print "SYM c0_damage ", hex(c0_damage)

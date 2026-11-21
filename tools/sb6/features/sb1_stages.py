@@ -59,7 +59,9 @@ SPARE_THEMES = (4,)            # theme 4 (SB5 stages $13 / $14, not played): its
 SOFT_ID = 2
 PALS = (4, 5, 6)                # SB1 colors
 BURN_PAL = 3
-FLAME_FLOOR = range(5, 11)      # palette 2 entries of the floor around SB5's flames (tiles $050-$07B)
+FLAME_FLOOR = range(5, 11)      # palette 2 entries of the floor around SB5's flames (tiles $010-$07F)
+FLAMES = os.path.join(ASSETS, "sb5_flames.bin")   # SB5's flame tiles $010-$07F (4bpp, palette 2, from its VRAM)
+FLAME_VRAM = 0x0100             # their VRAM word
 BURN_TILES = range(0x16, 0x2A)  # archive tile indices of the 5 burning frames ($116-$129)
 BURN_FIRST = 0x26               # first frame shown; then $22, $1E, $1A, $16
 N_TILES = 0xB0                  # archive tiles $100-$1AF (theme 2's size; VRAM up to $3600 is the stage's)
@@ -82,6 +84,33 @@ def _rgb555(path):
     a = np.asarray(Image.open(path).convert("RGB"))
     return (a[..., 0].astype(np.int32) >> 3) | (a[..., 1].astype(np.int32) >> 3) << 5 | \
         (a[..., 2].astype(np.int32) >> 3) << 10
+
+
+def _decode_4bpp(b):
+    t = np.zeros((8, 8), np.int32)
+    for y in range(8):
+        for p in range(4):
+            v = b[(2 * y if p < 2 else 16 + 2 * y) + (p & 1)]
+            for x in range(8):
+                t[y, x] |= ((v >> (7 - x)) & 1) << p
+    return t
+
+
+def _flame_tiles(fcell, fcols):
+    """SB5's flame tiles drawn over the stage's own floor: their floor pixels (palette 2 entries 5-10, SB5's
+    grass) take the floor cell's pixel at the same place (tile n sits in quadrant n & 3 of its cell: TL TR BL
+    BR, never flipped), in entries 5 + fcols.index(color)."""
+    data = open(FLAMES, "rb").read()
+    out = bytearray()
+    for k in range(len(data) // 32):
+        t = _decode_4bpp(data[32 * k:32 * k + 32])
+        q = (FLAME_VRAM // 16 + k) & 3
+        part = fcell[8 * (q >> 1):8 * (q >> 1) + 8, 8 * (q & 1):8 * (q & 1) + 8]
+        floor = (t >= FLAME_FLOOR.start) & (t < FLAME_FLOOR.stop)
+        idx = np.vectorize(lambda c: FLAME_FLOOR.start + fcols.index(c))(part)
+        t[floor] = idx[floor]
+        out += encode_4bpp(t)
+    return bytes(out)
 
 
 def _cells(name):
@@ -200,7 +229,7 @@ def build(rb, name, spec):
                 second[ids[key]] = [cell1]
         return ids[key]
 
-    floors = {}
+    floors, fcells = {}, {}
     for r in range(13):
         for c in range(16):
             cell = field[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
@@ -210,6 +239,7 @@ def build(rb, name, spec):
             if col == 0:
                 for v in cell.reshape(-1).tolist():
                     floors[v] = floors.get(v, 0) + 1
+                fcells[cell.tobytes()] = fcells.get(cell.tobytes(), 0) + 1
             cell1 = None
             if anim is not None:
                 cell1 = anim[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
@@ -341,10 +371,24 @@ def build(rb, name, spec):
         colors[o:o + 16] = [colors[o]] + list(pal) + [0] * (15 - len(pal))
     put(BURN_PAL, bpal)
     # the flames (palette 2, SB5's) are drawn over their own floor pixels, colors FLAME_FLOOR: SB5's grass
-    # there showed through the explosions; they take the SB1 floor's most common color
+    # there showed through the explosions. A stage with the animation task gets its own flame tiles drawn
+    # over its floor cell (sent once by the task); the others take the SB1 floor's most common color
     o = (2 - first_row) * 16
-    for i in FLAME_FLOOR:
-        colors[o + i] = floor
+    fcell = np.frombuffer(max(fcells, key=fcells.get), dtype=field.dtype).reshape(16, 16)
+    fcount = {}
+    for v in fcell.reshape(-1).tolist():
+        fcount[v] = fcount.get(v, 0) + 1
+    fcols = sorted(fcount, key=lambda c: -fcount[c])
+    flames = None
+    if shock is not None and 1 < len(fcols) <= len(FLAME_FLOOR):
+        flames = _flame_tiles(fcell, fcols)
+        for k, i in enumerate(FLAME_FLOOR):
+            colors[o + i] = fcols[min(k, len(fcols) - 1)]
+    else:
+        for i in FLAME_FLOOR:
+            colors[o + i] = floor
+    if shock is not None:
+        shock["flames"] = flames
     for p, pal in zip(PALS, pals):
         put(p, pal)
     for row, pal in spec.get("extra_pals", {}).items():    # rows the field leaves free (1-7: the clown's)
@@ -454,17 +498,20 @@ def _anim_code(rb, anims):
     blob, rows = bytearray(), []
     for spec, a in anims:
         rows.append((spec, a, len(blob)))
-        blob += b"".join(a["frames"])
+        blob += b"".join(a["frames"]) + (a.get("flames") or b"")
     regs = [r for r in ("free_cd_stage2", "free_cd_stage45", "obj_f9", "obj_f8", "bulk") if r in rb.regions]
     src = rb.alloc(regs, bytes(blob), "World 1: animated BG tiles, every frame of " +
-                   ", ".join(f"stage ${spec['stage']:02X} ({len(a['frames'])} x {a['tiles']} tiles)"
+                   ", ".join(f"stage ${spec['stage']:02X} ({len(a['frames'])} x {a['tiles']} tiles"
+                             + (", flames over its floor" if a.get("flames") else "") + ")"
                              for spec, a, _ in rows))
     if src >> 16 != (src + len(blob) - 1) >> 16:
         raise BuildError("animated tiles cross a bank")
     table = bytearray()
     for spec, a, o in rows:
+        fl = a.get("flames") or b""
         table += bytes([spec["stage"], spec["anim_hold"], len(a["frames"])]) + struct.pack(
-            "<HH", a["vram"], len(a["frames"][0])) + (src + o).to_bytes(3, "little")
+            "<HH", a["vram"], len(a["frames"][0])) + (src + o).to_bytes(3, "little") + struct.pack(
+            "<HHH", FLAME_VRAM, len(fl), (src + o + sum(map(len, a["frames"]))) & 0xFFFF)
     table.append(0xFF)
     t = rb.alloc("bulk", bytes(table), "World 1: animated stages (stage, hold, frames, VRAM, size, tiles)")
     region = rb.regions["bulk"]

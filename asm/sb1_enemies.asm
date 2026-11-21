@@ -416,6 +416,17 @@ clown_hit:
 ;     $C6:39C0) when that way is open and the player is not in line, else a quarter turn clockwise;
 ;   pot ($C6:37B0): every 16-79 frames, on a cell's center, a random direction; at a wall a random one;
 ;   clown face ($C6:3774): at a wall turns around, every 3-6th wall a quarter turn clockwise instead.
+; SB1 4-4's UFO and bomb robot and SB1 4-2's horned robot in World 1's 1-4 (types $35, $36, $04):
+;   UFO ($C6:74C5, brain $C6:383A): on every cell's center (every other frame there, $21) and at a wall, across
+;     toward the nearest live player when that way is open and the player is not in line, else straight on,
+;     a quarter turn clockwise when that is shut;
+;   bomb robot ($C6:5FDE): the clown face's brain at speed 2 (1.5 px a frame, $21 = $40);
+;   horned robot ($C6:5A34, brain $C6:3ADF): a live player within 12 px across and 80 px along its way, or
+;     along the other axis (that one first when going up / down), not behind it and that way open: it turns
+;     that way, stops on the cell's center for 32 frames (its animation turns) and then runs at speed 1 (1 px
+;     a frame) while the player stays in sight; nobody in sight -> straight on, at a wall the clown face's
+;     turn ($C6:3807).
+; Speeds ($C6:36BB): 0 = 1/2 px, 1 = 1 px, 2 = 1 1/2 px a frame.
 !WSET  = $7FF700          ; per actor (24 bytes each): $A5 once set up
 !WDIR  = $7FF718          ; SB1 direction
 !WT    = $7FF730          ; SB1's $21: the pot's turn timer, the face's walls left
@@ -431,6 +442,16 @@ clown_hit:
 !WSY   = $7FF76D
 !WSELF = $7FF76E
 !WNEAR = $7FF76F          ; 1 while $C3:4B7B runs for one of these: co-op's c3_near skips far seats
+!WSPD  = $7FF770          ; per actor: SB1's $19 speed (0-2)
+!WSEEN = $7FF788          ; per actor: horned robot, frames seeing a player on a center (SB1's $30)
+!WADX  = $7FF7A0          ; scratch: |dx|, |dy| to a seat, player at or right of / below it
+!WADY  = $7FF7A1
+!WSGX  = $7FF7A2
+!WSGY  = $7FF7A3
+!WSEAT = $7FF7A4          ; scratch: seat looked at
+!WLX   = $7FF7AE          ; $0069 (main loop passes) when !WLIST was built
+!WLV   = $7FF7AF          ; $A5: !WLIST built
+!WLIST = $7FF7B0          ; enemy actors this frame, $FF-terminated (24 at most + 1)
 
 macro c3(addr)            ; JSR to a bank $C3 routine ending in RTS: it returns to the RTL at $C3:4B7A
     phk
@@ -448,6 +469,15 @@ sb1_pot:
     bra sb1w
 sb1_face:
     lda #$02
+    bra sb1w
+sb1_ufo:
+    lda #$03
+    bra sb1w
+sb1_bot:
+    lda #$04
+    bra sb1w
+sb1_horn:
+    lda #$05
 sb1w:
     sta.l !WKIND
     lda $0E20
@@ -468,9 +498,19 @@ sb1w:
     jsr wsetup
 +   lda.l !WKIND
     beq .spring
-    dec a
+    cmp #$01
     beq .pot
-    jsr face
+    cmp #$03
+    beq .ufo
+    cmp #$05
+    beq .horn
+    jsr face                    ; clown face, bomb robot
+    bra .done
+.horn:
+    jsr horn
+    bra .done
+.ufo:
+    jsr ufo
     bra .done
 .pot:
     jsr pot
@@ -485,8 +525,8 @@ sb1w:
     %c3($C34CFC)                ; sprite position, the cell's enemy bit
     rtl
 
-; first frame: SB1's start (every enemy facing down, its animation from the start; $21 = $40 for the pot,
-; 3 for the face, $22 = $FF), whole pixels
+; first frame: SB1's start (every enemy facing down, its animation from the start; $21 = $40 for the pot and
+; the bomb robot, 1 for the UFO, else 3; $22 = $FF; speed 2 for the bomb robot, else 0), whole pixels
 wsetup:
     lda #$A5
     sta.l !WSET,x
@@ -494,18 +534,26 @@ wsetup:
     sta.l !WDIR,x
     lda #$FF
     sta.l !WLAST,x
+    lda #$00
+    sta.l !WSPD,x
+    sta.l !WSEEN,x
+    phx
     lda.l !WKIND
-    cmp #$01
-    bne +
-    lda #$40
-    bra .t
-+   lda #$03
-.t:
+    tax
+    lda.l .t21,x
+    plx
     sta.l !WT,x
-    stz $1812,x
+    lda.l !WKIND
+    cmp #$04
+    bne +
+    lda #$02
+    sta.l !WSPD,x
++   stz $1812,x
     stz $185A,x
     lda #$02
     jmp anim
+.t21:
+    db $03, $40, $03, $01, $40, $03
 
 spring:
     lda #$E8
@@ -590,7 +638,9 @@ face:
     sta.l !WMASK
     lda.l !WDIR,x
     jsr blocked
-    beq .go
+    beq facego
+; at a wall (SB1 $C6:3807): $21 - 1; not 0 = turn around, 0 = quarter turn clockwise and $21 = 3-6
+facewall:
     lda.l !WT,x
     dec a
     sta.l !WT,x
@@ -610,10 +660,254 @@ face:
     eor #$02
     sta.l !WDIR,x
     rts
+facego:
+    jsr step
+    bcs +
+    jsr show
++   rts
+
+;   UFO (SB1 $C6:383A)
+ufo:
+    lda #$E8
+    sta.l !WMASK
+    lda $182A,x                 ; on a cell's center: choose
+    ora $1872,x
+    and #$0F
+    beq .choose
+    lda.l !WDIR,x
+    jsr blocked
+    bne .choose
 .go:
     jsr step
     bcs +
     jsr show
++   rts
+.choose:
+    jsr nearest                 ; (Y = seat or $FF)
+    lda.l !WT,x                 ; first frame there: straight on
+    bne .turn
+    inc a
+    sta.l !WT,x
+    lda.l !WDIR,x
+    jsr blocked
+    beq .go
+    rts
+.turn:
+    lda #$00
+    sta.l !WT,x
+    cpy #$FF
+    beq .straight
+    lda.l !WDIR,x
+    lsr a
+    bcs .across
+    lda $182A,y                 ; going up / down: right or left toward the player
+    cmp $182A,x
+    beq .straight
+    lda #$01
+    bcs .try
+    lda #$03
+    bra .try
+.across:
+    lda $1872,y                 ; going right / left: down or up
+    cmp $1872,x
+    beq .straight
+    lda #$02
+    bcs .try
+    lda #$00
+.try:
+    sta.l !WNEW
+    jsr blocked
+    bne .straight
+    lda.l !WNEW
+    sta.l !WDIR,x
+    bra .go
+.straight:
+    lda.l !WDIR,x
+    jsr blocked
+    beq .go
+    lda.l !WDIR,x
+    inc a
+    and #$03
+    sta.l !WDIR,x
+    rts
+
+;   horned robot (SB1 $C6:3ADF)
+horn:
+    lda #$E8
+    sta.l !WMASK
+    jsr sees
+    bcc .seen
+    lda #$00
+    sta.l !WSEEN,x
+    lda.l !WDIR,x
+    jsr blocked
+    beq .go
+    jmp facewall
+.go:
+    jsr step
+    bcs +
+    jsr show
++   rts
+.seen:
+    lda.l !WDIR,x               ; on the center across its way?
+    lsr a
+    bcs .row
+    lda $182A,x
+    bra .mid
+.row:
+    lda $1872,x
+.mid:
+    and #$0F
+    bne .go
+    lda.l !WSEEN,x
+    inc a
+    sta.l !WSEEN,x
+    cmp #$20
+    beq .run
+    jmp show                    ; waiting: only the new way's animation
+.run:
+    dec a
+    sta.l !WSEEN,x
+    lda #$01
+    sta.l !WSPD,x
+    jsr step
+    lda #$00                    ; (keeps C)
+    sta.l !WSPD,x
+    bcs +
+    jsr show
++   rts
+
+; carry clear: a live player in the horned robot's sight, its way turned toward the first one (SB1 $C6:3B64,
+; P1 then P2; here every seat)
+sees:
+    ldy #$00
+.loop:
+    lda $17FA,y
+    bmi .next
+    lda $15A2,y
+    bmi .next
+    lda $182A,y                 ; (quick: |dx| and |dy| < 80, one of them < 12)
+    sec
+    sbc $182A,x
+    bcs +
+    eor #$FF
+    inc a
++   cmp #$50
+    bcs .next
+    sta.l !WADX
+    lda $1872,y
+    sec
+    sbc $1872,x
+    bcs +
+    eor #$FF
+    inc a
++   cmp #$50
+    bcs .next
+    cmp #$0C
+    bcc .in
+    lda.l !WADX
+    cmp #$0C
+    bcs .next
+.in:
+    tya
+    sta.l !WSEAT
+    jsr look
+    bcc .yes
+    lda.l !WSEAT
+    tay
+.next:
+    iny
+    cpy #$05
+    bcc .loop
+    sec
+.yes:
+    rts
+
+; Y = seat: within 80 px along and 12 px across the axis it goes on, else the other axis: toward the player
+; unless that is behind it or shut (carry set), else that way taken (carry clear); Y lost
+look:
+    lda #$01
+    sta.l !WSGX
+    sta.l !WSGY
+    lda $182A,y
+    sec
+    sbc $182A,x
+    bcs +
+    eor #$FF
+    inc a
+    pha
+    lda #$00
+    sta.l !WSGX
+    pla
++   sta.l !WADX
+    lda $1872,y
+    sec
+    sbc $1872,x
+    bcs +
+    eor #$FF
+    inc a
+    pha
+    lda #$00
+    sta.l !WSGY
+    pla
++   sta.l !WADY
+    lda.l !WDIR,x
+    lsr a
+    bcc .vert
+    jsr hband
+    bcc .h
+    jsr vband
+    bcc .v
+    rts
+.vert:
+    jsr vband
+    bcc .v
+    jsr hband
+    bcc .h
+    rts
+.h:
+    lda.l !WSGX                 ; right / left
+    beq +
+    lda #$01
+    bra .try
++   lda #$03
+    bra .try
+.v:
+    lda.l !WSGY                 ; down / up
+    beq +
+    lda #$02
+    bra .try
++   lda #$00
+.try:
+    sta.l !WNEW
+    eor #$02
+    cmp.l !WDIR,x
+    beq .no
+    lda.l !WNEW
+    jsr blocked
+    bne .no
+    lda.l !WNEW
+    sta.l !WDIR,x
+    clc
+    rts
+.no:
+    sec
+    rts
+
+; carry clear: |dx| < 80 and |dy| < 12 (hband), |dx| < 12 and |dy| < 80 (vband)
+hband:
+    lda.l !WADX
+    cmp #$50
+    bcs +
+    lda.l !WADY
+    cmp #$0C
++   rts
+vband:
+    lda.l !WADX
+    cmp #$0C
+    bcs +
+    lda.l !WADY
+    cmp #$50
 +   rts
 
 ; after a step: a direction other than the animation's -> its animation from the start
@@ -648,7 +942,7 @@ anim:
     plx
     rts
 .base:
-    db !ASPRING, !APOT, !AFACE
+    db !ASPRING, !APOT, !AFACE, !AUFO, !ABOT, !AHORN
 
 ; A = direction: A = the bits of !WMASK in the cell SB1 tests that way (Z set: open); Y lost
 blocked:
@@ -705,8 +999,16 @@ blocked:
     and.l !WMASK
     rts
 
-; SB1's step: carry set when it was taken back (another enemy within 16 px)
+; SB1's step ($C6:360E, speed !WSPD: (speed + 1) / 2 px): carry set when it was taken back (another enemy
+; within 16 px)
 step:
+    lda.l !WSPD,x               ; !WTMP = sub-pixels, !WTMP+1 = pixels of the step
+    inc a
+    lsr a
+    sta.l !WTMP+1
+    lda #$00
+    ror a
+    sta.l !WTMP
     lda $1812,x
     sta.l !WSAV
     lda $182A,x
@@ -731,19 +1033,19 @@ step:
     bne .down
     lda $185A,x
     sec
-    sbc #$80
+    sbc.l !WTMP
     sta $185A,x
     lda $1872,x
-    sbc #$00
+    sbc.l !WTMP+1
     sta $1872,x
     bra .moved
 .down:
     lda $185A,x
     clc
-    adc #$80
+    adc.l !WTMP
     sta $185A,x
     lda $1872,x
-    adc #$00
+    adc.l !WTMP+1
     sta $1872,x
     bra .moved
 .side:
@@ -761,19 +1063,19 @@ step:
     bne .left
     lda $1812,x
     clc
-    adc #$80
+    adc.l !WTMP
     sta $1812,x
     lda $182A,x
-    adc #$00
+    adc.l !WTMP+1
     sta $182A,x
     bra .moved
 .left:
     lda $1812,x
     sec
-    sbc #$80
+    sbc.l !WTMP
     sta $1812,x
     lda $182A,x
-    sbc #$00
+    sbc.l !WTMP+1
     sta $182A,x
 .moved:
     jsr touching
@@ -803,48 +1105,83 @@ step:
     sec
     rts
 
-; carry set: another live enemy (actors 5 to $198C with an enemy type) within 16 px both ways
+; carry set: another live enemy (actors 5 to $198C with an enemy type) within 16 px both ways. The enemies'
+; actors are listed once a main loop pass (!WLIST, rebuilt when $0069 changes), so each step looks at the
+; enemies only, not at every actor.
 touching:
-    lda $182A,x
+    lda.l !WLV                  ; (0 after the stage start's clear: no list yet)
+    cmp #$A5
+    bne +
+    lda $0069                   ; main loop passes ($C0:0B3E)
+    cmp.l !WLX
+    beq ++
++   jsr wlist
+++  lda $182A,x                 ; !WSX / !WSY = own x / y - 15: another's - that = d + 15, within 16 px
+    sec                         ; both ways <=> below 31 (positions never differ by 241+)
+    sbc #$0F
     sta.l !WSX
     lda $1872,x
+    sec
+    sbc #$0F
     sta.l !WSY
     txa
     sta.l !WSELF
-    ldy #$05
-.loop:                              ; (every enemy, every frame: cheapest tests first)
+    phx
+    ldx #$00
+.loop:
+    lda.l !WLIST,x
+    bmi .none
+    inx
+    tay
     lda $17FA,y
-    bmi .next
+    bmi .loop
     lda $182A,y
     sec
     sbc.l !WSX
-    bcs +
-    eor #$FF
-    inc a
-+   cmp #$10
-    bcs .next
+    cmp #$1F
+    bcs .loop
     lda $1872,y
     sec
     sbc.l !WSY
-    bcs +
-    eor #$FF
-    inc a
-+   cmp #$10
-    bcs .next
+    cmp #$1F
+    bcs .loop
     tya
     cmp.l !WSELF
-    beq .next
-    lda $16C2,y
-    beq .next
+    beq .loop
     lda $15A2,y
-    bmi .next
+    bmi .loop
+    plx
     sec
     rts
+.none:
+    plx
+    clc
+    rts
+
+; !WLIST = the active actors 5 to $198C with an enemy type ($16C2), then $FF
+wlist:
+    phx
+    ldx #$00
+    ldy #$05
+.loop:
+    lda $17FA,y
+    bmi .next
+    lda $16C2,y
+    beq .next
+    tya
+    sta.l !WLIST,x
+    inx
 .next:
     cpy $198C
     iny
     bcc .loop
-    clc
+    lda #$FF
+    sta.l !WLIST,x
+    lda $0069
+    sta.l !WLX
+    lda #$A5
+    sta.l !WLV
+    plx
     rts
 
 ; Y = the live player nearest (|dx| + |dy|; the lowest seat on a tie), carry clear when none
@@ -907,4 +1244,7 @@ print "SYM clown_hit ", hex(clown_hit)
 print "SYM sb1_spring ", hex(sb1_spring)
 print "SYM sb1_pot ", hex(sb1_pot)
 print "SYM sb1_face ", hex(sb1_face)
+print "SYM sb1_ufo ", hex(sb1_ufo)
+print "SYM sb1_bot ", hex(sb1_bot)
+print "SYM sb1_horn ", hex(sb1_horn)
 print "SYM end ", hex(end)

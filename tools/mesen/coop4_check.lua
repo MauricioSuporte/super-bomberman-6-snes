@@ -11,6 +11,7 @@ local STG = tonumber(os.getenv("COOP4_STAGE") or "0D", 16)
 local OUTF = os.getenv("COOP4_OUT") or "build/coop4.txt"
 local ENDF = tonumber(os.getenv("END") or "1500")
 local BOMB = tonumber(os.getenv("COOP4_BOMB") or "60")   -- frames between bombs, 0 = none
+local WALK = os.getenv("COOP4_WALK") or "0123"           -- seats the test moves (the others: stage_test's MOVES for P1)
 local function r(a) return emu.read(a, emu.memType.snesWorkRam) end
 local function cell(a)                                  -- actor's cell (docs/ROM_MAP.md: player cell)
   return ((r(0x182A + a) + 8) & 0xFF) >> 4 | ((r(0x1872 + a) + 8) & 0xF0)
@@ -63,7 +64,9 @@ emu.addEventCallback(function()
   if not st then return end
   local k = f - st
   if k > 260 then
-    for seat = 0, 3 do inj[seat] = {(BOMB > 0 and k % BOMB < 3) and 0x80 or 0, DIRS[((k // 50) + seat) % 4 + 1]} end
+    for seat = 0, 3 do
+      if WALK:find(tostring(seat)) then inj[seat] = {(BOMB > 0 and k % BOMB < 3) and 0x80 or 0, DIRS[((k // 50) + seat) % 4 + 1]} end
+    end
   end
   if k >= 300 then
     frames = frames + 1

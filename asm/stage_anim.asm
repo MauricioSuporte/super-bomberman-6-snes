@@ -5,7 +5,10 @@
 ; animated tiles one block of BG slots and writes every picture of that
 ; block one after the other in ROM (all stages in bank !BANK), with a row of
 ; !TABLE: [stage, frames each picture stays, pictures, VRAM word (word),
-; block bytes (word), first picture (long)] ... $FF.
+; block bytes (word), first picture (long), flames' VRAM word (word), their
+; bytes (word, 0 = none), their source (word, bank !BANK)] ... $FF. The
+; flames (SB5's flame tiles drawn over the stage's own floor, tiles $010-$07F)
+; are sent once when the task starts, one entry a frame.
 ; anim_start (JSL, from world1's op FF 1A F6 5 / 6 in the stage's type 04
 ; script) finds the stage's row and starts a task that every "frames held"
 ; frames copies the next picture into SB5's VRAM queue (entries at
@@ -13,7 +16,7 @@
 ; the NMI sends them while there is vblank left, $C0:04E0), in entries of at
 ; most 256 bytes. It ends when the stage is over ($1031).
 ; State: $7F:FBD8 frame counter, $7F:FBD9 picture, $7F:FBDA-$7F:FBE1
-; scratch, $7F:FBE2 the stage's row offset.
+; scratch, $7F:FBE2 the stage's row offset, $7F:FBE3 flame bytes sent (word).
 
 asar 1.90
 hirom
@@ -26,6 +29,8 @@ org !ORG
 !LEFT  = $7FFBDE              ; word: bytes left
 !N     = $7FFBE0              ; word: bytes in this entry
 !ROW   = $7FFBE2
+!FOFF  = $7FFBE3              ; word: flame bytes sent
+!ROWSZ = 16
 !PART  = $0100
 
 anim_start:
@@ -39,7 +44,7 @@ anim_start:
     beq .found
     txa
     clc
-    adc #10
+    adc #!ROWSZ
     tax
     bra -
 .found:
@@ -48,6 +53,8 @@ anim_start:
     lda #$00
     sta.l !CNT
     sta.l !PIC
+    sta.l !FOFF
+    sta.l !FOFF+1
     jsl $C020A1
     dl anim_task
     db $60                      ; skipped ($C020A1 returns past the dl)
@@ -65,7 +72,11 @@ anim_task:
     beq +
     jsl $C021CE                 ; stage over: end the task
     bra .out
-+   lda.l !CNT
++   jsr flames
+    sep #$30
+    lda.l !ROW
+    tax
+    lda.l !CNT
     inc a
     cmp.l !TABLE+1,x
     bcc .keep
@@ -100,6 +111,35 @@ anim_task:
 .out:
     plp
     rtl
+
+; the stage's flame tiles, !PART bytes a frame until all are sent (X = row offset, 8-bit)
+flames:
+    rep #$20
+    lda.l !FOFF
+    cmp.l !TABLE+12,x
+    bcs .done
+    clc
+    adc.l !TABLE+14,x
+    sta.l !SRC
+    lda.l !FOFF
+    lsr a
+    clc
+    adc.l !TABLE+10,x
+    sta.l !VR
+    lda.l !TABLE+12,x
+    sec
+    sbc.l !FOFF
+    cmp.w #!PART
+    bcc +
+    lda.w #!PART
++   sta.l !LEFT
+    clc
+    adc.l !FOFF
+    sta.l !FOFF
+    rep #$10
+    jsr part
+.done:
+    rts
 
 ; one queue entry: min(left, !PART) bytes from !SRC (bank !BANK) to VRAM word !VR; M/X 16-bit
 part:

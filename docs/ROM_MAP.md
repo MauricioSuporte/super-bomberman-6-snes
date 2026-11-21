@@ -704,6 +704,16 @@ script accumulator (`61` = add).
   block's 4 tiles get their own slots and the same task plays them. The
   task's table (`[stage, frames held, pictures, VRAM word, size, first
   picture]`) is started by world1's op `FF 1A F6 05` (1-7) / `06` (1-4).
+* Flames over SB1 floors: SB5's flames are BG tiles `$010-$07F` (palette 2,
+  tile n always in quadrant n & 3 of its cell, never flipped) with SB5's
+  grass in entries 5-10 around the fire; on SB1's patterned floors (1-4's
+  squares) that grass showed as a flat color around every explosion. The
+  stages with the animation task (1-4, 1-7) get their own copy of the 112
+  tiles (`assets/stages/sb5_flames.bin`, from SB5's VRAM; no archive of sets
+  0-12 holds them) with those pixels taken from the floor cell, its colors
+  in palette 2 entries 5-10; `asm/stage_anim.asm` sends them once at the
+  task's start (256 bytes a frame). 1-5 and 1-6 keep the floor's most
+  common color there.
 * Burning soft blocks (SB1 stages): SB1 draws them on BG1 (tiles `$1C0-$1CA`,
   palette 7, 6 pictures of 12/10/8/6/4/2 frames); `sb1_stages` puts 5 of them
   (`assets/stages/<stage>_burn.png`, from SB1's VRAM) in SB5's 5 burning
@@ -762,7 +772,14 @@ script accumulator (`61` = add).
   `c5_reserve` at `$C5:0171` (`JSR $01B4`) -> `e4_reserve` also keeps clear,
   per seat, the shortest straight run of 1-4 free cells with a free cell
   beside its end (bomb on the start, hide around the corner: safe for any
-  fire range); 1-2's lower-left corner (extra walls) needs 4.
+  fire range); 1-2's lower-left corner (extra walls) needs 4. Then
+  `shield` (same file) walls each seat's pocket in: from the seat's cell it
+  walks up to 6 steps through cells kept clear (`$10`, no `$80`) and puts a
+  soft block (`$7E:2400` = 2, `$7E:2700 |= $90`, one of the `$0E1F` random
+  ones) on every free neighbour of the pocket, so no enemy can walk in
+  before the seat bombs its way out (only while the scatter runs, `$1D1A &
+  $0C` = 0). `coop4_check.py` checks it on the CHAIN stages ("shut in": every
+  free edge cell of the pocket is a soft block, no enemy starts inside).
 * Soft blocks are random each play (`$1052` = `$30`, walls `$80`); the
   collision map is filled ~50 frames after the type `04` scripts. Items:
   `$145A` + cell. RNG: `JSL $C01DC4` (A = random byte).
@@ -801,10 +818,13 @@ script accumulator (`61` = add).
   object's animation is `!ENANIM2` or above) and SB1's routines
   (`sb1_spring` / `sb1_pot` / `sb1_face`, `asm/sb1_enemies.asm`, below);
   1-2 (`$11`) places 2 springs, 2 pots, 2 clowns on SB1's start cells (SB1 has 4 springs: 8 enemies dipped to 44 fps with 4 players)
-  (`STAGE_ENEMIES`). 1-4 (`$10`) keeps SB5's 2
-  tanks (type 04, as SB1 4-4) and adds SB1 4-4's 4 UFOs and bomb robot:
-  types `$35` / `$36` (placed by no SB5 stage; they share set 8 archive and
-  palette `$31`, so the two kinds share one sheet, colors merged to 15). Type 05 = SB1 3-6's
+  (`STAGE_ENEMIES`). 1-4 (`$10`) places 3 of SB1
+  4-4's 4 UFOs, its bomb robot and 2 of SB1 4-2's horned robots instead of
+  SB5's 2 tanks: types `$35` / `$36` (placed by no SB5 stage; they share set
+  8 archive and palette `$31`, one sheet) and type `04` (SB5's tank, only in
+  `$10`: archive 6 rewritten, its 32-color palette 4 freed); the three share
+  palette `$31` (pal group `w14`, 27 colors merged to 15: 1 enemy OBJ slot),
+  mapping page 2 (`!ENANIM3`), routines `sb1_ufo` / `sb1_bot` / `sb1_horn`. Type 05 = SB1 3-6's
   chameleon (1-3 = `$18`, 7 of them): record routine `chameleon`
   (`asm/chameleon.asm`, built after the characters by `sb1_enemies.chameleon`). Actor routine pointer =
   record bytes 9-11 (called through `JML [$A5]`, X = actor, M/X 8-bit, RTL).
@@ -832,6 +852,23 @@ script accumulator (`61` = add).
   clockwise; pot = `$21` - 1, at 0 on a cell's center (`$C4:23F7`) `$21` = 16-79 and a random direction,
   way shut -> random direction; face = way shut -> `$21` - 1: not 0 = turn around, 0 = quarter turn
   clockwise and `$21` = 3-6. Death `$C6:33C0`: 32 frames standing, palette `$0E` every other frame.
+* SB1's 4-2 / 4-4 enemies (objects as above; creates in the stage lists at `$C3:0Dxx`, a create sets `$1A`
+  extra hits, `$20` = 2; init sets `$16`, `$19` speed, `$21`, `$22` = `$FF`, `$3D` score rank): UFO (4-4)
+  `$C6:74C5`, table `$C6:7DA3` (one animation `$C6:5842`, 4 pictures x 12), `$1A` = 1, `$21` = 1, `$1C` =
+  `$E0`, brain `$C6:383A`: on a cell's center (`$C4:23F7`) or at a shut way, nearest player (`$C6:39C0`);
+  `$21` = 0 -> `$21` = 1, straight on; else `$21` = 0 and across toward the player (`$C6:35EA` / `$35FD`) if
+  open and not in line, else straight on, a quarter turn clockwise if shut. Bomb robot (4-4) `$C6:5FDE`,
+  table `$C6:7D13` (up `$41BE`, right `$41CF`, down `$41E0`, left `$41F1`: 4 pictures x 1 frame), `$1A` = 4,
+  `$19` = 2, `$21` = `$40`, the clown face's brain `$C6:3774`. Horned robot (4-2) `$C6:5A34` (create
+  `$C6:59F8` area, init `$C6:5A0A`), table `$C6:7D03` (up `$3E7E` 3 pictures x 2, right `$3E8F` / down
+  `$3EB8` / left `$3EE5` 6 pictures 16 3 3 3 3 16 ...), 40 px wide sideways, brain `$C6:3ADF`: for P1, P2
+  (`$C6:3B64`): a live player within `$0C` across and `$50` along the axis it goes on (`$C6:359F`), else
+  the other axis; the way toward it (`$C6:35E2`) unless that is behind it or shut -> taken; seen -> on the
+  center across its way `$30` + 1, at `$20` speed + 1 for that step (`$30` stays `$1F`), else no step;
+  not seen -> `$30` = 0, straight on, at a wall `$C6:3807` (the face's turn). Speeds `$C6:36BB` (32 bytes
+  each, 4 directions x (dx, dy) words): 0 = `$80`, 1 = `$100`, 2 = `$180` sub-pixels a frame. Flames
+  `$C6:0BDE`: `$1A` > 0 -> `$1A` - 1 and 32 frames (`$1B`) blinking. The 4-2 yellow saucers that open are
+  `$C6:6202` (table `$C6:7DAB`), the dark ones that hide `$C6:7C94` (pot brain).
 * Hack, SB1 2-1's enemies (`asm/sb1_enemies.asm` `sb1w`): stop-watch -> `$C3:4C13`; else SB5's
   `$C3:4B7B` (contact, flames: SB5's rule, |dx| and |dy| < 8 (`$C3:47C9`), not SB1's 12), SB1's brain and
   step on SB5's coordinates (SB1's - 8: centers at `& $0F` = 0; `$1812`/`$185A` the sub-pixels), the
@@ -1336,16 +1373,19 @@ The full list with sizes is generated in `build/sb6.map`.
 
 Start safety (`tools/coop4_check.py` spawn_safety) passes on every World 1 stage: SB1 enemy starts next to the
 lower corners were moved (1-2 spring (13,9) -> (11,7); 1-3 chameleons (13,8), (1,8), (11,11) -> (11,7), (3,7),
-(7,11); 1-4 UFOs (3,9), (11,11) -> (5,7), (7,11)).
+(7,11); 1-4 UFOs (3,9), (11,11) -> (5,7), (7,11); 1-4's horned robots at (7,3), (9,9)). 1-4 leaves out the
+UFO at (5,7): with SB1 4-4's 4 UFOs, its bomb robot and the 2 horned robots (7 enemies) 4 players measured
+45-49 fps; with 3 UFOs 51-60.
 
 1-3's chameleons are created by number of players: `coop.CHAMELEONS` (by roster `$012A`: 2 = 1-2 players
 -> 7, 3 -> 6, 4 -> 5), `c3_spawn` at `$C3:0452` (the enemy creation `$C3:0450`, A = type) -> `e4_spawn`: a
 type 05 in stage `$18` past the count fails as with no free actor (`$C3:0512`, not counted in `$1D50`).
 P3/P4 join `$1D25` only after the spawns. Measured (4 players, 6 chameleons): 50-52 fps; 7 with 3: 47.
 
-`python tools/coop4_check.py` (4 seats, nobody dies, everyone walks and drops a bomb a second; 2026-11-20):
+`python tools/coop4_check.py` (4 seats, nobody dies, everyone walks and drops a bomb a second; 2026-11-21):
+every World 1 stage passes (worst second 52-57 fps; 1-4 53 with one enemy OBJ palette).
 
 | Stage | Worst | Why | Proposal |
 |---|---|---|---|
-| 1-4 (`$10`) | 41 fps, no Louie colors | the 2 tanks' 32-color palette (slots 3-4) + UFO / robot (slot 5): no slot for the Louie palette | tanks in 15 colors (1 slot), or UFO / robot sharing the tanks' palette; fewer UFOs |
+| (none) | | | |
 

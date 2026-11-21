@@ -15,7 +15,10 @@ dies, everyone walks and drops bombs) and fails a stage when:
       $7E:2700 & $10 = kept clear, asm/coop.asm e4_reserve) the bomber cannot drop a bomb within ESC_STEPS
       cells and hide from it within ESC_STEPS more, for any fire range (flames stop at walls/soft blocks),
     - an enemy starts fewer than MIN_ENEMY_STEPS cells away (walking distance around walls, soft blocks
-      ignored: they burn, and some enemies pass them).
+      ignored: they burn, and some enemies pass them),
+    - the seat is not shut in (stages with random soft blocks): a free cell next to its pocket (the cells
+      kept clear around it, reachable from its cell) that holds no soft block (asm/coop.asm shield puts
+      one on each), or an enemy starting inside the pocket.
 Env: MESEN (Mesen.exe), END (stage frames, default 1500), JOBS (parallel runs, default 4), PLAYERS (2-4, default
 4), COOP4_BOMB (frames between each bomber's bombs, default 60; 0 = none: every enemy stays alive).
 """
@@ -52,7 +55,7 @@ def _bfs(start, free, limit=99):
     return dist
 
 
-def spawn_safety(res):
+def spawn_safety(res, shut=True):
     """Problems of the seats' starts (see the module doc), [] when every seat is safe."""
     lines = {l.split(" ", 1)[0]: l.split(" ", 1)[1] for l in res.splitlines() if " " in l}
     if "map" not in lines:
@@ -61,6 +64,7 @@ def spawn_safety(res):
     seats = [int(x, 16) for x in lines["seats"].split()]
     enemies = [int(x.split(":")[0], 16) for x in lines.get("enemies", "").split()]
     scatter = any(k & 0x80 for k in keep)                # random soft blocks were placed this stage
+    softs = any(c & 0x30 and not c & 0x80 for c in m)    # (arenas without soft blocks: no shut-in rule)
     def free(c):
         return not m[c] & 0xB0 and (not scatter or keep[c] & 0x10)
     def blast(b):
@@ -80,6 +84,16 @@ def spawn_safety(res):
         safe = any(set(_bfs(b, free, ESC_STEPS)) - blast(b) for b in _bfs(c, free, ESC_STEPS))
         if not safe:
             bad.append(f"P{seat + 1} at ({c & 15},{c >> 4}) cannot bomb and hide")
+        if shut and scatter and softs:                  # shut in (not the boss arenas): soft blocks all around its clear pocket
+            pocket = _bfs(c, lambda n: not m[n] & 0xB0 and keep[n] & 0x10)
+            edge = {p + d for p in pocket for d in STEPS if 0 <= p + d < 256} - set(pocket)
+            open_ = sorted(n for n in edge if not m[n] & 0xB0)
+            if open_:
+                bad.append(f"P{seat + 1} at ({c & 15},{c >> 4}) not shut in by soft blocks: "
+                           + ", ".join(f"({n & 15},{n >> 4})" for n in open_))
+            for e in enemies:
+                if e in pocket:
+                    bad.append(f"P{seat + 1} at ({c & 15},{c >> 4}): enemy at ({e & 15},{e >> 4}) in its pocket")
         walk = _bfs(c, lambda n: not m[n] & 0x80)
         near = [e for e in enemies if walk.get(e, 99) < MIN_ENEMY_STEPS]
         for e in near:
@@ -104,7 +118,7 @@ def run(stage):
     f = text.split()
     return stage, dict(fps=int(f[f.index("fps") + 1]), louie=int(f[f.index("louie") + 1]),
                        shared=int(f[f.index("shared") + 1]), enemies=int(f[f.index("enemies") + 1]), frames=int(f[f.index("frames") + 1]),
-                       slots=" ".join(f[f.index("slots") + 1:f.index("seconds")]), spawn=spawn_safety(text))
+                       slots=" ".join(f[f.index("slots") + 1:f.index("seconds")]), spawn=spawn_safety(text, stage in {s for s, _, _ in CHAIN}))
 
 
 def main():

@@ -44,7 +44,13 @@ PIECE_X, PIECE_Y = -8, -9        # where SB5 draws a 16x16 enemy (type 05) relat
 SPRING = [(0, 16), (1, 3), (2, 4), (3, 6), (4, 8), (3, 6), (2, 4), (1, 3)]
 CLOWN_FACE = [(0, 21), (1, 7), (2, 7), (3, 7), (2, 7), (1, 7), (0, 21), (4, 10), (5, 12), (4, 10), (0, 21), (6, 13),
               (7, 12)]
-SB1_CELL = (32, 64, 8, 28)       # tools/sb1_enemy_frames.py: SB1 piece (dx, dy) -> SB5 piece (dx, dy - 1)
+SB1_CELL = (32, 64, 8, 28)
+# SB1 4-2's horned robot sideways / down: picture 16 frames, 4 pictures 3 frames each, the last 16, back, and the
+# first again 3 frames (SB1's right animation $C6:3E8F leaves that last entry out)
+
+
+def _horn_side(h):
+    return [(h, 16)] + [(h + i, 3) for i in range(1, 5)] + [(h + 5, 16)] + [(h + i, 3) for i in range(4, -1, -1)]       # tools/sb1_enemy_frames.py: SB1 piece (dx, dy) -> SB5 piece (dx, dy - 1)
 # page 1: a second mapping table, ids from MAP_FIRST again, for the kinds whose animations come after every
 # page 0 kind's (asm/bombers.asm enemy_map tells them apart by the object's animation, !ENANIM2)
 KINDS = {
@@ -65,13 +71,23 @@ KINDS = {
     # on BG2 from assets/enemies/sb1_2-8_clown.png (asm/sb1_enemies.asm `clown`); type 07 was only in SB5
     # stages $18-$1B (1-3's enemies are SB1's now)
     "clownbody": dict(type=0x07, sheet="sb1_2-8_body", routine="clown", anims=[[(0, 60)]] * 4),
-    # SB1 4-4's UFO and bomb robot (1-4, next to SB5's tanks): types $35 / $36, placed by no SB5 stage, which
-    # share set 8 archive and palette $31 (so do the two kinds: one sheet, its colors merged to 15)
-    "ufo": dict(type=0x35, sheet="sb1_4-4_ufobot", anims=[[(0, 8), (1, 8), (2, 8), (3, 8)]] * 4),
-    "robot": dict(type=0x36, sheet="sb1_4-4_ufobot", anims=[[(4, 10), (5, 10)], [(6, 10), (7, 10)],
-                                                              [(4, 10), (5, 10)], [(4, 10), (5, 10)]]),
+    # 1-4 = SB1 4-4's UFOs and bomb robot with SB1 4-2's horned robots instead of SB5's tanks; mapping page 2,
+    # one OBJ palette for the three (pal "w14": 1-4 with 4 players keeps a slot for the Louie palette).
+    # Sheets drawn from SB1's tables by tools/sb1_enemy_frames.py; routines = SB1's (asm/sb1_enemies.asm).
+    # UFO ($C6:74C5, brain $C6:383A) and bomb robot ($C6:5FDE: the clown face's brain at 1.5 px a frame):
+    # types $35 / $36, placed by no SB5 stage, which share set 8 archive and palette $31 (one sheet)
+    "ufo": dict(type=0x35, sheet="sb1_4-4_ufobot", routine="sb1_ufo", cell=SB1_CELL, fit=True, page=2, pal="w14",
+                anims=[[(0, 12), (1, 12), (2, 12), (3, 12), (2, 12), (1, 12)]] * 4),
+    "robot": dict(type=0x36, sheet="sb1_4-4_ufobot", routine="sb1_bot", cell=SB1_CELL, fit=True, page=2, pal="w14",
+                  anims=[[(c, 1) for c in range(8 + 4 * d, 12 + 4 * d)] for d in range(3)]
+                  + [[(c, 1) for c in range(4, 8)]]),
+    # SB1 4-2's horned robot ($C6:5A34, brain $C6:3ADF): a player in sight -> it stops, its eyes flash, it
+    # charges; type 04 = SB5's tank (only in stage $10), its archive 6 rewritten
+    "horn": dict(type=0x04, sheet="sb1_4-2_horn", routine="sb1_horn", cell=(64, 64, 24, 28), fit=True, page=2,
+                 pal="w14", anims=[_horn_side(3)[:-1], _horn_side(9), _horn_side(15), [(0, 2), (1, 2), (2, 2), (1, 2)]]),
 }
 ORDER = sorted(KINDS, key=lambda n: KINDS[n].get("page", 0))   # page 0 kinds first (stable)
+PAGES = 3
 CLOWN = ("sb1_2-8_clown", "sb1_2-8_clown_closed")   # BG2 pictures, mouth open / closed (112 x 92, same box)
 CLOWN_CENTER = (56, 44)          # the body's cell center in the picture
 CLOWN_PALS = (3, 6)              # BG palettes of the 1-7 arena it takes (features/sb1_stages.py "sb1_4-8")
@@ -85,8 +101,10 @@ STAGE_ENEMIES = {0x11: [(5, 6, "pot"), (5, 3, "pot"), (1, 8, "clown"), (4, 5, "c
                  # 1-3 (stage $18): SB1 3-6's 7 chameleons
                  0x18: [(11, 7, "frog"), (9, 5, "frog"), (9, 9, "frog"), (5, 7, "frog"), (3, 7, "frog"),
                         (7, 3, "frog"), (7, 11, "frog")],   # SB1 (13, 8), (1, 8), (11, 11): next to P3/P4
-                 # 1-4 (stage $10): SB1 4-4's 4 UFOs and its robot, with SB5's 2 tanks (world1.KEEP_ENEMIES)
-                 0x10: [(3, 5, "ufo"), (11, 5, "ufo"), (5, 7, "ufo"), (7, 11, "ufo"), (7, 6, "robot")],
+                 # 1-4 (stage $10): 3 of SB1 4-4's 4 UFOs (with the fourth, (5, 7), 4 players drop to 45-49
+                 # fps), its bomb robot, 2 of SB1 4-2's horned robots where SB5's 2 tanks were
+                 0x10: [(3, 5, "ufo"), (11, 5, "ufo"), (7, 11, "ufo"), (7, 6, "robot"),
+                        (7, 3, "horn"), (9, 9, "horn")],
                  # (SB1 (3, 9), (11, 11): next to P3/P4)
                  # 1-7 (stage $68, boss): the clown instead of SB5's rival
                  0x68: [(7, 4, "clownbody")]}
@@ -351,6 +369,9 @@ def _kind(rb, name, k, map_id):
 OLD_DATA = [
     ("free_cb_enemies1", 0xCB0462, 2340, 0xA8AC4EF6, "freed SB5 enemy tiles (set 8 archives 4, 5: types 02, 03)"),
     ("free_cb_enemies2", 0xCB12E6, 2017, 0x73FD56C8, "freed SB5 enemy tiles (set 8 archives 7, 8: types 05, 06)"),
+    # type 04's (SB5's tank, 1-4 only) 32-color palette: set 8 palette 4, named only by its record (the horned
+    # robot takes the 1-4 palette). Its tiles (set 8 archive 6, $CB:0D86) stay: bank $C5's archive table names them
+    ("free_81_tankpal", 0xC1893C, 68, 0x2F76E536, "freed SB5 tank palette (set 8 palette 4, 32 colors), bank $81"),
 ]
 
 
@@ -458,6 +479,8 @@ def code(rb, bg):
     runs, syms = asar.assemble_into(rb.d, ASM, {"ORG": f"${region.cursor:06X}",
                                                 "ASPRING": f"${anims['spring']:02X}", "APOT": f"${anims['pot']:02X}",
                                                 "AFACE": f"${anims['clown']:02X}",
+                                                "AUFO": f"${anims['ufo']:02X}", "ABOT": f"${anims['robot']:02X}",
+                                                "AHORN": f"${anims['horn']:02X}",
                                                 "CLOWN_TYPE": f"${KINDS['clownbody']['type']:02X}",
                                                 "CTILES": f"${bg['tiles']:06X}", "COPEN": f"${bg['open']:06X}",
                                                 "CCLOSED": f"${bg['closed']:06X}",
@@ -483,15 +506,15 @@ def apply(rb):
     arc_tab = 0xE30000 + _w(rb, 0xC01C96 + 2 * 8)
     pal_tab = 0x810000 + _w(rb, 0xC00379 + 2 * 8)
     base_rec = bytes(rb.d[off(RECORDS + 16 * (BASE_TYPE - 1)):off(RECORDS + 16 * (BASE_TYPE - 1)) + 15])
-    pages, all_scripts, info = ([], []), [], {}
+    pages, all_scripts, info = tuple([] for _ in range(PAGES)), [], {}
     sheets = {}                                          # sheet -> (its first mapping, archive, palette)
     groups = {}                                          # palette group -> set 8 palette of its first kind
-    anim2 = None
+    anim_page = [None] * PAGES                           # each page's first animation
     for name in ORDER:
         k = KINDS[name]
         all_maps = pages[k.get("page", 0)]
-        if k.get("page", 0) and anim2 is None:
-            anim2 = ANIM_FIRST + len(all_scripts)
+        if anim_page[k.get("page", 0)] is None:
+            anim_page[k.get("page", 0)] = ANIM_FIRST + len(all_scripts)
         rec = RECORDS + 16 * (k["type"] - 1)
         old = bytes(rb.d[off(rec):off(rec) + 15])
         arc_id, pal_id = old[0], old[1]
@@ -501,7 +524,10 @@ def apply(rb):
                 raise BuildError(f"SB1 enemy {name}: shares {k['sheet']} but not its archive / palette")
             built = _kind(rb, name, k, first)
             anim = ANIM_FIRST + len(all_scripts)
-            new = bytes([arc_id, pal_id]) + base_rec[2:4] + bytes([anim]) + base_rec[5:]
+            new = bytes([arc_id, pal_id]) + base_rec[2:4] + bytes([anim + k.get("start", 0)]) + base_rec[5:]
+            if k.get("routine") in syms:                     # own actor routine
+                r = syms[k["routine"]]
+                new = new[:9] + bytes([r & 0xFF, r >> 8 & 0xFF, r >> 16]) + new[12:]
             rb.patch(rec, old, new, f"SB1 enemy {name}: type ${k['type']:02X} record (type 01's walk, {k['sheet']})")
             all_scripts += built["scripts"]
             info[name] = dict(type=k["type"], tiles=built["tiles"], frames=0, colors=len(built["colors"]))
@@ -513,7 +539,7 @@ def apply(rb):
             pal_id = groups.setdefault(k["pal"], pal_id)
         # archive (set 8): same VRAM / flags, new size and source
         e = arc_tab + 8 * (arc_id - 1)
-        a = rb.alloc([n for n, *_ in OLD_DATA] + ["bulk"], lz.compress(built["arc"]),
+        a = rb.alloc([n for n, *_ in OLD_DATA if n.startswith("free_cb")] + ["bulk"], lz.compress(built["arc"]),
                      f"SB1 enemy {name}: OBJ tiles (set 8 archive {arc_id}, LZ)")
         rb.patch(e + 2, bytes(rb.d[off(e + 2):off(e + 7)]), struct.pack("<H", len(built["arc"])) + a.to_bytes(3, "little"),
                  f"SB1 enemy {name}: set 8 archive {arc_id}")
@@ -541,13 +567,16 @@ def apply(rb):
     if max(MAP_FIRST + len(m) for m in pages) > 0x100 or ANIM_FIRST + len(all_scripts) > MAP_FIRST:
         raise BuildError("SB1 enemies: too many mappings / animations")
     mt = _table(rb, pages[0], f"SB1 enemies: T 7 mappings from ${MAP_FIRST:02X}")
-    mt2 = _table(rb, pages[1], f"SB1 enemies: T 7 mappings from ${MAP_FIRST:02X}, page 1 (animations from ${anim2:02X})")
+    mts = [mt] + [_table(rb, pages[n], f"SB1 enemies: T 7 mappings from ${MAP_FIRST:02X}, page {n} (animations from "
+                                      f"${anim_page[n]:02X})") for n in range(1, PAGES)]
     at = _table(rb, all_scripts, f"SB1 enemies: T 7 animations from ${ANIM_FIRST:02X}")
     defs = {"ENMAP": f"${mt >> 16:02X}", "ENMAPBASE": f"${(mt - 2 * (MAP_FIRST - 1)) & 0xFFFF:04X}",
             "ENMAPFIRST": f"${MAP_FIRST:02X}", "ENANIM": f"${at >> 16:02X}",
             "ENANIMBASE": f"${(at - 2 * (ANIM_FIRST - 1)) & 0xFFFF:04X}", "ENANIMFIRST": f"${ANIM_FIRST:02X}",
-            "ENMAP2": f"${mt2 >> 16:02X}", "ENMAPBASE2": f"${(mt2 - 2 * (MAP_FIRST - 1)) & 0xFFFF:04X}",
-            "ENANIM2": f"${anim2:02X}"}
+            **{d: v for n in range(1, PAGES) for d, v in (
+                (f"ENMAP{n + 1}", f"${mts[n] >> 16:02X}"),
+                (f"ENMAPBASE{n + 1}", f"${(mts[n] - 2 * (MAP_FIRST - 1)) & 0xFFFF:04X}"),
+                (f"ENANIM{n + 1}", f"${anim_page[n]:02X}"))}}
     info["_clown"] = dict(pals=bg["pals"], start=syms["clown_start"], hit=syms["clown_hit"], tiles=bg["ntiles"])
     return defs, info
 

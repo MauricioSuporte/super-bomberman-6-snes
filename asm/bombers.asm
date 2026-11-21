@@ -396,8 +396,8 @@ stream_clear:
 if !ENMAP != 0
 ; SB1 enemies (features/sb1_enemies.py): type 7 objects with mapping ids from !ENMAPFIRST / animations
 ; from !ENANIMFIRST read new tables (bank !ENMAP / !ENANIM; the bases are moved down so that the stock
-; index 2 * (id - 1) lands on their first entry; objects with animations from !ENANIM2 use the mapping
-; table of page 1, same ids). Carry set = done. Y = object; keeps X, Y.
+; index 2 * (id - 1) lands on their first entry; objects with animations from !ENANIM2 / !ENANIM3 use the
+; mapping table of page 1 / 2, same ids). Carry set = done. Y = object; keeps X, Y.
 enemy_map:
     LDA $04FF,Y
     CMP #$07
@@ -405,7 +405,9 @@ enemy_map:
     LDA $049F,Y
     CMP #!ENMAPFIRST
     BCC .no
-    LDA $079F,Y                 ; animations from !ENANIM2: the second table (same ids)
+    LDA $079F,Y                 ; animations from !ENANIM3 / !ENANIM2: the third / second table (same ids)
+    CMP #!ENANIM3
+    BCS .three
     CMP #!ENANIM2
     BCS .two
     LDA #!ENMAP
@@ -421,6 +423,15 @@ enemy_map:
     STA $5D
     REP #$20
     LDA #!ENMAPBASE2
+    STA $5B
+    SEP #$20
+    SEC
+    RTS
+.three
+    LDA #!ENMAP3
+    STA $5D
+    REP #$20
+    LDA #!ENMAPBASE3
     STA $5B
     SEP #$20
     SEC
