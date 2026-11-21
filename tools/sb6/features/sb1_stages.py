@@ -39,8 +39,11 @@ ASSETS = os.path.join(ROOT, "assets", "stages")
 STAGES = {
     # soft_anim: the soft block's pictures (16 x 16 each, the first = _soft.png) shown anim_hold frames each,
     # in a loop (SB1 4-4's bumpers: 5 pictures, 3 frames; from SB1's VRAM, tiles 2/3/$12/$13)
-    "sb1_4-4": dict(stage=0x10, theme=2, map=4, gfx=2, soft_anim="sb1_4-4_soft_anim", anim_hold=3),
-    "sb1_6-4": dict(stage=0x17, theme=5, map=0x0B, gfx=5),
+    "sb1_4-4": dict(stage=0x10, theme=2, map=4, gfx=2, soft_anim="sb1_4-4_soft_anim", anim_hold=3, wrap=True),
+    # anim: the field's other pictures in order (field = the first), anim_hold frames each. SB1 6-4's hard blocks:
+    # the red light off 16 frames, lit 32 (SB1's VRAM, tiles $14/$15); wrap: see _pic
+    "sb1_6-4": dict(stage=0x17, theme=5, map=0x0B, gfx=5, anim=["sb1_6-4_lit", "sb1_6-4_lit"], anim_hold=16,
+                    wrap=True),
     # 1-7 (SB5 boss arena $68: theme $27, archive $1F and palette $1B shared with the other arenas, map $8F its
     # own) gets SB1's 4-8 arena in theme 4 (free: its room serves theme 5 above), set 4 archive / palette 4
     # 1-6 = the SB6 Unity scene's tournament arena (tools/unity_arena_assets.py): stands with the crowd, and
@@ -48,7 +51,7 @@ STAGES = {
     # named by no script; archive / palette $F0 through arc_entry / pal_lookup); stages $67/$69/$6B
     # (white, black, golden bomber) all draw map $8E
     "sb6_1-6": dict(stage=0x67, theme=0x28, map=0x8E, arc=0xF0, pal=0xF0, src_arc=0x1F, src_pal=0x1B,
-                    new_theme=True, ext=True, rows=(3, 11), alt="sb6_1-6_empty",
+                    new_theme=True, ext=True, rows=(3, 11), alt="sb6_1-6_empty", wrap=True,
                     scripts=[(0xC71BB1, "2A 1B 27 1F 0B 27 0C 8E", "2A F0 27 F0 0B 28 0C 8E"),
                              (0xC71F3B, "2A 1C 27 1F 0B 27 0C 90", "2A F0 27 F0 0B 28 0C 8E"),
                              (0xC72178, "2A 1B 27 1F 0B 27 0C 92", "2A F0 27 F0 0B 28 0C 8E")]),
@@ -111,6 +114,23 @@ def _flame_tiles(fcell, fcols):
         t[floor] = idx[floor]
         out += encode_4bpp(t)
     return bytes(out)
+
+
+def _field(name):
+    f = _rgb555(os.path.join(ASSETS, name + "_field.png"))
+    if f.shape != (13 * 16, 17 * 16):
+        raise BuildError(f"{name}: the field must be 17 x 13 cells")
+    return f
+
+
+def _pic(img, r, c, wrap):
+    """SB5 cell (c, r) = SB1 cell (c + 1, r). wrap: SB5 shows BG2 8 pixels to the right (screen x 0-7 = the
+    right half of column 15, wrapped around): column 15's right half takes SB1 column 0's right half, the
+    outer left wall next to column 0 (it is seen nowhere else)."""
+    cell = img[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
+    if wrap and c == 15:
+        cell = np.concatenate([cell[:, :8], img[r * 16:r * 16 + 16, 8:16]], axis=1)
+    return cell
 
 
 def _cells(name):
@@ -214,25 +234,27 @@ def build(rb, name, spec):
         return i
 
     top, bottom = spec.get("rows", (1, 11))
-    alt = _cells(spec["alt"])[0] if "alt" in spec else None
+    alt = _field(spec["alt"]) if "alt" in spec else None
+    wrap = spec.get("wrap", False)
     blink = []                      # (column, row, metatile id, id in the alternate picture)
 
-    anim = _cells(spec["anim"])[0] if "anim" in spec else None
+    anim = spec.get("anim")         # the field's other pictures: one name (SB1 4-8's fence) or a list
+    anim = [_field(a) for a in ([anim] if isinstance(anim, str) else anim)] if anim else None
     second = {}                     # metatile id -> its cells in the animation's other frames
 
     def meta(cell, col, cell1=None):
-        key = (cell.tobytes(), col, None if cell1 is None else cell1.tobytes())
+        key = (cell.tobytes(), col, None if cell1 is None else tuple(x.tobytes() for x in cell1))
         if key not in ids:
             ids[key] = new_id()
             cells.append((ids[key], cell, col))
             if cell1 is not None:
-                second[ids[key]] = [cell1]
+                second[ids[key]] = list(cell1)
         return ids[key]
 
     floors, fcells = {}, {}
     for r in range(13):
         for c in range(16):
-            cell = field[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
+            cell = _pic(field, r, c, wrap)
             inner = 1 <= c <= 13 and top <= r <= bottom
             hard = inner and c % 2 == 0 and r % 2 == 0
             col = 0x00 if inner and not hard else 0x80
@@ -242,12 +264,12 @@ def build(rb, name, spec):
                 fcells[cell.tobytes()] = fcells.get(cell.tobytes(), 0) + 1
             cell1 = None
             if anim is not None:
-                cell1 = anim[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
-                if (cell1 == cell).all():
+                cell1 = [_pic(a, r, c, wrap) for a in anim]
+                if all((x == cell).all() for x in cell1):
                     cell1 = None
             grid[r, c] = meta(cell, col, cell1)
             if alt is not None:
-                other = alt[r * 16:r * 16 + 16, (c + 1) * 16:(c + 1) * 16 + 16]
+                other = _pic(alt, r, c, wrap)
                 if (other != cell).any():
                     blink.append((c, r, int(grid[r, c]), meta(other, col)))
     cells.append((SOFT_ID, soft, 0x30))
@@ -413,13 +435,22 @@ def build(rb, name, spec):
         return a1, (a2 - a1) // 8, c1, c2 - c1
 
     a1, cap, c1, ccap = theme_slot(th)
-    if spec.get("new_theme"):
+    own = spec.get("new_theme")
+    if not own and count > min(cap, ccap):
+        s = SPARE_THEMES[0]
+        sa, scap, sc, sccap = theme_slot(s)
+        if sa + 8 * scap == a1 and sc + sccap == c1:     # the spare's tables just before ours: both
+            scap, sccap = scap + cap, sccap + ccap
+        if count > min(scap, sccap):                    # still too big: new tables in bank $D0 (SB5's
+            own = True                                  # rooms of themes 4 and 5 are freed, OLD_DATA)
+    if own:
         cb = bytearray(count)
         for i, _, cl in cells:
             cb[i] = cl
         cb[0] = 0x80
-        ma = rb.alloc(D0_ROOM, bytes(table), f"{name}: theme {th} metatiles ({count})")
-        ca = rb.alloc(D0_ROOM, bytes(cb), f"{name}: theme {th} collisions")
+        room = [r for r in D0_ROOM if r in rb.regions]
+        ma = rb.alloc(room, bytes(table), f"{name}: theme {th} metatiles ({count})")
+        ca = rb.alloc(room, bytes(cb), f"{name}: theme {th} collisions")
         for base_t, val in ((0xD00000, ma), (0xD08000, ca)):
             at = base_t + 2 * (th - 1)
             rb.patch(at, bytes(rb.d[off(at):off(at) + 2]), struct.pack("<H", val & 0xFFFF), f"{name}: theme {th} tables")
@@ -470,10 +501,14 @@ OLD_DATA = [
     ("free_81_stage45", 0xC1AE10, 264, 0xDDD55F25, "freed SB5 stage palettes (set 4 palettes 4, 5), bank $81"),
     ("free_d0_maps1", 0xD0A550, 167, 0x753E61CC, "freed SB5 stage maps 2-4 (LZ)"),
     ("free_d0_maps2", 0xD0A627, 261, 0x0A052514, "freed SB5 stage maps 6-11 (LZ)"),
+    # themes 4 and 5's metatile / collision tables (15 + 17 ids): 1-7 (theme 4) and 1-5 (theme 5) have their
+    # own tables now, themes 4 / 5 are named by no other played stage
+    ("free_d0_themes45", 0xD00286, 256, 0xC13CDE1E, "freed SB5 theme 4/5 metatile tables"),
+    ("free_d0_coll45", 0xD0809C, 32, 0x1138DEA5, "freed SB5 theme 4/5 collision tables"),
 ]
 
 
-D0_ROOM = ["free_d0_maps2", "free_d0_maps1", "d0"]    # bank $D0 room for new theme tables
+D0_ROOM = ["free_d0_themes45", "free_d0_coll45", "free_d0_maps2", "free_d0_maps1", "d0"]    # bank $D0 room for new theme tables
 
 
 def apply(rb):

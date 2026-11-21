@@ -229,7 +229,8 @@ CHAIN = [
 RIVALS = [(0x67, 1), (0x69, 2), (0x6B, 20)]
 RIVAL_OWN_ID = 0x5A                # column 1 = palette id $5A (features/bombers.py OWN_ID; char1 shares his)
 BG1_MAP = 0x3000                   # arena field: BG1 map at VRAM word $3000
-STAGE_OPS = {0x6B: (4, "stands blink"), 0x68: (5, "electric fence"), 0x10: (6, "bumpers animated")}
+STAGE_OPS = {0x6B: (4, "stands blink"), 0x68: (5, "electric fence"), 0x10: (6, "bumpers animated"),
+             0x17: (6, "hard block lights blink")}
 BOSSES = [                         # (boss stage, its first portal root, next stage)
     (0x67, 0xC71BE3, 0x69),        # 1-6, first duel (white)
     (0x69, 0xC71F6D, 0x6B),        # 1-6, second duel (black)

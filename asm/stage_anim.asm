@@ -1,7 +1,8 @@
 ; Animated stage tiles (tools/sb6/features/sb1_stages.py `anim` / `soft_anim`):
 ; World 1's 1-7 (SB1 4-8's arena) has an electric fence that SB1 animates by
 ; sending a second picture of its tiles every 2 frames; 1-4 (SB1 4-4) the
-; soft block's bumpers, 5 pictures of 3 frames. The build gives a stage's
+; soft block's bumpers, 5 pictures of 3 frames; 1-5 (SB1 6-4) the hard
+; blocks' red light (off, lit, lit: 16 frames each). The build gives a stage's
 ; animated tiles one block of BG slots and writes every picture of that
 ; block one after the other in ROM (all stages in bank !BANK), with a row of
 ; !TABLE: [stage, frames each picture stays, pictures, VRAM word (word),

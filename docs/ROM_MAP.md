@@ -929,9 +929,14 @@ script accumulator (`61` = add).
   `FF 8D DB 04`, set 4 arrangements).
 * Hack (`features/sb1_stages.py`, pictures from `tools/sb1_stage_assets.py`):
   1-4 (`$10`) = SB1 4-4, 1-5 (`$17`) = SB1 6-4: new map, metatiles,
-  collisions, archive and palette for themes 2 / 5 (5's tables moved over
-  theme 4's + its own); SB1 draws its stages on BG1 in 16x16-tile mode, 17
-  x 13 entries (walls 2 wide): SB5 column c = SB1 column c + 1. 1-7
+  collisions, archive and palette for themes 2 / 5 (5's tables are new
+  ones in bank `$D0`, 33 ids); SB1 draws its stages on BG1 in 16x16-tile mode, 17
+  x 13 entries (walls 2 wide): SB5 column c = SB1 column c + 1. SB5 shows
+  BG2 8 pixels to the right (column 0 at screen x 8): screen x 0-7 is the
+  right half of column 15 wrapped around, so that half gets SB1 column 0's
+  right half (`wrap`, 1-4 / 1-5 / 1-6). 1-5's hard blocks blink like SB1
+  6-4's (SB1 swaps BG tiles `$14`/`$15`: light off 16 frames, lit 32;
+  `asm/stage_anim.asm`, op `FF 1A F6 06`). 1-7
   (`$68`, boss arena: `2A 1B 27 1F 0B 27 0C 8F`, op `0B` = theme, `0C` =
   map + draw without soft blocks; theme `$27`, archive `$1F`, palette `$1B`
   are shared by all arenas `$67-$73`, `$9C-$9F`) = SB1 4-8: its script now
@@ -1090,6 +1095,8 @@ script accumulator (`61` = add).
 * Stage grid: `$C4:7B33` unpacks the layout from the scene script pointer
   `[$53]` to `$7E:4800` (cells) / `$7E:4A00`, then 13 rows x 17 into
   `$0916+` (collision, 2 bytes per cell, row stride `$40`) and `$04F4`/`$0514`.
+* Animated BG tiles: 6-4's hard block light = tiles `$14`/`$15` (BG1 chars
+  at VRAM 0) rewritten in VRAM, off 16 frames / lit 32 (no CGRAM change).
 * Music (port 0, value & `$7F`; bit 7 toggles per command): world 1 `$02`,
   2 `$04`, 3 `$06`, 4 `$0B`, 5 `$14`, 6 `$08`. Boss stages send `$3E` (cold
   restart, new upload) and then `$0A` (1-8, 2-8), `$17` (3-8), `$18` (4-8),

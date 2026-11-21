@@ -65,7 +65,7 @@ endif
 +   dec a
     bne +
 if !ANIMSTART
-    jsl !ANIMSTART              ; 6: animated stage tiles only (1-4's bumpers)
+    jsl !ANIMSTART              ; 6: animated stage tiles only (1-4's bumpers, 1-5's lights)
 endif
     plp
     rtl
