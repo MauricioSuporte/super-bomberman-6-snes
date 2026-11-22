@@ -664,15 +664,134 @@ script accumulator (`61` = add).
   `$67` -> `$69` -> `$6B` -> `$68`, each one rival in seat 4. Rival set-up
   `$C4:3CCF` (A = character, X = seat; from op `FF 7C 03 slot x y char`,
   `$C2:16EE` -> `$C4:3CB5`): `$16C2` = character, `$16DA` = palette id
-  (`$80:BB4E[char]` + 7; hook `rival_pal` at `$C4:3CD5`: character 1, ids
+  (`$80:BB4E[char]` + 7; hook `rival_pal` at `$C4:3CD5`: character 5, ids
   `$5A`/`$5B`/`$6D` = columns 2/3/21 of the palette picture), then the
   character's stats from the table at `$C0:B9D4` (word per character ->
-  `$1D26`, hearts + 1 -> `$1662`, fire `$7E:4EBD`, bombs `$17CA`, speed
+  `$1D26`, hearts + 1 -> `$1662`, bombs `$7E:4EBD`, fire `$17CA`, speed
   `$15D2`/`$15EA`, abilities `$7E:4ED5`, `$167A`; hook `rival_stats` at
   `$C4:3D28`). A bomber with hearts (`$1662`) loses one per hit and blinks.
   Kick = `$167A` bit 6 + `$7E:4ED5` bit 1 (item `$0B`, `$C5:43AB`); item
   handlers: table `$C5:4195` (item id - 1). Boss start op `$C2:16E6`
-  (`LDA [$0D] / JSL $C43C60`) runs before the rival set-up.
+  (`LDA [$0D] / JSL $C43C60`) runs before the rival set-up. Stats table
+  entry: `$1D26` (AI level), hearts + 1, bombs (max 8), fire (range, max
+  8; items 1 / `$0E` raise `$17CA`, whose picture is the fire), speed lo/hi, `$7E:4ED5`, `$167A`; the players start with speed
+  `$00E0`. Character 1's entry has `$7E:4ED5` = `$20` (SB5's mine bomb):
+  `rival_stats` now writes every stat (`world1.RIVAL_STATS`: white 1 bomb /
+  1 fire / speed `$E0`, black 2/2/`$100`, golden 3/3/`$120` + 3 hits +
+  kick; skate item `$C5:4232` = speed + `$20`, max `$200`; down `$C5:421C`,
+  min `$80`). AI level `$1D26` = Battle's COM level (`$7E:625B` - 1: 0 EASY,
+  1 NORMAL, 2 HARD, 3 SUPER; the menu's last level `$7E:6247` is 3, 4 once
+  SUPER is unlocked); the three rivals use 0 (EASY).
+* 1-6's next duel: boss stages with a rival skip SB5's clear task
+  (`$C5:3A2D`, `$1D1A` = 8); a dead rival (`$C4:3D98`: `$15A2` bit 7 and
+  `$17FA` = `$FF`) only drops its item (`$C4:3DED`) and decrements `$1D50`,
+  so no portal ever came. The kept portal root (`$C71BE3` / `$C71F6D` /
+  `$C721AD`) also tests route flag 4 in its `0D` / `0C` scripts (`08 04
+  49 04 11 ...`; SB5 picks one of six portals by flags). With the clear
+  task (`$C5:3B4E`) and flag 4 the portal works as in SB5: entering it ->
+  `$C5:02AB` (`$1D1E` bit 0, type `0A`, `$C0:4637`, win sound `$22`, ends
+  the task), ~475 frames later a script runs `0F next` (`$C2:0C20`:
+  `$1031` = next, `$1D1E` = 4) and `$C5:3AAC` leaves the stage. SB6 plays
+  the three duels in stage `$67` alone, as SB1 (`world1.asm` next_rival):
+  90 frames after the rival's object is gone (`$17FA` = `$FF`) seat 4 is
+  set empty (`$15A2` = `$80`, else the new rival comes out dead) and made
+  again as op `FF 7C` does (`$C2:16EE`: `$1D28` / `$1D2A` = cell (7, 1), A
+  = character, X = 4, `JSL $C4:3CB5`: set-up, object `$C4:2A69`, `$1D50`
+  + 1, death task `$C4:3D94`); `rival_pal` / `rival_stats` read the duel
+  (`$7F:FBFD`) while `$7F:FBFE` = 1; the gate opens (its open map words
+  follow the closed ones), intro_task walks it in. Before the Golden the
+  stands blink first with nobody in seat 4 (intro phase 3: intro_pads
+  holds the players' pads), then golden_wait makes it and opens the gate.
+  In the last blackout spawn_reset puts every living seat back on its
+  start (kept at the first intro): a bomber's x / y are its object's
+  (`$055F,obj` / `$05BF,obj`, obj = `$17FA,seat`; `$C4:31BD` makes
+  `$182A` / `$1872` from them + `$1D3B` / `$1D3D` every frame), pose `$46`
+  facing up. A rival's death item (`$C4:3E10`, table `$C4:B9CA` by
+  character) goes through rival_item: in 1-6 the white and black drop
+  nothing, the Golden the kick (`$0B`); the stage ends 420 frames after
+  the Golden's object went away (time to pick it up): 300 frames after
+  its death, or as soon as no item is left on the field (`$1152` bit 7,
+  checked from 30 frames on).
+* SB1 World 5's crowd: SB1 sounds `$0D` / `$12` (World 5's set only: it
+  adds sample 9, `$C5:8DD4` in SB1's ROM, 3627 bytes, looped whole), voice
+  0, pitch `$0674`, ADSR `$CC/$EC`, VOL `$4F`, released after 3.4 s.
+  SB6 plays the fan game's Audience.mp3 instead (`assets/sound/audience.wav`,
+  2.8 s at 8 kHz, ~14.7 KB, no loop), in two pieces around the cornered
+  sound's part B (`$D7B1-$DCFF`): sequence + first part ending at `$D7B1`
+  (its last block END+LOOP, the directory's loop address = the second
+  part), second part from `$DD00` (`crowd.layout`). Every SB1 stage list
+  keeps `[B, $DD00)` free (`sb1_music.build` `b_lo`; SB1 samples that do
+  not fit below it go above `$DD00`): before, the 18 KB crowd in 1-6 and
+  the SB1 samples of 1-1, 1-2, 1-4 and 1-5 ran over part B (the cornered
+  sound was cut). Hudson SFX `$61` (`features/crowd.py`; SB5's entries `$61-$66`
+  point at a dummy), instrument 29 (garbage in 1-6's set, no SFX there uses
+  it), directory `$3E`; sequence + sample at the top of 1-6's music list
+  (under the echo buffer, `$F500`), table entries sent by game_sfx's
+  upload while `$1031` = `$67`. A bomber's death sound (`$C4:367F`) goes
+  through rival_sfx: 1-6's white and black mechas ask for `$61` (game_sfx's
+  pending byte `$018C`), every other bomber gets the death sound.
+* SB5's flame tiles (`assets/stages/sb5_flames.bin`) use palette 2
+  entries 5-10 (SB5's grass) and also 1 and 4 (its shadow, at the flames'
+  edges); `sb1_stages` spec `flame_floor` draws those as the stage floor
+  too (1-6, whose arena palette has gray / brown there). Color 14 pixels
+  next to the floor are SB5's sparks (every stage).
+* SB1's MIDIs (`assets/SB1 midi`, khinsider): melodic 8-interval n-grams
+  of each voice of `assets/sound/sb1_w<n>_song.txt` against each MIDI
+  track: W1 `level-1-3-`, W2 `level-2`, W3 `level-3`, W4 `level-4`, W5
+  (1-6) `level.mid`, W6 `level-6`. After the Golden: `JML $C5:02AB`, 240 frames later
+  `$1031` = `$68` / `$1D1E` = 4 written directly (exit_task). Running type
+  `0B` through `$C2:00D7` from our task ended it twice and hung SB5.
+  Stages `$69` / `$6B` stay in the ROM (records unchanged) but nothing
+  leads there.
+* Bomber facing: `JSL $C4:3C24` (A = animation - `$1692,x`, Y = facing 1
+  right 2 down 3 left 4 up, X = actor) sets `$1632` and the animation
+  `$179A` + facing - 1. Stage start pose `$46-$49`; when play starts SB5
+  sets `$15` (front only). 1-6 turns the seats up (`face_up` when the map
+  is in, `face_up_start` swaps `$15` for `$49`).
+* 1-6's type `0E` script (`42 j 03` boss jingle, `FD 0E 40 00 00`,
+  music, `01`) is `42 06 00 01 00`: the music right after the stage
+  intro jingle (`sb1_music.MUSIC_SCRIPTS`).
+* 1-6's items like SB1 World 5 (`asm/world1.asm` item_task, from the
+  rival's arrival): SB1 5-1's routine `$C4:3523` (SB1 ROM) places one item
+  every 640 frames (`$0280`) while fewer than `$20` are on the field
+  (`$0C91`), on a random free cell (`$C4:3B6E`, retried next frame), from
+  the 16-entry table `$C4:3553` [1,1,2,2,3,4,5,A,B,C,D,9,9,9,F,F] (SB1 ids,
+  pictures from `$C3:0870`: 1 bomb, 2 fire, 3 heart, 4 skate, 5 vest, 6
+  1-up, 7 bomb with speed lines, 8 wall pass, 9 clock, A full fire, B
+  remote, C kick, D boxing glove, E rice ball, F skull). SB5 places a
+  visible item with `$C5:4557` (A = item, `$AE` = cell, 8-bit; `$145A` =
+  item, `$1052` = `$10`, `$1152` bit 7, metatile `$047E` + 4 x item via
+  `$C0:420A`, pushed on the `$4DF0` list). SB5 item ids (pictures checked
+  in the 1-6 arena; 1-6 spawns only 2, 1, 3, `$0C`, `$11`, `$0B`, 5): 1 fire, 2 bomb, 3 skate, 4 remote (red bomb), 5
+  bomb pass?, 6 wall pass (bricks), 7 vest, 8 clock, 9 1-up (Bomberman's
+  head), `$0A` (power glove), `$0B` kick, `$0C` punch (blue glove), `$0D`
+  line bomb, `$0E` full fire, `$0F` pierce?, `$10` mine?, `$11` boxing
+  glove, `$12`/`$13` skull, `$14` heart, `$15` egg. Random number: `JSL
+  $C0:1DEB` with A = n gives 0..n.
+* Character abilities of CPU bombers (`$C4:01FE`): `$7D` = character
+  (`$16C2 & $0F`, 0 for a pad bomber), `JMP ($C4:0205,X)`: entry 2
+  (`$C4:029B`) puts soft blocks (`$C4:2161` -> `$C4:218F` -> `$C0:4383`,
+  `$30` in the cell `$0FBA`, every `$28` frames, `$1029`) in front of the
+  bomber; entries 1, 3, 5 = `RTS`, 4 `$0310`, 6 `$0459`, 7 `$04F0`, 8
+  `$05D7`, 9 `$03F4`. A 1-6 rival as character 2 filled the arena with
+  soft blocks drawn as the floor (the arena's soft block picture): the
+  rivals are character 5 (`RTS`).
+* 1-6's intro (SB1 World 5): `FF 7C 03 07 03 n` (`$C7:1D1E`, `$C7:1FC1`,
+  `$C7:2294`, x 7 y 3) now puts the rival at (7, 1) in the stands'
+  corridor; `FF 1A F6 07` starts `intro_task`: `$101F+4` = 0 (the rival
+  becomes a pad-driven bomber, no AI) until the map is in (and, in `$6B`,
+  the stands stopped blinking), corridor cells `$1052+$17/$27` = 0, then
+  `intro_pads` (`$C0:0B54`, the main loop's `JSL $C04733` after the pad
+  reader; objects run before the tasks, `$C0:0B44`) empties seats 0-3's
+  pads and holds down on the rival's (`$31+4`) until `$1872+4` >= `$50`
+  (7, 5); then `$101F+4` = 1, the corridor walls again and the closed gate
+  (SB1's doors, BG1 map words) is queued. The type 01 script's `10 10`
+  (16 random soft blocks, drawn as the floor: invisible) is dropped.
+* Bomber death sound (Normal Game, `$C4:367F`): `LDA $101F,X / BNE` skipped
+  group 3 id 1 for CPU bombers; NOPed: rivals die with SB1's death sound
+  (`gs_sound` -> SFX `$60`), as in SB1. A death while R is missing (being
+  restored after another group-3 voice) waits for it, up to 150 main-loop
+  passes (`$0196`), instead of being dropped.
 * Arena field = BG1, map at VRAM word `$3000` (32 wide; cell (c, r) TL at
   `$3000 + 64r + 2c`), BG tiles from word `$1000` (tile `$100`); an arena
   draws columns 0-14. 1-6 = theme `$28` (named by no SB5 script; only ops
@@ -693,7 +812,8 @@ script accumulator (`61` = add).
   relies on channel 0's registers and on the vblank time left: a long DMA
   there corrupts the later transfers (flames, HUD).
 * 1-6's stands (`stand_task`): fade to black through the INIDISP shadow
-  `$0300`, the stands' BG1 map words queued, fade back; 1-7's electric
+  `$0300`, the stands' BG1 map words queued (SB1 5-1's crowd / 5-8's stone),
+  fade back; 1-7's electric
   fence (`asm/stage_anim.asm`): SB1 4-8 sends a second picture of 27
   tiles every 2 frames; the hack keeps the fence's tiles in one block of
   slots at the archive's end (29 tiles) and a task queues the frame due
@@ -703,17 +823,22 @@ script accumulator (`61` = add).
   each (`assets/stages/sb1_4-4_soft_anim.png`, from SB1's VRAM); the soft
   block's 4 tiles get their own slots and the same task plays them. The
   task's table (`[stage, frames held, pictures, VRAM word, size, first
-  picture]`) is started by world1's op `FF 1A F6 05` (1-7) / `06` (1-4).
+  picture]`) is started by world1's op `FF 1A F6 05` (1-7) / `06` (1-4,
+  1-5, 1-6). 1-6's crowd (SB1 World 5): SB1 swaps BG tiles `$20-$27` /
+  `$30-$37` (4 blocks of 16x16) between 2 pictures, each block at its own
+  pace: 16, 24 and 19 frames (the last two blocks together, the side
+  columns); a stage can have several rows in the task's table, one per
+  animation (`anim_groups`, `anim_stages` in `sb1_stages.STAGES`), each
+  with its own counter.
 * Flames over SB1 floors: SB5's flames are BG tiles `$010-$07F` (palette 2,
   tile n always in quadrant n & 3 of its cell, never flipped) with SB5's
   grass in entries 5-10 around the fire; on SB1's patterned floors (1-4's
   squares) that grass showed as a flat color around every explosion. The
-  stages with the animation task (1-4, 1-7) get their own copy of the 112
+  stages with the animation task (1-4, 1-5, 1-6, 1-7) get their own copy of the 112
   tiles (`assets/stages/sb5_flames.bin`, from SB5's VRAM; no archive of sets
   0-12 holds them) with those pixels taken from the floor cell, its colors
   in palette 2 entries 5-10; `asm/stage_anim.asm` sends them once at the
-  task's start (256 bytes a frame). 1-5 and 1-6 keep the floor's most
-  common color there.
+  task's start (256 bytes a frame).
 * Burning soft blocks (SB1 stages): SB1 draws them on BG1 (tiles `$1C0-$1CA`,
   palette 7, 6 pictures of 12/10/8/6/4/2 frames); `sb1_stages` puts 5 of them
   (`assets/stages/<stage>_burn.png`, from SB1's VRAM) in SB5's 5 burning
@@ -1005,7 +1130,25 @@ script accumulator (`61` = add).
   sample (directory 2) of the start jingle never sounds (silent block in
   the lists); directory 3 (other jingles' percussion) is kept when there
   is room, else it names SB1's most alike sample (1-2: SB1's kick). The
-  World 1 stages without SB1 music (1-6, 1-7) play their own songs (sets `$1E`/`$25`, song `$0E`):
+  Since 2026-11 every World 1 SB1 song comes from khinsider's MIDIs (`sb1_w<n>m_song.txt`,
+  `tools/midi_song.py`; `sb1_music.IMAGES` = the SB1 sound RAM of their samples): 1-1 `level-1-3-`,
+  1-2 `level-2`, 1-3 `level-3`, 1-4 `level-4`, 1-5 `level-6`, all at SB1's row, offset 0 (W6 -7 rows),
+  90-100 % of SB1's notes found in them at SB1's pitch; SB1's dumps (`sb1_w<n>_song.txt`) stay as the
+  reference (no stage plays them). `SONG_UNITS`: 1-3's at 16 units a row and 1-5's at 12 (at 24, 4
+  players fell to 49 / 41 fps in `coop4_check`: Hudson's driver too busy, as 1-6's).
+  1-6's duels (`$67`/`$69`/`$6B`) play SB1's World 5 song from a MIDI (`sb1_w5m_song.txt`, made by
+  `tools/midi_song.py` from khinsider's `level.mid`: a 2-beat pickup + 20 bars looped, as the SB6 fan
+  game's; each MIDI track matched to SB1's song note by note: lead = SB1 sample 01 (MIDI note - 89),
+  bass = 02 (- 56), chords and track 6 = 07 (- 72), drums = 04 (38 at SB1's pitch `$0799`, 40 + 65 at
+  `$0993`); every pitch is one SB1's song plays; 694 notes, 940-byte sequence, 6-7 voices, same samples
+  as SB1's dump `sb1_w5_song.txt` (8 voices, a 32-bar intro and a 60-bar loop; no stage plays it now):
+  `sb1_music.IMAGES`; the converter
+  also takes channels 1 and 0 when a song needs them, as SB5's own songs do; at 12 units a row, `sb1_music.SONG_UNITS`: at 24 its
+  4.2 ms ticks kept Hudson's driver so busy that the CPU's handshake `$C0:0E7F` waited up to ~20 ms per
+  sound command, 1-6 at 47 fps with 4 players); their type 01 scripts load and play SB5's boss music (id
+  `$0F` = set `$35` + song `$0E`, `FF A0 0F` while loading, `42 0F 00` after the intro): both name id 6
+  now (`sb1_music.MUSIC_SCRIPTS`; a play op naming another id than the one loaded uploads it then, ~90
+  frames frozen). The World 1 stage without SB1 music (1-7) plays its own song (set `$35`, song `$0E`):
   SB5's ZONE1 song is no longer heard; its own samples (`$25`, `$26`) are freed (`free_dc_zone1`). The list overwrites set
   `$2C`'s sequence while `$03CE` still says `$2C` (set to `$FF`, music id 6
   would send the set again over the list): `sb1m_song` marks `SB1M_FLAG`

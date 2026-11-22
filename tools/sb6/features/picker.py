@@ -477,7 +477,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
     blob.add("pk_jobs", bytes(8 * 64))
     data = blob.data
     sizes = dict(pk_rtiles=len(rest_tiles), pk_glyphs=len(GLYPHS) * 32, pk_btiles=len(btiles))
-    addr = rb.alloc(["obj_f9", "obj_f8", "stream_ef"], bytes(data), "picker: portraits, palettes, cursor art, tables")
+    addr = rb.alloc(["obj_f9", "obj_f8", "stream_ef", "obj_f7"], bytes(data), "picker: portraits, palettes, cursor art, tables")
     lab = {k: addr + v for k, v in blob.labels.items()}
     recs = bytearray()
     for vram, label, start, size, last in jobs:

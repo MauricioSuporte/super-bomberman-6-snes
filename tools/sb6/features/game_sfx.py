@@ -278,7 +278,9 @@ def build(rom, sound_dir, cache_dir):
     def dir_list(loop):
         return tm._list([(0xFD00 + 4 * SRC_CORNER, struct.pack("<HH", corner_at, loop))])
 
-    lists = dict(L_R=l_r, L_PATCH=l_patch, L_DIR0=dir_list(silent_at), L_DIR1=dir_list(b1), L_DIR2=dir_list(b2),
+    from . import crowd
+    cheer = tm._list(crowd.patch(sound_dir, b1))
+    lists = dict(L_R=l_r, L_PATCH=l_patch, L_CHEER=cheer, L_DIR0=dir_list(silent_at), L_DIR1=dir_list(b1), L_DIR2=dir_list(b2),
                  L_B1=tm._list([(b1, part_b)]) if part_b else tm._list([]),
                  L_B2=tm._list([(b2, part_b)]) if part_b else tm._list([]))
     songs = _songs(rom, len(part_b))
@@ -297,7 +299,8 @@ def apply(rb, sound_dir, cache_dir):
     lists, songs, sets, info = build(rb.d, sound_dir, cache_dir)
     defs = {"ACTIVE": "$000100", "NSONGS": tm.N_SONGS, "RTL_C0": f"${tm.RTL_C0:06X}",
             "CMD_CORNER": f"${CMD_CORNER:02X}", "CMD_ENEMY": f"${CMD_ENEMY:02X}", "CMD_DEATH": f"${CMD_DEATH:02X}",
-            "STREAM_SET": f"${STREAM_SET:02X}", "SB1M_SONG": f"${SB1M_SONG:02X}"}
+            "STREAM_SET": f"${STREAM_SET:02X}", "SB1M_SONG": f"${SB1M_SONG:02X}",
+            "CHEER_STAGE": "$67"}
     for name, data in lists.items():
         defs[name] = f"${rb.alloc('bulk', data, f'game SFX: upload list {name}'):06X}"
     defs["SONGS"] = f"${rb.alloc('bulk', songs, 'game SFX: per song (R ok, B1, B2)'):06X}"

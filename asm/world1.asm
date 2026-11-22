@@ -19,7 +19,8 @@
 ;   n = 4  (1-6's third duel, type 04) the stands blink (stand_task, below)
 ;   n = 5  (1-7, type 04) start the electric fence's task (asm/stage_anim.asm) and the clown
 ;          boss's (asm/sb1_enemies.asm clown_start)
-;   n = 6  (1-4, type 04) start the animated tiles' task (asm/stage_anim.asm)
+;   n = 6  (1-4, 1-5, 1-6, type 04) start the animated tiles' task (asm/stage_anim.asm)
+;   n = 7  (1-6's duels, type 04) the rival walks in (intro_task, below)
 ;   n = 2  (type 0C) players on the door: like op $12 ($C2:0C67), the sum
 ;          of seat + 1 of the live bombers on the cell -> $0373, JSL $C174D1
 ; State: $7F:FB10 door x (0 = not chosen), $7F:FB11 door y, $7F:FB12-$7F:FB13
@@ -67,6 +68,11 @@ endif
 if !ANIMSTART
     jsl !ANIMSTART              ; 6: animated stage tiles only (1-4's bumpers, 1-5's lights)
 endif
+    plp
+    rtl
++   dec a
+    bne +
+    jsr intro_start             ; 7: 1-6's rival walks in
     plp
     rtl
 +   lda #$00                    ; 3: forget, start the picking task
@@ -315,12 +321,12 @@ knight_hit:
     db $01, $10, $FF, $F0       ; right, down, left, up
 
 ; ---------------------------------------------------------------------------
-; 1-6, the tournament (SB6 Unity scene): three duels, stages !RIVAL1/2/3, each
-; one rival (seat 4) drawn with character 1's sheet (the mecha bomber) and
+; 1-6, the tournament (SB1 World 5's arena): three duels, stages !RIVAL1/2/3, each
+; one rival (seat 4) drawn with character !RIVALCHAR's sheet and
 ; one column of its palette picture (rival_pal); the third is the Golden
-; Bomber: 3 hits (2 hearts, $1662), kick (rival_stats), and the stands blink between the crowd and empty before
-; it (stand_task). The arena is theme $28 / set 4 archive and palette $F0
-; (features/sb1_stages.py "sb6_1-6"), ids past SB5's tables: arc_entry and
+; Bomber: 3 hits (2 hearts, $1662), kick (rival_stats), and the stands blink between the crowd and SB1 5-8's
+; stone before it (stand_task). The arena is theme $28 / set 4 archive and palette $F0
+; (features/sb1_stages.py "sb1_5-1"), ids past SB5's tables: arc_entry and
 ; bombers.asm's pal_lookup point at the World 1 entries.
 
 ; $C0:1B0E (archive loader, A = M 8-bit, Y = id - 1, X = set * 2): replaces
@@ -353,7 +359,7 @@ rival_pal:
     cpx #$04
     bne .stock
     phx
-    lda.l $7E1031
+    jsr duel
     ldx #$02
 -   cmp.l .stages,x
     beq .ours
@@ -367,7 +373,7 @@ rival_pal:
     adc #$07
     rtl
 .ours:
-    lda #$01                    ; character 1 (the mecha bomber sheet)
+    lda #!RIVALCHAR             ; character !RIVALCHAR's sheet (features/world1.py RIVAL_CHAR)
     sta $16C2+4
     lda.l .ids,x
     plx
@@ -378,34 +384,563 @@ rival_pal:
 .ids:
     db !PAL1, !PAL2, !PAL3
 
+!DST = $7FFBFD                  ; the duel being fought (its stage id: !RIVAL1/2/3; 1-6 is all stage !RIVAL1)
+!RESP = $7FFBFE                 ; 1 while next_rival creates the rival (rival_pal / rival_stats read !DST)
+
+; the duel whose rival is being set up: the stage's own, or !DST when next_rival makes it
+duel:
+    lda.l !RESP
+    beq +
+    lda.l !DST
+    rts
++   lda.l $7E1031
+    rts
+
 ; $C4:3D28 (end of the rival set-up: its stats from the character's table
 ; $C0:B9D4, here the last one): replaces LDA ($BD),Y / STA $167A,X (X =
-; seat). 1-6's rivals: 1 hit (no heart), the Golden Bomber 3 (2 hearts) and
-; the kick ($167A bit 6 + $7E:4ED5 bit 1, as item $0B gives)
+; seat). 1-6's rivals (features/world1.py RIVAL_STATS): hearts ($1662: hits
+; - 1), fire ($17CA), bombs ($7E:4EBD), abilities ($7E:4ED5: only the kick,
+; bit 1, with $167A bit 6 from the table; the character's own gave SB5's
+; mine bomb), speed ($15D2/$15EA: $00E0 = the players' start, + $20 per
+; skate as SB5's item $C5:4232), AI level ($1D26)
 rival_stats:
     lda ($BD),y
     sta $167A,x
     cpx #$04
     bne .out
+    phx
+    jsr duel
+    ldx #$02
+-   cmp.l .stages,x
+    beq .found
+    dex
+    bpl -
+    plx
+.out:
+    rtl
+.found:
+    lda.l .hp,x
+    sta $1662+4
+    lda.l .fire,x
+    sta $17CA+4
+    lda.l .bombs,x
+    sta.l $7E4EBD+4
+    lda.l .abil,x
+    sta.l $7E4ED5+4
+    lda.l .level,x
+    sta $1D26
+    lda.l .speed,x
+    sta $15D2+4
+    lda.l .speedhi,x
+    sta $15EA+4
+    plx
+    rtl
+.stages:
+    db !RIVAL1, !RIVAL2, !RIVAL3
+.hp:
+    db !HP1, !HP2, !HP3
+.fire:
+    db !FIRE1, !FIRE2, !FIRE3
+.bombs:
+    db !BOMBS1, !BOMBS2, !BOMBS3
+.abil:
+    db !ABIL1, !ABIL2, !ABIL3
+.level:
+    db !LEVEL1, !LEVEL2, !LEVEL3
+.speed:
+    db !SPEED1&$FF, !SPEED2&$FF, !SPEED3&$FF
+.speedhi:
+    db !SPEED1>>8, !SPEED2>>8, !SPEED3>>8
+
+; FF 1A F6 07 (1-6's duels, type 04): SB1 World 5's intro. The rival (seat
+; 4) starts in the stands' corridor at (7, 1) (its FF 7C op); the task holds
+; it there (no AI: $101F+4 = 0 makes it a pad-driven bomber with no input)
+; until the collision map is in (and, before the Golden Bomber, the stands
+; stopped blinking: !BPH = 3), opens the corridor (cells (7, 1), (7, 2) of
+; $1052 = 0), then each frame (tasks run after the pad reader) freezes the
+; four seats' pads and holds "down" on the rival's ($31+4; intro_pads does
+; it before the objects run) until its y
+; ($1872+4) reaches !INTROY (or it got stuck 120 frames after leaving),
+; then gives it back to the AI, walls the corridor again and closes the
+; gate (BG1 map words of the closed gate, SB1's doors). State $7F:FBD4
+; phase, $FBD5 frames left, $FBD6 the stage.
+!IPH = $7FFBD4
+!IFR = $7FFBD5
+!IST = $7FFBD6
+!ITS = $7FFBD7                  ; item_task (below): the stage, frames left (word)
+!ITT = $7FFBD8
+!NXT = $7FFBFC                  ; frames since the rival died (next duel)
+!NEXTWAIT = 90                  ; frames from the rival's death to the next rival
+!GOLDWAIT = 300                 ; from the Golden Bomber's death to the stage end (5 s), or
+!GOLDGRACE = 30                 ; once no item is left on the field (after this many frames)
+!SPX = $7FFB20                  ; 4 bytes: each seat's start x ($182A), then 4 its y ($1872)
+!GOLDN = $7FFB28                ; !NXT's carries (frames / 256)
+!EXITWAIT = 240                 ; then to the next duel
+!FUP = $7FFBFB                  ; seats whose start pose was turned up (face_up_start)
+
+intro_start:
+    lda.l $7E1031
+    sta.l !DST
+    lda #$00
+    sta.l !RESP
+    sta.l !IPH
+    lda #$00
+    sta.l !FUP
+    lda.l $7E1031
+    sta.l !IST
+    sta.l !ITS
+    rep #$20
+    lda.w #!ITEMFIRST
+    sta.l !ITT
+    sep #$20
+    jsl $C020A1
+    dl intro_task
+    db $60
+    jsl $C020A1
+    dl item_task
+    db $60
+    lda #$00
+    sta.l !NXT
+    sta.l !GOLDN
+    rts
+
+; SB1 World 5's items (its routine $C4:3523): once the rival walked in, every
+; !ITEMEVERY frames, while fewer than 32 items lie on the field, one of the
+; 16 entries of .pool (features/world1.py ITEM_POOL: SB1's table $C4:3553 in
+; SB5 ids) appears on a random free floor cell (no wall, bomb, flame, item or
+; bomber there; else tried again next frame, as SB1 does), through SB5's
+; $C5:4557 (A = item, $AE = cell: the item map $145A, $1052 = $10, $1152
+; bit 7, its metatile). State $7F:FBD7 the stage, $7F:FBD8 frames left (word).
+
+item_task:
+    php
+    sep #$30
+    lda.l $7E1031
+    cmp.l !ITS
+    beq +
+    jsl $C021CE                 ; stage over
+    plp
+    rtl
++   lda.l !IPH
+    cmp #$03
+    bne +
+    jsr golden_wait             ; the stands blink before the Golden Bomber
+    bra .out
++   cmp #$02
+    bne .out                    ; the rival is not in yet
+    jsr face_up_start
+    lda.l $7E15A2+4             ; the rival (seat 4): bit 7 = dead
+    bpl .items
+    jsr rival_dead
+    bra .out
+.items:
+    rep #$20
+    lda.l !ITT
+    dec a
+    sta.l !ITT
+    sep #$20
+    bne .out
+    jsr item_place
+    rep #$20
+    lda.w #!ITEMEVERY
+    bcs +
+    lda.w #$0001                ; no free cell this time: next frame
++   sta.l !ITT
+    sep #$20
+.out:
+    plp
+    rtl
+
+; after SB5's stage end (next_duel above): what the portal's exit script does, type
+; 0B (`0F next`: $1031 = the next duel, $1D1E = 4), as the portal does once its
+; player went in (SB5 waits ~475 frames there, the win sound)
+exit_task:
+    php
+    sep #$30
+    lda.l $7E1031
+    cmp.l !ITS
+    bne .end
+    lda.l !NXT
+    inc a
+    sta.l !NXT
+    cmp #!EXITWAIT
+    bcc .out
+    lda.l $7E1D1E               ; what its op 0F does ($C2:0C20), not through the script engine (run
+    and #$04                    ; from a task of ours, $C2:00D7 ended it twice and SB5 hung)
+    bne .end
+    lda.l !DST
+    ldx #!NEXT1
+    cmp #!RIVAL1
+    beq +
+    ldx #!NEXT2
+    cmp #!RIVAL2
+    beq +
+    ldx #!NEXT3
++   txa
+    sta.l $7E1031
+    lda #$04
+    sta.l $7E1D1E
+.end:
+    jsl $C021CE
+.out:
+    plp
+    rtl
+
+; a rival's death (SB5 $C4:3DED, X = its character, $AE = its cell): SB5 drops
+; its character's item ($C4:B9CA); in 1-6 the white and black mechas drop
+; nothing, the Golden Bomber the kick ($0B)
+rival_item:
     lda.l $7E1031
     cmp #!RIVAL1
-    beq .one
-    cmp #!RIVAL2
-    beq .one
+    bne .sb5
+    lda.l !DST
     cmp #!RIVAL3
-    bne .out
-    lda $167A,x
-    ora #$40
-    sta $167A,x
-    lda.l $7E4ED5+4
-    ora #$02
-    sta.l $7E4ED5+4
-    lda #$02
-    bra +
-.one:
+    bne .none
+    lda #$0B
+    bra .put
+.sb5:
+    lda.l $C4B9CA,x
+    beq .none
+.put:
+    jsl $C54557
+.none:
+    rtl
+
+; a bomber's death sound (SB5 $C4:367F, X = actor, M 8-bit): the death sound
+; (group 3 id 1: SB1's, game_sfx), for 1-6's white and black mechas SB1 World
+; 5's crowd instead (Hudson SFX !CHEERCMD, sent by gs_tick: its pending byte)
+rival_sfx:
+    txa
+    cmp #$04
+    bne .death
+    lda.l $7E1031
+    cmp #!RIVAL1
+    bne .death
+    lda.l !DST
+    cmp #!RIVAL3
+    beq .death
+    lda #!CHEERCMD
+    sta.l $00018C               ; game_sfx's !gs_pend
+    rtl
+.death:
+    lda #$03
+    xba
+    lda #$01
+    jsl $C00CED
+    rtl
+
+; 1-6's next duel, as in SB1 (one stage, no stage end): the rival (seat 4) made
+; again in the stands' corridor (7, 1) the way op FF 7C does it ($C2:16EE:
+; $1D28 / $1D2A = cell, A = character, X = seat, JSL $C4:3CB5: set-up with
+; rival_pal / rival_stats, its object, $1D50 + 1, its death task $C4:3D94),
+; the gate open again and intro_task as at the start (before the Golden
+; Bomber the stands blink first, stand_task)
+next_rival:
+    lda.l !DST
+    ldx #!RIVAL2
+    cmp #!RIVAL1
+    beq +
+    ldx #!RIVAL3
++   txa
+    sta.l !DST
+    cmp #!RIVAL3
+    bne make_rival
+    lda #$03                    ; the Golden Bomber: the stands blink first (players held,
+    sta.l !IPH                  ; intro_pads), then golden_wait makes it
+    jsr stand_start
+    rts
+
+; item_task while !IPH = 3: the stands' blinking over (!BPH = 3) -> the Golden Bomber
+golden_wait:
+    lda.l $7FFBD0               ; stand_task's phase (!BPH)
+    cmp #$03
+    bcc +
+    jsr make_rival
++   rts
+
+make_rival:
+    lda #$01
+    sta.l !RESP
+    lda #$07
+    sta $1D28
+    lda #$01
+    sta $1D2A
+    lda #$80                    ; seat 4 empty, as at the stage's start (the dead rival left $82:
+    sta $15A2+4                 ; the new one came out dead)
+    ldx #$04
+    lda #$01
+    jsl $C43CB5
+    sep #$30
     lda #$00
-+   sta $1662,x
+    sta.l !RESP
+    sta.l !IPH
+    jsr gate_open
+    jsl $C020A1
+    dl intro_task
+    db $60
+    rts
+
+; item_task, the rival dead: the next rival or the stage end once its time is up
+rival_dead:
+    lda.l $7E1D1E               ; SB5's stage end already running (bit 0)
+    lsr a
+    bcs .out
+    lda $17FA+4                 ; its object gone (death animation over)
+    cmp #$FF
+    bne .out
+    lda.l !NXT                  ; frames: !NXT + 256 * !GOLDN
+    inc a
+    sta.l !NXT
+    bne +
+    lda.l !GOLDN
+    inc a
+    sta.l !GOLDN
++   lda.l !DST
+    cmp #!RIVAL3
+    beq .golden
+    lda.l !NXT
+    cmp #!NEXTWAIT
+    bcc .out
+    lda #$00
+    sta.l !NXT
+    jmp next_rival              ; the next duel in this same stage
+.golden:                        ; its kick item lies on the field: !GOLDWAIT frames to pick it
+    lda.l !GOLDN
+    bne .late
+    lda.l !NXT
+    cmp #!GOLDGRACE
+    bcc .out
+    jsr items_left              ; every item picked: the end at once
+    beq .end
+    lda.l !GOLDN
+.late:
+    cmp #!GOLDWAIT>>8
+    bcc .out
+    bne .end
+    lda.l !NXT
+    cmp #!GOLDWAIT&$FF
+    bcc .out
+.end:
+    lda #$00
+    sta.l !NXT
+    jsl $C020A1                 ; exit_task: the type 0B script !EXITWAIT frames later
+    dl exit_task
+    db $60
+    pla                         ; (rival_dead's return)
+    pla
+    plp                         ; the next duel, as in SB1 (no portal): SB5's stage end as
+    jml $C502AB                 ; when the last player went through the portal (sets $1D1E bit 0,
+                                ; type 0A, win sound $22, ends this task)
 .out:
+    rts
+
+; Z = no item on the field (item map $1152 bit 7, as item_place counts them)
+items_left:
+    ldx #$CF
+-   lda $1152,x
+    bmi +
+    dex
+    cpx #$FF
+    bne -
+    lda #$00
++   rts
+
+; carry set = an item was placed (M/X 8-bit)
+item_place:
+    ldx #$CF
+    ldy #$00
+-   lda $1152,x
+    bpl +
+    iny
++   dex
+    cpx #$FF
+    bne -
+    cpy #32
+    bcs .fail
+    lda #$CF
+    jsl $C01DEB                 ; random 0-$CF
+    tax
+    lda $1052,x
+    bne .fail
+    lda $1152,x
+    bmi .fail
+    lda $145A,x
+    bne .fail
+    txa
+    ldy #$04
+-   cmp $16AA,y                 ; a bomber's cell
+    beq .fail
+    dey
+    bpl -
+    sta $AE
+    lda #!ITEMLAST
+    jsl $C01DEB                 ; random entry of the pool
+    tax
+    lda.l item_pool,x
+    jsl $C54557
+    sep #$30
+    sec
+    rts
+.fail:
+    clc
+    rts
+
+item_pool:
+    db !ITEMPOOL
+
+; $C0:0B54 (main loop, after the pad reader, before the objects): replaces
+; JSL $C04733. While the rival walks in (!IPH = 1 in its stage) the four
+; seats' pads are empty and the rival's says "down".
+intro_pads:
+    php
+    sep #$30
+    lda.l !IPH
+    cmp #$03                    ; stands blinking before the Golden Bomber: players held too
+    beq +
+    cmp #$01
+    bne .go
++   lda.l $7E1031
+    cmp.l !IST
+    bne .go
+    cmp #!RIVAL1
+    beq +
+    cmp #!RIVAL2
+    beq +
+    cmp #!RIVAL3
+    bne .go
++   ldx #$04
+-   stz $2C,x
+    stz $31,x
+    stz $36,x
+    stz $3B,x
+    dex
+    bpl -
+    lda #$04
+    sta $31+4
+.go:
+    plp
+    jml $C04733
+
+; the players face up, toward the stands' corridor the rival comes down (SB1);
+; face_up_start (item_task, from the rival's arrival until each seat had it):
+; SB5's start pose $15 (front only) becomes the stage start pose up ($49)
+face_up_start:
+    lda.l !FUP
+    cmp #$0F
+    beq .done
+    ldx #$03
+-   lda $15A2,x
+    bmi +
+    lda $179A,x
+    cmp #$15
+    bne +
+    lda.l !FUP
+    ora.l .bit,x
+    sta.l !FUP
+    phx
+    ldy #$04
+    lda #$45                    ; $46 + facing - 1 = $49 ($1692 = 1)
+    sec
+    sbc $1692,x
+    clc
+    adc #$01
+    jsl $C43C24
+    plx
++   dex
+    bpl -
+.done:
+    rts
+.bit:
+    db $01, $02, $04, $08
+
+face_up:
+    ldx #$03
+-   lda $15A2,x
+    bmi +                       ; no bomber in this seat
+    phx
+    ldy #$04                    ; up ($C4:3C24: A = animation - the character's first $1692, Y = facing,
+    lda $179A,x                 ; X = actor); the pose it shows now ($46 + facing - 1: SB5's stage start)
+    sec
+    sbc $1692,x
+    jsl $C43C24
+    plx
++   dex
+    bpl -
+    rts
+
+intro_task:
+    php
+    sep #$30
+    lda.l $7E1031
+    cmp.l !IST
+    bne .end
+    lda $17FA+4                 ; the rival's object
+    cmp #$FF
+    beq .out
+    lda.l !IPH
+    beq .wait
+    dec a
+    beq .walk
+.end:
+    jsl $C021CE
+.out:
+    plp
+    rtl
+.wait:
+    stz $101F+4
+    stz $31+4
+    stz $2C+4
+    stz $36+4
+    stz $3B+4
+    lda.l !DST
+    cmp #!RIVAL3
+    bne +
+    lda.l $7FFBD0               ; stand_task's phase (!BPH)
+    cmp #$03
+    bcc .out                    ; the stands are still blinking
++   lda.l $7E1052               ; corner cell: a wall once the map is in
+    bpl .out
+    lda #$00
+    sta $1052+$17
+    sta $1052+$27
+    lda #120
+    sta.l !IFR
+    lda #$01
+    sta.l !IPH
+    jsr face_up
+    jsr keep_spawn
+    bra .out
+.walk:
+    stz $101F+4
+    ldx #$04
+-   stz $2C,x
+    stz $31,x
+    stz $36,x
+    stz $3B,x
+    dex
+    bpl -
+    lda #$04                    ; down
+    sta $31+4
+    lda $1872+4
+    cmp #!INTROY
+    bcs .arrived
+    cmp #$11
+    bcc .out                    ; not moving yet (SB5's start)
+    lda.l !IFR
+    dec a
+    sta.l !IFR
+    bne .out
+.arrived:
+    stz $31+4
+    lda #$01
+    sta $101F+4
+    lda #$80
+    sta $1052+$17
+    sta $1052+$27
+    jsr gate
+    lda #$02
+    sta.l !IPH
+    plp
     rtl
 
 ; FF 1A F6 04 (stage !RIVAL3, type 04): the stands blink. Task: after
@@ -436,7 +971,8 @@ stand_task:
     beq +
     dec a
     sta.l !BFR
-    bra .out
+    plp
+    rtl
 +   lda.l !BPH
     beq .fadeout
     dec a
@@ -454,7 +990,11 @@ stand_task:
     sta $0300
     bne .two
     jsr stands
-    lda #$01
+    lda.l !BCY
+    cmp #$04
+    bne +
+    jsr spawn_reset             ; the last blackout: everyone back to the start, facing up
++   lda #$01
     sta.l !BPH
     lda #30
     sta.l !BFR
@@ -492,13 +1032,58 @@ stand_task:
     plp
     rtl
 
+; the first duel's intro: keep every seat's start (spawn_reset)
+keep_spawn:
+    lda.l !DST
+    cmp #!RIVAL1
+    bne +
+    ldx #$03
+-   lda $182A,x
+    sta.l !SPX,x
+    lda $1872,x
+    sta.l !SPX+4,x
+    dex
+    bpl -
++   rts
+
+; before the Golden Bomber (stand_task, the screen black): each living seat back
+; on its start cell (kept by intro_task), in the stage start pose facing up
+; ($49, as face_up_start)
+spawn_reset:
+    ldx #$03
+-   lda $15A2,x
+    bmi +
+    ldy $17FA,x                 ; its object: x $055F, y $05BF ($C4:31BD: $182A = $055F + $1D3B)
+    lda.l !SPX,x
+    sec
+    sbc $182A,x
+    clc
+    adc $055F,y
+    sta $055F,y
+    lda.l !SPX,x
+    sta $182A,x
+    lda.l !SPX+4,x
+    sec
+    sbc $1872,x
+    clc
+    adc $05BF,y
+    sta $05BF,y
+    lda.l !SPX+4,x
+    sta $1872,x
+    phx
+    ldy #$04
+    lda #$46
+    sec
+    sbc $1692,x
+    jsl $C43C24
+    plx
++   dex
+    bpl -
+    rts
+
 ; queue the stands' BG1 map words: cycle even -> empty, odd -> crowd
 stands:
     rep #$30
-    lda $0352
-    pha
-    lda.w #$0084
-    sta $0352
     lda.l !BCY
     and.w #$0001
     beq +
@@ -507,6 +1092,33 @@ stands:
     adc.w #!BLINK&$FFFF
     tax
     ldy.w #!BLINKN
+    jsr rows
+    sep #$30
+    rts
+
+; the closed gate's BG1 map words (gate_open: the open one's, after them)
+gate:
+    rep #$30
+    ldx.w #!GATE&$FFFF
+    ldy.w #!GATEN
+    jsr rows
+    sep #$30
+    rts
+
+gate_open:
+    rep #$30
+    ldx.w #(!GATE+!GATEN*6)&$FFFF
+    ldy.w #!GATEN
+    jsr rows
+    sep #$30
+    rts
+
+; Y rows (address, left word, right word) from X (bank of !BLINK) into SB5's VRAM queue; M/X 16-bit
+rows:
+    lda $0352
+    pha
+    lda.w #$0084
+    sta $0352
 -   lda.l (!BLINK&$FF0000),x
     sta $AE
     phx
@@ -520,7 +1132,7 @@ stands:
     sta $A5
     phx
     phy
-    sep #$30                    ; (SB5's queue routines: PHX ... SEP #$30 / PLX)
+    sep #$30
     jsl $C00497
     rep #$30
     ply
@@ -545,12 +1157,14 @@ stands:
     bne -
     pla
     sta $0352
-    sep #$30
     rts
 
 print "SYM arc_entry ", hex(arc_entry)
 print "SYM rival_pal ", hex(rival_pal)
 print "SYM rival_stats ", hex(rival_stats)
+print "SYM intro_pads ", hex(intro_pads)
 print "SYM w1_op ", hex(w1_op)
 print "SYM knight_hit ", hex(knight_hit)
+print "SYM rival_item ", hex(rival_item)
+print "SYM rival_sfx ", hex(rival_sfx)
 print "SYM end ", hex(pc())

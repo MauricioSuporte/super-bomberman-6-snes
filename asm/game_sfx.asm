@@ -40,10 +40,12 @@ asar 1.90
 hirom
 org !CODE
 
+!DEATH_WAIT = 150           ; main-loop passes a death sound may wait for R
 !gs_valid = $000188         ; 1 = R (and the patches) are in ARAM
 !gs_state = $000189         ; restore: 0 idle, 1 wait for the voice's stream, 2 wait, 3 R streaming
 !gs_wait  = $00018A
 !gs_song  = $00018B         ; song last uploaded (0 after reset = the boot jingle, over R)
+!gs_dwait = $000196         ; a death sound waiting for R (passes left, 0 = none)
 !gs_pend  = $00018C         ; command to send at the next main-loop pass (0 = none)
 !RESTORE_WAIT = 120
 
@@ -156,6 +158,9 @@ gs_sound:
     bne .clobber
     lda #!CMD_DEATH
     jsr play
+    bcs .yes
+    lda #!DEATH_WAIT        ; R is being restored after another voice: play it
+    sta.l !gs_dwait         ; when R is back (gs_tick) instead of dropping it
     bra .yes
 .clobber:
     lda #$00
@@ -225,7 +230,11 @@ upload:
     lda #$00
     sta.l !gs_state
 +   %sendlist(!L_PATCH)
-    lda.l !gs_song
+    lda.l $7E1031           ; 1-6's duels: SB1's crowd (features/crowd.py; its block is in the
+    cmp #!CHEER_STAGE       ; stage's music list)
+    bne +
+    %sendlist(!L_CHEER)
++   lda.l !gs_song
     tax
     lda.l !SONGS,x
     and #$02
@@ -244,7 +253,21 @@ upload:
 gs_tick:
     php
     sep #$30
-    lda.l !gs_pend
+    lda.l !gs_dwait
+    beq +
+    dec a
+    sta.l !gs_dwait
+    lda.l !gs_valid
+    beq +
+    lda #$00
+    sta.l !gs_dwait
+    lda #!CMD_DEATH
+    phb
+    phk
+    plb
+    jsr play
+    plb
++    lda.l !gs_pend
     beq +
     phb
     phk

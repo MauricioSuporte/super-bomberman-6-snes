@@ -32,11 +32,25 @@ import struct
 from .. import brr
 from ..rombuild import BuildError
 from ..romlib import off
+from . import crowd
 from . import title_music as tm
 
 # World 1 stages that play SB1 songs: (stage id, song name: assets/sound/sb1_<name>_song.txt, SB1's sound RAM
 # assets/sound/sb1_stage_<name>.bin (from $0800), its sample directory there: SB1 DSP register DIR, World 3 has $2400)
-STAGES = [(0x0D, "w1", 0x2300), (0x11, "w2", 0x2300), (0x18, "w3", 0x2400), (0x10, "w4", 0x2300), (0x17, "w6", 0x2300)]
+STAGES = [(0x0D, "w1m", 0x2300), (0x11, "w2m", 0x2300), (0x18, "w3m", 0x2400), (0x10, "w4m", 0x2300), (0x17, "w6m", 0x2300),
+          (0x67, "w5m", 0x2400), (0x69, "w5m", 0x2400), (0x6B, "w5m", 0x2400)]   # 1-6's duels: SB1 World 5 (song $14)
+# songs made by tools/midi_song.py from a MIDI (sb1_w5m_song.txt: khinsider's level.mid) play the samples of an
+# SB1 song's sound RAM image: song name -> image name
+IMAGES = {"w1m": "w1", "w2m": "w2", "w3m": "w3", "w4m": "w4", "w5m": "w5", "w6m": "w6"}
+# 1-6's duels load SB5's boss music (id $0F = set $35 + song $0E, kept for 1-7) and play it after the intro:
+# their type 01 scripts' FF A0 0F (load, while the stage loads) and 42 0F 00 (play, ~500 frames in; another id
+# than the one loaded would upload it then: ~90 frames frozen) name id 6 instead (ZONE1's, which sb1m_song
+# replaces with the list of the stage)
+# units a row a song may use (default: 24, 16 or 12, the closest tempo): World 5's 8 channels of dense notes on
+# 4.2 ms ticks kept Hudson's driver too busy to answer the CPU's sound commands at once (Hudson's handshake
+# $C0:0E7F waits for the echo: 1-6 fell to 47 fps with 4 players); 12 units a row halve its ticks
+SONG_UNITS = {"w5": (12,), "w5m": (12,), "w3m": (16,), "w6m": (12,)}
+MUSIC_SCRIPTS = {0x67: (0xC71B93, 0xC71BA2), 0x69: (0xC71F1D, 0xC71F2C), 0x6B: (0xC7215A, 0xC72169)}
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
 # SB5 directory entries the jingles name but never play: only the start jingle's percussion records (no key-on
 # of it in Mesen, the jingle keeps its percussion off) -> a silent block (2187 bytes saved)
@@ -265,6 +279,9 @@ def _lengths(n):
 
 DRUMS = (3, 4, 5)                    # SB1's drum samples: one line
 CHANNELS = (7, 6, 5, 4, 3, 2)        # busiest line first; 2 (shared with SB5's stage SFX) gets the sparsest
+# a song with more lines (SB1 World 5's: 8 voices) also takes channels 1 and 0, as SB5's own songs do (mask
+# $FF; its stage SFX take channels 0-2 over them for a moment)
+MORE_CHANNELS = (1, 0)
 
 
 def lines_of(notes):
@@ -297,10 +314,21 @@ def channels_of(lines):
                 break
         else:
             chans.append(list(ns))
-    if len(chans) > len(CHANNELS):
-        raise BuildError(f"SB1 music: {len(chans)} lines that overlap, {len(CHANNELS)} channels")
+    order = CHANNELS + (MORE_CHANNELS if len(chans) > len(CHANNELS) else ())
     chans.sort(key=lambda c: -len(c))
-    return {CHANNELS[i]: sorted(c, key=lambda n: n["t"]) for i, c in enumerate(chans)}
+    dropped = 0
+    while len(chans) > len(order):  # still too many: the sparsest line's notes go to any channel free then
+        for n in chans.pop():       # (SB1 World 5's fourth chord note); one that fits nowhere is left out
+            for c in chans:
+                if all(n["t"] + n["d"] <= m["t"] or m["t"] + m["d"] <= n["t"] for m in c):
+                    c.append(n)
+                    break
+            else:
+                dropped += 1
+    if dropped > 8:
+        raise BuildError(f"SB1 music: {dropped} notes find no channel")
+    channels_of.dropped = dropped
+    return {order[i]: sorted(c, key=lambda n: n["t"]) for i, c in enumerate(chans)}
 
 
 def bar_bytes(key, st, bar):
@@ -496,7 +524,9 @@ class Space:
 
 # ---------------------------------------------------------------------------------------------------------
 
-def build(image, path, rom, sb1_dir):
+def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, b_lo=None):
+    """cheer_dir: also the crowd SFX (features/crowd.py). b_lo: start of game_sfx's cornered part B, kept free
+    up to crowd.HIGH_LO ($DD00): gs_song sends it after the song (song 5 has room for B there)."""
     notes, meta = read_song(path)
     loop, end, row = meta["loop"], meta["end"], meta["row"]
     srcns = sorted({n["srcn"] for n in notes})
@@ -511,16 +541,31 @@ def build(image, path, rom, sb1_dir):
         raise BuildError("SB1 music: too many samples")
     dir_of = {s: free_dirs[k] for k, s in enumerate(srcns)}
     dirs, tunings = bytearray(0x48), bytearray(0x48)
-    # SB1's samples from $8000
+    # the crowd around the cornered sound's part B (1-6), then SB1's samples from $8000 up to it (those that
+    # do not fit there above B, from crowd.HIGH_LO)
+    blocks = []
+    low_top, high_lo = b_lo, crowd.HIGH_LO
+    if cheer_dir:
+        cblocks, _, _ = crowd.layout(cheer_dir, b_lo)
+        blocks += cblocks
+        low_top = cblocks[0][0]
+        if len(cblocks) > 1:
+            high_lo = cblocks[1][0] + len(cblocks[1][1])
     smp = sb1_samples(image, srcns, sb1_dir)
-    blob = bytearray()
+    lo, hi, n_smp = SAMPLE_BASE, high_lo, 0
     for s in srcns:
         data, loop_off = smp[s]
-        a = SAMPLE_BASE + len(blob)
+        if lo + len(data) <= low_top:
+            a, lo = lo, lo + len(data)
+        elif hi + len(data) <= ECHO_BASE:
+            a, hi = hi, hi + len(data)
+        else:
+            raise BuildError(f"SB1 music {os.path.basename(path)}: no room for SB1 sample {s:02X} "
+                             f"around the cornered sound's part B")
         struct.pack_into("<HH", dirs, 4 * dir_of[s], a, a + loop_off)
-        blob += data
-    blocks = [(SAMPLE_BASE, bytes(blob))]
-    space = Space([(table_end, jlo), (jhi, SEQ_END), (SAMPLE_BASE + len(blob), ECHO_BASE)])
+        blocks.append((a, bytes(data)))
+        n_smp += len(data)
+    space = Space([(table_end, jlo), (jhi, SEQ_END), (lo, low_top), (hi, ECHO_BASE)])
     # SB5's jingles where SB5 has them (echo delay 1), their samples wherever they fit
     jimg = bytearray(zimg[jlo:jhi])
     for p in jedl:
@@ -578,7 +623,7 @@ def build(image, path, rom, sb1_dir):
     # units a row: 24 (as written), 16 or 12, whichever has the tempo closest to SB1's (the driver's tempo
     # byte is coarse, and too fast tempos need fewer units)
     best = None
-    for units in (24, 16, 12):
+    for units in unit_choices:
         if any(n["t"] * units % UNITS_PER_ROW for n in notes):
             continue
         tempo, unit_ms = tempo_for(row / units)
@@ -636,9 +681,10 @@ def build(image, path, rom, sb1_dir):
     blocks.append((SEQ_BASE, struct.pack(f"<{len(heads) + 2}H", SEQ_BASE + 2, head, *heads[1:], 0)))
     blocks += [(0xFD00, bytes(dirs)), (0xFE00, bytes(tunings))]
     seq = hl + sum(sizes.values()) + sum(map(len, subs))
-    info = dict(seq=seq, samples=len(blob), notes=len(notes), tempo=tempo, unit_ms=unit_ms, row_ms=row,
+    info = dict(seq=seq, samples=n_smp, notes=len(notes), tempo=tempo, unit_ms=unit_ms, row_ms=row,
                 cents=worst, channels=sorted(keys), subs=len(subs), units=units, jingles=(jlo, jhi), jingle_dirs=jdirs,
-                jingle_samples=jbytes, aram_left=space.free(), head=head, aliased=aliased)
+                jingle_samples=jbytes, aram_left=space.free(), head=head, aliased=aliased,
+                dropped=channels_of.dropped)
     return tm._list(blocks, bytes([0x00, 0x08])), info
 
 
@@ -657,18 +703,39 @@ def free_old(rb):
         rb.free_old(name, start, size, crc, purpose)
 
 
-def apply(rb, sound_dir):
+# Where each list goes: banks $EC-$EF are also the only place for streamed bomber poses, so at most two lists
+# there per bank as before (stream_ef stays for the poses)
+LIST_REGION = {"w1m": "stream_ed", "w3m": "stream_ed", "w2m": "stream_ec", "w4m": "stream_ee",
+               "w5m": "obj_f7", "w6m": "obj_f8"}
+
+
+def apply(rb, sound_dir, b_lo):
     """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF."""
-    table, infos = bytearray(), []
+    table, infos, lists = bytearray(), [], {}
     for stage, name, sb1_dir in STAGES:
-        image = open(os.path.join(sound_dir, f"sb1_stage_{name}.bin"), "rb").read()
-        lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir)
-        a = rb.alloc(["stream_ed", "stream_ec", "stream_ee", "obj_f8", "obj_f7"], lst,
-                     f"SB1 music of stage ${stage:02X} ({name}): Hudson upload list (sequence, samples)")
-        if (a & 0xFFFF) + len(lst) > 0x10000:
-            raise BuildError("SB1 music: an upload list crosses a bank")
-        table += bytes([stage]) + a.to_bytes(3, "little")
-        infos.append(dict(info, stage=stage, name=name, list=len(lst)))
+        if name not in lists:       # one list per song, shared by its stages
+            image = open(os.path.join(sound_dir, f"sb1_stage_{IMAGES.get(name, name)}.bin"), "rb").read()
+            lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir,
+                              SONG_UNITS.get(name, (24, 16, 12)),
+                              sound_dir if name in crowd.SONGS else None, b_lo)
+            a = rb.alloc([LIST_REGION.get(name, "obj_f8"), "obj_f8", "obj_f7"], lst,
+                         f"SB1 music {name} (stage ${stage:02X}...): Hudson upload list (sequence, samples)")
+            if (a & 0xFFFF) + len(lst) > 0x10000:
+                raise BuildError("SB1 music: an upload list crosses a bank")
+            lists[name] = a
+            infos.append(dict(info, stage=stage, name=name, list=len(lst)))
+        table += bytes([stage]) + lists[name].to_bytes(3, "little")
+    for stage, (load, play) in MUSIC_SCRIPTS.items():
+        rb.patch(load, bytes.fromhex("FF A0 0F"), bytes.fromhex("FF A0 06"),
+                 f"stage ${stage:02X} loads music id 6 (SB1 World 5's song through sb1m_song)")
+        # type 0E script: `42 j 03` (SB5's boss jingle) `FD 0E 40 00 00` (64 frames) `42 0F 00` `01` `00`: the
+        # owner wants only the stage intro jingle, then the music (no boss jingle, no wait)
+        o = play - 8
+        old = bytes(rb.d[o & 0x3FFFFF:(o & 0x3FFFFF) + 13])
+        if old[0] != 0x42 or old[2:] != bytes.fromhex("03 FD 0E 40 00 00 42 0F 00 01 00"):
+            raise BuildError(f"stage ${stage:02X}: type 0E script at ${o:06X} is {old.hex(' ')}")
+        rb.patch(o, old, bytes.fromhex("42 06 00 01 00") + bytes(8),
+                 f"stage ${stage:02X} plays music id 6 at once (no boss jingle)")
     table.append(0xFF)
     t = rb.alloc("bulk", bytes(table), "SB1 music: stage -> upload list")
     defs = {"SB1M_SB5SONG": f"${SB5_SONG:02X}", "SB1M_SB5SET": f"${SB5_SET:02X}", "SB1M_TABLE": f"${t:06X}",

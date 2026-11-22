@@ -147,13 +147,15 @@ def text(rb, base_rom, out_dir):
         font[(t + 0x10 - 0x80) * 16:(t + 0x10 - 0x7F) * 16] = bot
     for t in (0xAB, 0xBB):                                       # ZONE's last column
         font[(t - 0x80) * 16:(t - 0x7F) * 16] = bytes(16)
-    new_src = rb.alloc("bulk", lz.compress(bytes(font)), "STAGE: stage intro font (set 3 archive $4D)")
-    rb.patch(ea, e, bytes([0x00, 0x54, 0x70, 0x07, new_src & 0xFF, (new_src >> 8) & 0xFF, new_src >> 16, 0x03]),
-             "STAGE: set 3 archive $4D = the font with STAGE")
-    # old font data: nothing else names it (one archive entry; the stock OBJ sheet table copy is freed)
+    # old font data: nothing else names it (one archive entry; the stock OBJ sheet table copy is freed); the
+    # new font goes there when it fits (bank $E4 is full)
     old = bytes(base_rom[off(src):off(src) + used])
     rb.free_old("free_d5_font", src + 1, used - 1, zlib.crc32(old[1:]),
                 "freed SB5 stage intro font with ZONE (set 3 archive $4D, LZ); its first byte stays")
+    new_src = rb.alloc([r for r in ("free_d5_font", "free_d5", "bulk") if r in rb.regions], lz.compress(bytes(font)),
+                       "STAGE: stage intro font (set 3 archive $4D)")
+    rb.patch(ea, e, bytes([0x00, 0x54, 0x70, 0x07, new_src & 0xFF, (new_src >> 8) & 0xFF, new_src >> 16, 0x03]),
+             "STAGE: set 3 archive $4D = the font with STAGE")
 
     # ---- the intro arrangement: STAGE (5), gap, gap (the world digit), dash; asm/pause.asm intro_label places it
     letter = 0x2000 | PAL_INTRO << 10
@@ -224,13 +226,32 @@ CHAIN = [
     (0x10, 4, 0x17),               # 1-4: SB5 1-4 (the green tank)
     (0x17, 5, 0x67),               # 1-5: SB5 1-11 (the knights)
 ]
-# 1-6: three duels in the SB6 tournament arena (features/sb1_stages.py "sb6_1-6"), the rival = character 1
-# (char1_sb6.png, the mecha bomber) in a column of its palette picture (0 = key colors): white, black, golden
+# 1-6: three duels in SB1 World 5's tournament arena (features/sb1_stages.py "sb1_5-1"), the rival = character
+# RIVAL_CHAR (char5_sb6.png) in a column of its palette picture (0 = key colors): white, black, golden
 RIVALS = [(0x67, 1), (0x69, 2), (0x6B, 20)]
-RIVAL_OWN_ID = 0x5A                # column 1 = palette id $5A (features/bombers.py OWN_ID; char1 shares his)
+RIVAL_CHAR = 5
+RIVAL_OWN_ID = 0x5A                # column 1 = palette id $5A (features/bombers.py OWN_ID; char5 shares his)
+# each rival's stats (asm/world1.asm rival_stats): hits taken to die, fire range, bombs, kick, SB5's AI level
+# ($1D26: 0 = Battle's EASY, 1 NORMAL, 2 HARD, 3 SUPER; all EASY), speed (1 = the players' start, $00E0; each level more = one skate, + $20); no other ability (char
+# 1's table gave SB5's mine bomb)
+RIVAL_STATS = {0x67: (1, 1, 1, False, 0, 1), 0x69: (1, 2, 2, False, 0, 2), 0x6B: (3, 3, 3, True, 0, 3)}
+# SB1's intro: the rival walks in from the stands' corridor (column 7) down to (7, INTRO_ROW), then the gate
+# closes (asm/world1.asm intro_task). Its FF 7C op (type 04 script: FF 7C 03 x y n) puts it at (7, 1).
+RIVAL_OPS = {0x67: 0xC71D1E, 0x69: 0xC71FC1, 0x6B: 0xC72294}
+INTRO_ROW = 5
+# SB1 World 5's items (its routine $C4:3523, table $C4:3553: one of 16 entries every 640 frames, under 32 on
+# the field) as SB5 item ids (asm/world1.asm item_task). SB1 -> SB5 (SB5's pictures checked in Mesen): 1 bomb
+# -> 2, 2 fire -> 1, 3 heart -> $14, 4 skate -> 3, 5 vest -> 7, 9 clock -> 8, $A full fire -> $0E, $B remote
+# (red bomb) -> 4, $C kick -> $0B, $D punch -> $11 (boxing glove), $F skull -> $12
+# the owner's choice: bomb up, fire up, skate, blue glove ($0C), red (boxing) glove ($11), kick ($0B), bomb pass
+# ($05: a bomb with speed lines, SB1's bomb pass picture); bombs and fire twice as likely, as in SB1's table
+ITEM_POOL = [0x02, 0x02, 0x01, 0x01, 0x03, 0x0C, 0x11, 0x0B, 0x05]
+ITEM_EVERY = 640
+ITEM_FIRST = 640                   # frames after the rival walked in
 BG1_MAP = 0x3000                   # arena field: BG1 map at VRAM word $3000
-STAGE_OPS = {0x6B: (4, "stands blink"), 0x68: (5, "electric fence"), 0x10: (6, "bumpers animated"),
-             0x17: (6, "hard block lights blink")}
+STAGE_OPS = {0x6B: [(4, "stands blink"), (7, "rival walks in"), (6, "crowd animated")],
+             0x67: [(7, "rival walks in"), (6, "crowd animated")], 0x69: [(7, "rival walks in"), (6, "crowd animated")], 0x68: [(5, "electric fence")], 0x10: [(6, "bumpers animated")],
+             0x17: [(6, "hard block lights blink")]}
 BOSSES = [                         # (boss stage, its first portal root, next stage)
     (0x67, 0xC71BE3, 0x69),        # 1-6, first duel (white)
     (0x69, 0xC71F6D, 0x6B),        # 1-6, second duel (black)
@@ -313,19 +334,54 @@ def _blink_table(rb, blink):
     return rb.alloc("bulk", data, f"World 1: 1-6's stands, BG1 map words (empty / crowd, {len(rows[0])} rows)"), len(rows[0])
 
 
+def _gate_table(rb, gate):
+    """The closed gate's BG1 map rows (address, left word, right word), as _blink_table's, then the open gate's
+    (next_rival opens it again for the next duel)."""
+    rows, rows_open = [], []
+    for c, r, opened, closed in gate:
+        for dy in range(2):
+            a = BG1_MAP + 64 * r + 32 * dy + 2 * c
+            rows.append(struct.pack("<HHH", a, closed[2 * dy], closed[2 * dy + 1]))
+            rows_open.append(struct.pack("<HHH", a, opened[2 * dy], opened[2 * dy + 1]))
+    return (rb.alloc("bulk", b"".join(rows + rows_open), f"World 1: 1-6's gate, BG1 map words ({len(rows)} rows closed, "
+                     "then open)"), len(rows))
+
+
 def code(rb, arena, anim_start=0, clown=None):
-    """arena: features/sb1_stages.py's result for "sb6_1-6" (ext ids, blink cells); anim_start: the animated
-    fence's task start (asm/stage_anim.asm, 0 = none)."""
+    """arena: features/sb1_stages.py's result for "sb1_5-1" (ext ids, blink and gate cells); anim_start: the
+    animated fence's task start (asm/stage_anim.asm, 0 = none)."""
     from .. import asar
     blink, nrows = _blink_table(rb, arena["blink"])
+    gate, grows = _gate_table(rb, arena["gate"])
+    if blink >> 16 != gate >> 16 or not grows:
+        raise BuildError("1-6: the stands' and the gate's tables must share a bank (and the gate must change)")
     region = rb.regions["bulk"]
     defs = {"ORG": f"${region.cursor:06X}", "KNIGHT_STAGE": f"${KNIGHT_STAGE:02X}",
             "W1ARC": f"${arena['ext']['arc']:06X}", "BLINK": f"${blink:06X}", "BLINKN": str(nrows),
+            "GATE": f"${gate:06X}", "GATEN": str(grows), "RIVALCHAR": str(RIVAL_CHAR), "INTROY": f"${INTRO_ROW * 16:02X}",
             "ANIMSTART": f"${anim_start:06X}", "CLOWNSTART": f"${clown['start']:06X}",
             "CLOWNHIT": f"${clown['hit']:06X}", "CLOWN_TYPE": f"${sb1_enemies.KINDS['clownbody']['type']:02X}"}
+    pool = ITEM_POOL
+    if os.environ.get("SB6_ITEMTEST"):             # research: SB5 item ids 1-$10 at random, two a second
+        pool = list(range(1, 0x11))
+        defs.update(ITEMEVERY="30", ITEMFIRST="30")
+    else:
+        defs.update(ITEMEVERY=str(ITEM_EVERY), ITEMFIRST=str(ITEM_FIRST))
+    from . import crowd
+    defs["CHEERCMD"] = f"${crowd.CMD:02X}"
+    defs["ITEMPOOL"] = ",".join(f"${x:02X}" for x in pool)
+    defs["ITEMLAST"] = f"${len(pool) - 1:02X}"
     for k, (stage, col) in enumerate(RIVALS):
         defs[f"RIVAL{k + 1}"] = f"${stage:02X}"
+        defs[f"NEXT{k + 1}"] = f"${dict((b[0], b[2]) for b in BOSSES)[stage]:02X}"
         defs[f"PAL{k + 1}"] = f"${RIVAL_OWN_ID + col - 1:02X}"
+        hits, fire, bombs, kick, level, speed = RIVAL_STATS[stage]
+        defs[f"SPEED{k + 1}"] = f"${0xE0 + 0x20 * (speed - 1):04X}"
+        defs[f"HP{k + 1}"] = str(hits - 1)
+        defs[f"FIRE{k + 1}"] = str(fire)
+        defs[f"BOMBS{k + 1}"] = str(bombs)
+        defs[f"ABIL{k + 1}"] = "$02" if kick else "$00"
+        defs[f"LEVEL{k + 1}"] = str(level)
     runs, syms = asar.assemble_into(rb.d, ASM, defs)
     start, end = region.cursor, syms["end"]
     out = bytearray(rb.d)
@@ -346,9 +402,21 @@ def code(rb, arena, anim_start=0, clown=None):
     rb.patch(0xC01B0E, bytes.fromhex("A9 E3 85 C8 C2 20 BF 96 1C C0 85 C6"), jsl("arc_entry", 12),
              "archive loader: set 4 ids $F0+ = World 1's entries (asm/world1.asm arc_entry)")
     rb.patch(0xC43CD5, bytes.fromhex("AA BD 4E BB 18 69 07"), jsl("rival_pal", 7),
-             "rival set-up: 1-6's rivals = character 1 in their palette (asm/world1.asm rival_pal)")
+             f"rival set-up: 1-6's rivals = character {RIVAL_CHAR} in their palette (asm/world1.asm rival_pal)")
     rb.patch(0xC43D28, bytes.fromhex("B1 BD 9D 7A 16"), jsl("rival_stats", 5),
-             "rival set-up: 1-6's rivals' hits, the Golden Bomber's kick (asm/world1.asm rival_stats)")
+             "rival set-up: 1-6's rivals' hits, fire, bombs, speed, kick (asm/world1.asm rival_stats)")
+    rb.patch(0xC00B54, bytes.fromhex("22 33 47 C0"), jsl("intro_pads", 4),
+             "main loop, before the objects: 1-6's rival intro holds the pads (asm/world1.asm intro_pads)")
+    for stage, at in RIVAL_OPS.items():
+        rb.patch(at, bytes([0xFF, 0x7C, 0x03, 0x07, 0x03]), bytes([0xFF, 0x7C, 0x03, 0x07, 0x01]),
+                 f"boss ${stage:02X}: the rival starts in the stands' corridor (7, 1) (asm/world1.asm intro_task)")
+    rb.patch(0xC43E10, bytes.fromhex("BD CA B9 F0 04 22 57 45 C5"), jsl("rival_item", 9),
+             "rival death: its item ($C4:B9CA); in 1-6 only the Golden Bomber drops kick (asm/world1.asm rival_item)")
+    # SB1: a rival bomber dies with the player's death sound (SB5 skipped it for CPU bombers, $101F); 1-6's
+    # white and black mechas with SB1 World 5's crowd (features/crowd.py)
+    rb.patch(0xC4367F, bytes.fromhex("BD 1F 10 D0 09 A9 03 EB A9 01 22 ED 0C C0"), jsl("rival_sfx", 14),
+             "bomber death (Normal Game): the death sound for rivals too, the crowd for 1-6's first two "
+             "(asm/world1.asm rival_sfx)")
     return syms
 
 
@@ -368,7 +436,9 @@ DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB"), 
             0x17: {0x06: [bytes.fromhex("FF DF")]},
             # 1-7: SB5's arena scatters 16 soft blocks (type 01 `10 10`, $0E1F -> $C5:0160); the SB1 4-8 arena
             # has none (its soft block picture is the floor: they were invisible)
-            0x68: {0x01: [bytes([0x10])]}}
+            0x68: {0x01: [bytes([0x10])]},
+            # 1-6's duels: the same 16 random soft blocks, drawn as the floor (SB1's tournament arena has none)
+            0x67: {0x01: [bytes([0x10])]}, 0x69: {0x01: [bytes([0x10])]}, 0x6B: {0x01: [bytes([0x10])]}}
 
 
 def _drop_ops(rb, a, prefixes):
@@ -419,8 +489,7 @@ def chain(rb):
                 r = rb.alloc("bulk", b"".join(bytes([t]) + p(a) for t, a in ents) + bytes(1),
                              f"World 1: stage ${stage:02X} root with new scripts")
             kept.append(r)
-        if stage in STAGE_OPS:      # 1-4's bumpers (n = 6): a type 04 root with FF 1A F6 n
-            n, what = STAGE_OPS[stage]
+        for n, what in STAGE_OPS.get(stage, []):     # 1-4's bumpers (n = 6): a type 04 root with FF 1A F6 n
             op = rb.alloc("bulk", bytes([0xFF, 0x1A, 0xF6, n, 0x00]), f"World 1: stage ${stage:02X} {what} (op)")
             kept.append(rb.alloc("bulk", bytes([0x04]) + p(op) + bytes(1), f"World 1: stage ${stage:02X} {what} (root)"))
         for k, scr in enumerate(sb1_enemies.stage_enemies(stage) or []):
@@ -458,8 +527,7 @@ def chain(rb):
                          if t in repl else a) for t, a in entries]
                 kept[i] = rb.alloc("bulk", b"".join(bytes([t]) + p(a) for t, a in ents) + bytes(1),
                                    f"World 1: boss ${stage:02X} root with new scripts")
-        if stage in STAGE_OPS:      # 1-6's stands blink (n = 4), 1-7's fence (5): a type 04 root with FF 1A F6 n
-            n, what = STAGE_OPS[stage]
+        for n, what in STAGE_OPS.get(stage, []):     # 1-6's stands (4) / intro (7), 1-7's fence (5): FF 1A F6 n
             op = rb.alloc("bulk", bytes([0xFF, 0x1A, 0xF6, n, 0x00]), f"World 1: stage ${stage:02X} {what} (op)")
             kept.append(rb.alloc("bulk", bytes([0x04]) + p(op) + bytes(1), f"World 1: stage ${stage:02X} {what} (root)"))
         if sb1_enemies.stage_enemies(stage) is not None:     # SB5's portal is drawn with its theme's tiles:

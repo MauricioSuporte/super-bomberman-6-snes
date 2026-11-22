@@ -91,7 +91,7 @@ def main():
     maps = world_map.sound(rb, os.path.join(ROOT, "assets", "sound"), [["sb1_f3", "sb1_f4"], ["stream_ef"],
                                                                          ["wmap_f5"]], os.path.join(args.out, "cache"))
     # World 1's 1-1: SB1's music as a Hudson song (uploaded by title_music's sound hook)
-    sb1m_defs, sb1m = sb1_music.apply(rb, os.path.join(ROOT, "assets", "sound"))
+    sb1m_defs, sb1m = sb1_music.apply(rb, os.path.join(ROOT, "assets", "sound"), gsfx["b1"])
     maps["defs"].update(sb1m_defs, SB1M_SONG=gsfx["sb1m_song"])
     for m in sb1m:
         print(f"stage ${m['stage']:02X} music (SB1 {m['name']}, Hudson song): {m['notes']} notes, sequence "
@@ -136,7 +136,7 @@ def main():
     clown = en_info.pop("_clown")                # 1-7's clown boss: its BG2 colors go into the arena's palette
     sb1_stages.STAGES["sb1_4-8"]["extra_pals"] = dict(zip(sb1_enemies.CLOWN_PALS, clown["pals"]))
     stages = sb1_stages.apply(rb)                # World 1's SB1 / SB6 stage pictures (1-6's palette id: pal_lookup)
-    en_defs["W1PAL"] = f"${stages['sb6_1-6']['ext']['pal']:06X}"
+    en_defs["W1PAL"] = f"${stages['sb1_5-1']['ext']['pal']:06X}"
     anim_start = stages.pop("anim")              # 1-7's electric fence (asm/stage_anim.asm, started by world1's op)
     print("SB1 enemies: " + ", ".join(f"{n} = type ${i['type']:02X} ({i['frames']} frames, {i['tiles']} tiles, "
                                       f"{i['colors']} colors)" for n, i in en_info.items()))
@@ -166,7 +166,7 @@ def main():
           + ", ".join(f"ZONE{i + 1} {t} tiles / {p} BG palettes" for i, (t, p) in enumerate(wmap["zones"]))
           + f"; sea in {wmap['frames']} frames, {wmap['lights']} light colors (preview build/world_map_preview.png)")
 
-    w1 = world1.code(rb, stages["sb6_1-6"], anim_start, clown)
+    w1 = world1.code(rb, stages["sb1_5-1"], anim_start, clown)
     print("world 1: stages " + ", ".join(world1.chain(rb)))
     print("world 1: map markers " + ", ".join(world1.markers(rb)))
     for n, i in stages.items():

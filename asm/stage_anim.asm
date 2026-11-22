@@ -2,7 +2,8 @@
 ; World 1's 1-7 (SB1 4-8's arena) has an electric fence that SB1 animates by
 ; sending a second picture of its tiles every 2 frames; 1-4 (SB1 4-4) the
 ; soft block's bumpers, 5 pictures of 3 frames; 1-5 (SB1 6-4) the hard
-; blocks' red light (off, lit, lit: 16 frames each). The build gives a stage's
+; blocks' red light (off, lit, lit: 16 frames each); 1-6 (SB1 World 5) the
+; crowd, 3 animations of 2 pictures (16, 24, 19 frames). The build gives a stage's
 ; animated tiles one block of BG slots and writes every picture of that
 ; block one after the other in ROM (all stages in bank !BANK), with a row of
 ; !TABLE: [stage, frames each picture stays, pictures, VRAM word (word),
@@ -16,15 +17,23 @@
 ; $7E:8000 + write offset $0357: mode word $0084, size, VRAM address, data;
 ; the NMI sends them while there is vblank left, $C0:04E0), in entries of at
 ; most 256 bytes. It ends when the stage is over ($1031).
-; State: $7F:FBD8 frame counter, $7F:FBD9 picture, $7F:FBDA-$7F:FBE1
-; scratch, $7F:FBE2 the stage's row offset, $7F:FBE3 flame bytes sent (word).
+; A stage can have several rows in a row (1-6's crowd: blocks of their own
+; pace), run one after the other every frame, each with its own counter.
+; State: $7F:FBC0-$7F:FBC7 frame counter and $7F:FBC8-$7F:FBCF picture of
+; each animation, $7F:FBDA-$7F:FBE1 scratch, $7F:FBE2 the stage's first row
+; offset, $7F:FBE3 flame bytes sent (word), $7F:FBE5-$7F:FBE6 row / animation
+; being run, $7F:FBE7 frames before the flames are sent.
 
 asar 1.90
 hirom
 org !ORG
 
-!CNT   = $7FFBD8
-!PIC   = $7FFBD9
+!CNT   = $7FFBC0              ; 8 bytes: frame counter of each animation of the stage
+!PIC   = $7FFBC8              ; 8 bytes: its picture
+!CUR   = $7FFBE5              ; the row being run
+!K     = $7FFBE6              ; its animation number
+!FWAIT = $7FFBE7              ; frames before the flames are sent
+!FDELAY = 60
 !SRC   = $7FFBDA              ; word: source offset (bank !BANK)
 !VR    = $7FFBDC              ; word: VRAM word address
 !LEFT  = $7FFBDE              ; word: bytes left
@@ -52,10 +61,24 @@ anim_start:
     txa
     sta.l !ROW
     lda #$00
-    sta.l !CNT
-    sta.l !PIC
+    ldx #$0F                    ; every animation's counter and picture
+-   sta.l !CNT,x
+    dex
+    bpl -
     sta.l !FOFF
     sta.l !FOFF+1
+    lda.l $7E1031               ; 1-6's duels only (see flames)
+    cmp #$67
+    beq .wait
+    cmp #$69
+    beq .wait
+    cmp #$6B
+    bne +
+.wait:
+    lda #!FDELAY
+    bra ++
++   lda #$00
+++  sta.l !FWAIT
     jsl $C020A1
     dl anim_task
     db $60                      ; skipped ($C020A1 returns past the dl)
@@ -72,21 +95,36 @@ anim_task:
     cmp.l !TABLE,x
     beq +
     jsl $C021CE                 ; stage over: end the task
-    bra .out
+    plp
+    rtl
 +   jsr flames
     sep #$30
+    phb
+    lda #$7F
+    pha
+    plb
     lda.l !ROW
+    sta.l !CUR
+    lda #$00
+    sta.l !K
+.row:                           ; the stage's rows, one animation each
+    lda.l !CUR
     tax
-    lda.l !CNT
+    lda.l !TABLE,x
+    cmp.l $7E1031
+    bne .out
+    lda.l !K
+    tay
+    lda.w !CNT&$FFFF,y          ; (data bank $7F)
     inc a
     cmp.l !TABLE+1,x
     bcc .keep
-    lda.l !PIC                  ; next picture
+    lda.w !PIC&$FFFF,y          ; next picture
     inc a
     cmp.l !TABLE+2,x
     bcc +
     lda #$00
-+   sta.l !PIC
++   sta.w !PIC&$FFFF,y
     tay
     rep #$20
     lda.l !TABLE+7,x            ; first picture + picture * size
@@ -106,16 +144,35 @@ anim_task:
     lda.l !LEFT
     bne -
     sep #$30
+    lda.l !K
+    tay
     lda #$00
 .keep:
-    sta.l !CNT
+    sta.w !CNT&$FFFF,y
+    lda.l !K
+    inc a
+    sta.l !K
+    lda.l !CUR
+    clc
+    adc #!ROWSZ
+    sta.l !CUR
+    jmp .row
 .out:
+    plb
     plp
     rtl
 
-; the stage's flame tiles, !PART bytes a frame until all are sent (X = row offset, 8-bit)
+; the stage's flame tiles, !PART bytes a frame until all are sent (X = row offset, 8-bit), from
+; at once, or in 1-6's duels !FDELAY frames after the task's start: there SB5 writes tiles $010-$01F
+; itself some 25 frames after the type 04 script ($C0:1BC8 and $C5:14EF, CPU writes), over the first
+; ones sent (in 1-4 / 1-5 / 1-7 waiting showed SB5's own tiles instead)
 flames:
-    rep #$20
+    lda.l !FWAIT
+    beq +
+    dec a
+    sta.l !FWAIT
+    rts
++   rep #$20
     lda.l !FOFF
     cmp.l !TABLE+12,x
     bcs .done

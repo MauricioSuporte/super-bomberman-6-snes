@@ -121,7 +121,7 @@ def main():
     last_u = {}
     for n, t in zip(notes, ms):
         n["u"] = unit(t)
-        if n["u"] <= last_u.get(n["v"], -1):     # a fast run: the --grid step instead of the row
+        if n["v"] in last_u and n["u"] <= last_u[n["v"]]:     # a fast run: the --grid step instead of the row
             n["u"] = max(int(round((t - ph) / R * a.grid)) * step, last_u[n["v"]] + step)
         last_u[n["v"]] = n["u"]
         # key-on to release in whole SB1 ticks (both sides jitter alike), then in units

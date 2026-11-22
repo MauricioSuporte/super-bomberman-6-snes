@@ -150,7 +150,7 @@ exec callback at `$C0:0AF9` (end of the pad reader).
   of S-DSP writes into a WAV.
 * Stage music is Hudson's (World 1 included). 1-1 to 1-5 play SB1's World 1-4 and 6 songs
   converted to Hudson songs (`features/sb1_music.py` `STAGES`, from `assets/sound/sb1_w<n>_song.txt`,
-  made by `tools/sb1_song.py` from a Mesen DSP log of SB1): `sb1m_song` in
+  made by `tools/sb1_song.py` from a Mesen DSP log of SB1; the songs played are `sb1_w<n>m_song.txt`, made by `tools/midi_song.py` from khinsider's MIDIs fitted to those dumps, with SB1's samples): `sb1m_song` in
   `asm/title_music.asm` uploads it instead of SB5's ZONE1 samples while the
   stage loads (never while a stage runs: an upload freezes the game), with
   SB5's jingles kept as commands 2-4; Hudson still counts set `$2C` as loaded, so the

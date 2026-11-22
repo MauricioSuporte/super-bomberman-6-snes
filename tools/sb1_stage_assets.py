@@ -2,13 +2,15 @@
 """Turns a Mesen capture of a Super Bomberman (USA) stage into the pictures tools/sb6/features/sb1_stages.py
 builds World 1 stages from (research tool; the build only reads the PNGs).
 
-    python tools/sb1_stage_assets.py PREFIX NAME
+    python tools/sb1_stage_assets.py PREFIX NAME [--raw]
 
 PREFIX = files written by tools/mesen/sb1_stages.lua VIDEO=<frame> (PREFIX_vram.bin, _cgram.bin, _ppu.bin):
 SB1 draws a stage on BG1 in 16x16-tile mode, 17 x 13 entries (2-cell walls left and right). Writes
 assets/stages/NAME_field.png (272 x 208: the stage without its soft blocks, every inner floor cell drawn as SB1
 draws it with no soft block around: under a hard block / the top wall its shadow, else the plain floor) and
 NAME_soft.png (16 x 16, the soft block; the floor for an arena without any). Colors are SB1's BGR15 values << 3.
+--raw: the map's 17 x 13 entries as they are (World 5's tournament arena, whose stands, stars and corridor the
+soft block guess takes for soft blocks), the soft block = the floor of row 3.
 """
 import collections
 import os
@@ -60,6 +62,16 @@ def main():
     base = (p[0x07] & 0xFC) << 9
     ch = (p[0x0B] & 15) << 13
     g = [[v[base + 2 * (r * 32 + col)] | v[base + 2 * (r * 32 + col) + 1] << 8 for col in range(W)] for r in range(H)]
+    if "--raw" in sys.argv[3:]:
+        out = np.zeros((H * 16, W * 16, 3), np.uint8)
+        for r in range(H):
+            for col in range(W):
+                out[r * 16:r * 16 + 16, col * 16:col * 16 + 16] = cell(v, c, ch, g[r][col])
+        d = os.path.join(ROOT, "assets", "stages")
+        Image.fromarray(out).save(os.path.join(d, name + "_field.png"))
+        Image.fromarray(cell(v, c, ch, g[3][2])).save(os.path.join(d, name + "_soft.png"))
+        print(f"{name}: raw map, floor {g[3][2]:04X}")
+        return
     inner = [(col, r) for r in range(1, H - 1) for col in range(2, W - 2)]
     hard = {(col, r) for col, r in inner if col % 2 == 1 and r % 2 == 0}
     hard_e = collections.Counter(g[r][col] for col, r in hard).most_common(1)[0][0]
