@@ -148,9 +148,9 @@ exec callback at `$C0:0AF9` (end of the pad reader).
   title_music's sound/set/song/loop hooks call `gs_*`. Only send them while
   `$0188` = 1 (R in ARAM). Research: `tools/spc_render.py` turns a Mesen log
   of S-DSP writes into a WAV.
-* Stage music is Hudson's (World 1 included). 1-1 to 1-5 play SB1's World 1-4 and 6 songs
+* Stage music is Hudson's (World 1 included). 1-1 to 1-5 and 1-7 play SB1's World 1-4 and 6 songs and its boss song
   converted to Hudson songs (`features/sb1_music.py` `STAGES`, from `assets/sound/sb1_w<n>_song.txt`,
-  made by `tools/sb1_song.py` from a Mesen DSP log of SB1; the songs played are `sb1_w<n>m_song.txt`, made by `tools/midi_song.py` from khinsider's MIDIs fitted to those dumps, with SB1's samples): `sb1m_song` in
+  made by `tools/sb1_song.py` from a Mesen DSP log of SB1; 1-6 plays `sb1_w5m_song.txt`, made by `tools/midi_song.py` from khinsider's MIDI, with SB1's samples; the other `*m_song.txt` MIDI versions are kept unused): `sb1m_song` in
   `asm/title_music.asm` uploads it instead of SB5's ZONE1 samples while the
   stage loads (never while a stage runs: an upload freezes the game), with
   SB5's jingles kept as commands 2-4; Hudson still counts set `$2C` as loaded, so the

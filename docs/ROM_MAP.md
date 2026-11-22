@@ -933,8 +933,8 @@ script accumulator (`61` = add).
   frame) taken as the new originals (`obj_watch`). Players face up
   from the stage's first frame to the end of the intro (`start_up`) and their pads are held (`intro_pads`, `$7F:E019` =
   `$A5`) during the intro and the death. Started by `FF 1A F6 05` (with
-  the fence). Music: SB1's boss song from khinsider's `boss-battle.mid`
-  (`sb1_bossm_song.txt`), no SB5 boss jingle.
+  the fence). Music: SB1's boss song converted from SB1's driver
+  (`sb1_boss_song.txt`), no SB5 boss jingle.
 * Boss stages: `$C5:3A2D` skips SB5's stage tasks (`$C4:221D`, `$C5:024D`,
   `$C5:0000`, the clear task `$C5:3B4E`) when `$1D1A` = 8; stage `$68`
   without its rival runs them (`$1D1A` = `$40`). Op `FF 7C slot x y char`
@@ -1247,12 +1247,14 @@ script accumulator (`61` = add).
   sample (directory 2) of the start jingle never sounds (silent block in
   the lists); directory 3 (other jingles' percussion) is kept when there
   is room, else it names SB1's most alike sample (1-2: SB1's kick). The
-  Since 2026-11 every World 1 SB1 song comes from khinsider's MIDIs (`sb1_w<n>m_song.txt`,
-  `tools/midi_song.py`; `sb1_music.IMAGES` = the SB1 sound RAM of their samples): 1-1 `level-1-3-`,
-  1-2 `level-2`, 1-3 `level-3`, 1-4 `level-4`, 1-5 `level-6`, all at SB1's row, offset 0 (W6 -7 rows),
-  90-100 % of SB1's notes found in them at SB1's pitch; SB1's dumps (`sb1_w<n>_song.txt`) stay as the
-  reference (no stage plays them). `SONG_UNITS`: 1-3's at 16 units a row and 1-5's at 12 (at 24, 4
-  players fell to 49 / 41 fps in `coop4_check`: Hudson's driver too busy, as 1-6's).
+  1-1 to 1-5 play SB1's own songs converted from Mesen DSP logs of SB1 (`sb1_w<n>_song.txt`,
+  `tools/sb1_song.py`; 2026-11-22: back from the MIDI versions, which stay in `sb1_w<n>m_song.txt`
+  for reference); 1-7 also plays SB1's own boss song (`sb1_boss_song.txt`, the owner's choice over the
+  MIDI `sb1_bossm_song.txt`); 1-6 plays a song made from khinsider's MIDI (`tools/midi_song.py`;
+  `sb1_music.IMAGES` = the SB1 sound RAM of its samples). World 2's song (1-2) and the boss song (1-7)
+  are too long to leave the cornered sound's part B free (`NO_PART_B`): their lists take that ARAM too, which
+  is safe because gs_song = SB1M_SONG never sends B (the cornered sound plays part A only there).
+  coop4_check with the driver songs: 1-1..1-5 at 52-55 fps, 1-7 at 54.
   1-6's duels (`$67`/`$69`/`$6B`) play SB1's World 5 song from a MIDI (`sb1_w5m_song.txt`, made by
   `tools/midi_song.py` from khinsider's `level.mid`: a 2-beat pickup + 20 bars looped, as the SB6 fan
   game's; each MIDI track matched to SB1's song note by note: lead = SB1 sample 01 (MIDI note - 89),
@@ -1265,8 +1267,8 @@ script accumulator (`61` = add).
   sound command, 1-6 at 47 fps with 4 players); their type 01 scripts load and play SB5's boss music (id
   `$0F` = set `$35` + song `$0E`, `FF A0 0F` while loading, `42 0F 00` after the intro): both name id 6
   now (`sb1_music.MUSIC_SCRIPTS`; a play op naming another id than the one loaded uploads it then, ~90
-  frames frozen). 1-7 (`$68`) plays SB1's boss song the same way (`bossm`: khinsider's `boss-battle.mid`
-  fitted to a DSP log of SB1 2-8 from its song command `$8A`, `sb1_boss_song.txt`; SB1 loops it over
+  frames frozen). 1-7 (`$68`) plays SB1's boss song the same way (`boss`: `sb1_boss_song.txt`, a DSP log of SB1 2-8 from its
+  song command `$8A`; the MIDI version `bossm`, khinsider's `boss-battle.mid`, is kept unused; SB1 loops it over
   24.5 bars, so its sequence is cut in half bars; samples from `sb1_stage_boss.bin` = SB1 2-8's sound RAM;
   its 32 KB list is the first thing in `free_c7_sheets`, `sb1_music.LATE`). SB5's boss music (set `$35`,
   song `$0E`) is no longer played by a World 1 stage;

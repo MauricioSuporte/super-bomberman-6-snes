@@ -37,9 +37,10 @@ from . import title_music as tm
 
 # World 1 stages that play SB1 songs: (stage id, song name: assets/sound/sb1_<name>_song.txt, SB1's sound RAM
 # assets/sound/sb1_stage_<name>.bin (from $0800), its sample directory there: SB1 DSP register DIR, World 3 has $2400)
-STAGES = [(0x0D, "w1m", 0x2300), (0x11, "w2m", 0x2300), (0x18, "w3m", 0x2400), (0x10, "w4m", 0x2300), (0x17, "w6m", 0x2300),
+# 1-1 to 1-5 play the songs converted from SB1's own driver (sb1_w<n>_song.txt); 1-6 and 1-7 the MIDI ones
+STAGES = [(0x0D, "w1", 0x2300), (0x11, "w2", 0x2300), (0x18, "w3", 0x2400), (0x10, "w4", 0x2300), (0x17, "w6", 0x2300),
           (0x67, "w5m", 0x2400), (0x69, "w5m", 0x2400), (0x6B, "w5m", 0x2400),   # 1-6's duels: SB1 World 5 (song $14)
-          (0x68, "bossm", 0x2400)]          # 1-7: SB1's boss song ($0A, 2-8's clown)
+          (0x68, "boss", 0x2400)]           # 1-7: SB1's boss song ($0A, 2-8's clown), converted from SB1's driver
 # songs made by tools/midi_song.py from a MIDI (sb1_w5m_song.txt: khinsider's level.mid) play the samples of an
 # SB1 song's sound RAM image: song name -> image name
 IMAGES = {"bossm": "boss", "w1m": "w1", "w2m": "w2", "w3m": "w3", "w4m": "w4", "w5m": "w5", "w6m": "w6"}
@@ -50,6 +51,9 @@ IMAGES = {"bossm": "boss", "w1m": "w1", "w2m": "w2", "w3m": "w3", "w4m": "w4", "
 # units a row a song may use (default: 24, 16 or 12, the closest tempo): World 5's 8 channels of dense notes on
 # 4.2 ms ticks kept Hudson's driver too busy to answer the CPU's sound commands at once (Hudson's handshake
 # $C0:0E7F waits for the echo: 1-6 fell to 47 fps with 4 players); 12 units a row halve its ticks
+# songs too long to leave the cornered sound's part B free (World 2's and the boss's driver songs): their
+# list takes that ARAM too (gs_song = SB1M_SONG never sends B, the cornered sound plays part A only)
+NO_PART_B = {"w2", "boss"}
 SONG_UNITS = {"w5": (12,), "w5m": (12,), "w3m": (16,), "w6m": (12,)}
 MUSIC_SCRIPTS = {0x68: (0xC71D71, 0xC71D80), 0x67: (0xC71B93, 0xC71BA2), 0x69: (0xC71F1D, 0xC71F2C), 0x6B: (0xC7215A, 0xC72169)}
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
@@ -545,7 +549,7 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
     # the crowd around the cornered sound's part B (1-6), then SB1's samples from $8000 up to it (those that
     # do not fit there above B, from crowd.HIGH_LO)
     blocks = []
-    low_top, high_lo = b_lo, crowd.HIGH_LO
+    low_top, high_lo = (b_lo, crowd.HIGH_LO) if b_lo is not None else (ECHO_BASE, ECHO_BASE)
     if cheer_dir:
         cblocks, _, _ = crowd.layout(cheer_dir, b_lo)
         blocks += cblocks
@@ -655,13 +659,18 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
     keys = {ch: line_bars(ns, end // bar, inst_of, tune, volpan, bar) for ch, ns in chans.items()}
     build_all, sizes, sub_sizes = assemble(keys, loop // bar, tempo, bar)
     hl = len(header({ch: 0 for ch in keys}, instruments))
-    head = space.alloc(hl, "the song's header")
-    taddr = {}                  # each track wherever it fits (the free ARAM is in pieces)
-    for ch in sorted(sizes, key=lambda ch: -sizes[ch]):
-        taddr[ch] = space.alloc(sizes[ch], f"track {ch}")
-    sub_addr = [0] * len(sub_sizes)
-    for i in sorted(range(len(sub_sizes)), key=lambda i: -sub_sizes[i]):
-        sub_addr[i] = space.alloc(sub_sizes[i], "a subroutine")
+    # header, tracks and subroutines wherever they fit (the free ARAM is in pieces), largest first
+    taddr, sub_addr = {}, [0] * len(sub_sizes)
+    parts = ([(hl, "the song's header", None)] + [(sizes[ch], f"track {ch}", ("t", ch)) for ch in sizes]
+             + [(n, "a subroutine", ("s", i)) for i, n in enumerate(sub_sizes)])
+    for n, what, key in sorted(parts, key=lambda p: -p[0]):
+        a = space.alloc(n, what)
+        if key is None:
+            head = a
+        elif key[0] == "t":
+            taddr[key[1]] = a
+        else:
+            sub_addr[key[1]] = a
     tr, subs = build_all(sub_addr)
     for a, data in zip(sub_addr, subs):
         blocks.append((a, data))
@@ -708,13 +717,14 @@ def free_old(rb):
 
 # Where each list goes: banks $EC-$EF are also the only place for streamed bomber poses, so at most two lists
 # there per bank as before (stream_ef stays for the poses)
-LIST_REGION = {"w1m": "stream_ed", "w3m": "stream_ed", "w2m": "stream_ec", "w4m": "stream_ee",
+LIST_REGION = {"w1": "stream_ed", "w3": "stream_ed", "w2": "stream_ec", "w4": "stream_ee", "w6": "obj_f8",
+               "w1m": "stream_ed", "w3m": "stream_ed", "w2m": "stream_ec", "w4m": "stream_ee",
                "w5m": "obj_f7", "w6m": "obj_f8"}
 
 
 # lists put in a region that only exists after bombers.free_stock_sheets (the first thing there, at that
 # address): 1-7's boss song (no room left in the OBJ / stream banks)
-LATE = {"bossm": ("free_c7_sheets", 0xC74000)}
+LATE = {"boss": ("free_c7_sheets", 0xC74000)}
 _late = []
 
 
@@ -736,7 +746,7 @@ def apply(rb, sound_dir, b_lo):
             image = open(os.path.join(sound_dir, f"sb1_stage_{IMAGES.get(name, name)}.bin"), "rb").read()
             lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir,
                               SONG_UNITS.get(name, (24, 16, 12)),
-                              sound_dir if name in crowd.SONGS else None, b_lo)
+                              sound_dir if name in crowd.SONGS else None, None if name in NO_PART_B else b_lo)
             if name in LATE:        # a region freed later in the build (late_alloc puts it there)
                 a = LATE[name][1]
                 _late.append((name, lst, stage))
