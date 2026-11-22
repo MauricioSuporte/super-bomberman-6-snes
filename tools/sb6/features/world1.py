@@ -436,8 +436,13 @@ KEEP_ENEMIES = {0x17: {0x08}}      # 1-5: SB1 6-4's knights (1-4: SB5's tanks ar
 # script ops left out (stage: {type: [op prefixes]}): 1-4 is SB1's 4-4 now (features/sb1_stages.py), without
 # SB5's clouds (its type 06 script draws them on BG1 with FF 8D DA 04 / FF 8D DB 04, set 4 arrangements)
 # 1-4: SB5's clouds on BG1 (FF 8D) and its decoration objects (FF DD, $C5:49A1: one of them, $C5:49D7, rewrites
-# tiles $12C-$12F, where SB1's pillars turned into arches)
-DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB"), bytes.fromhex("FF DD")]},
+# tiles $12C-$12F, where SB1's pillars turned into arches) and the clouds' BG1 scroll (FF 21 01 x y) and drift
+# (FF 42 01 ...), color math (FF 26 41 02 12: BG1 + half the subscreen) and flame layer (FF 79 02: $0F61 =
+# flames on BG2 over the field instead of BG1, the default 3 - $1B7C): its flames go on BG1 over the SB1 floor,
+# scrolled as the field, as in 1-1 (features/sb1_stages.py FLAMES_BG1)
+DROP_OPS = {0x10: {0x06: [bytes.fromhex("FF 8D DA"), bytes.fromhex("FF 8D DB"), bytes.fromhex("FF DD"),
+                          bytes.fromhex("FF 21 01"), bytes.fromhex("FF 42 01"), bytes.fromhex("FF 26"),
+                          bytes.fromhex("FF 79")]},
             # 1-5: SB5's decoration objects of theme 5 (FF DF, $C5:4A94; $C5:4AB6 rewrites tiles $12C-$12F too)
             0x17: {0x06: [bytes.fromhex("FF DF")]},
             # 1-7: SB5's arena scatters 16 soft blocks (type 01 `10 10`, $0E1F -> $C5:0160); the SB1 4-8 arena

@@ -737,11 +737,12 @@ script accumulator (`61` = add).
   upload while `$1031` = `$67`. A bomber's death sound (`$C4:367F`) goes
   through rival_sfx: 1-6's white and black mechas ask for `$61` (game_sfx's
   pending byte `$018C`), every other bomber gets the death sound.
-* SB5's flame tiles (`assets/stages/sb5_flames.bin`) use palette 2
-  entries 5-10 (SB5's grass) and also 1 and 4 (its shadow, at the flames'
-  edges); `sb1_stages` spec `flame_floor` draws those as the stage floor
-  too (1-6, whose arena palette has gray / brown there). Color 14 pixels
-  next to the floor are SB5's sparks (every stage).
+* SB5's flame tiles have two sets: one drawn on the field's own layer
+  (palette 2 entries 5-10 = its grass around the fire, 1 and 4 its
+  shadow, sparks in the grass) and one drawn on BG1 over a BG2 field
+  (color 0 around the fire; 1-1, 1-2, 1-5). `assets/stages/sb5_flames_bg1.bin`
+  = the second (1-1's VRAM words `$0100-$07FF`); the first set is no
+  longer used (its grass shadows were the white dots of 1-4/1-7).
 * SB1's MIDIs (`assets/SB1 midi`, khinsider): melodic 8-interval n-grams
   of each voice of `assets/sound/sb1_w<n>_song.txt` against each MIDI
   track: W1 `level-1-3-`, W2 `level-2`, W3 `level-3`, W4 `level-4`, W5
@@ -855,15 +856,26 @@ script accumulator (`61` = add).
   columns); a stage can have several rows in the task's table, one per
   animation (`anim_groups`, `anim_stages` in `sb1_stages.STAGES`), each
   with its own counter.
-* Flames over SB1 floors: SB5's flames are BG tiles `$010-$07F` (palette 2,
-  tile n always in quadrant n & 3 of its cell, never flipped) with SB5's
-  grass in entries 5-10 around the fire; on SB1's patterned floors (1-4's
-  squares) that grass showed as a flat color around every explosion. The
-  stages with the animation task (1-4, 1-5, 1-6, 1-7) get their own copy of the 112
-  tiles (`assets/stages/sb5_flames.bin`, from SB5's VRAM; no archive of sets
-  0-12 holds them) with those pixels taken from the floor cell, its colors
-  in palette 2 entries 5-10; `asm/stage_anim.asm` sends them once at the
-  task's start (256 bytes a frame).
+* Flames' layer: an explosion cell (`$C5:1E77`) selects layer `$0F61`
+  (`JSL $C007B8`: `$036F` = that layer's map base, `$C0:420A` queues the
+  cell's 4 words at `$7F:0400-$0CFF`, sent by `$C0:42EB`); `$0F61` = 3 -
+  `$1B7C` at the stage start (`$C5:1381`; 1 = BG1 over the field), or op
+  `FF 79 n` (`$C2:16CD`, also `$1D1A` |= 2 when n != `$1B7C`). Flames are
+  BG tiles `$010-$07F` (palette 2, tile n always in quadrant n & 3 of its
+  cell, never flipped). SB5's stage `$10` put them on BG2 (`FF 79 02`; BG1
+  held its clouds: `FF 21 01` scroll, `FF 42 01` drift, `FF 26 41 02 12`
+  color math BG1 + half the subscreen), replacing the floor cell: on SB1's
+  floors that showed SB5's grass and its shadows. Hack: 1-4 drops those
+  ops (`world1.DROP_OPS`) and draws its flames on BG1 like 1-1; the
+  animation task (`asm/stage_anim.asm`, once, 60 frames after its start:
+  SB5's set-up `$C5:140D`, skipped when `$1D1A` bit 1, rewrites the end
+  tiles `$010-$01F` 25-35 frames in, mixed with SB5's floor tile
+  `$7E:35D3`, which showed as dots at the flames' ends; 256 bytes a
+  frame; checked by `tools/flame_check.py`) sends the BG1 set to 1-4 and 1-5, and to the arenas (1-6, 1-7:
+  field = BG1, flames on it) the BG1 set with its color 0 pixels taken
+  from the floor cell (colors in palette 2 entries 5-10). One set draws
+  one floor: in 1-7 a flame over a cell under a block hides SB1's shadow
+  row there (the arena's most common floor cell is drawn instead).
 * Burning soft blocks (SB1 stages): SB1 draws them on BG1 (tiles `$1C0-$1CA`,
   palette 7, 6 pictures of 12/10/8/6/4/2 frames); `sb1_stages` puts 5 of them
   (`assets/stages/<stage>_burn.png`, from SB1's VRAM) in SB5's 5 burning
@@ -873,9 +885,7 @@ script accumulator (`61` = add).
 * Stage `$10`'s type `06` script: `FF DD` (`$C5:49A1`) creates SB5's
   decoration objects; one (`$C5:49D7`) rewrites tiles `$12C-$12F` every
   ~100 frames (the SB1 pillars there turned into arches): dropped, with
-  the clouds. SB5's flames (tiles `$050-$07B`, palette 2) carry their own
-  floor in palette 2 entries 5-10 (ZONE1 grass `$03E0`, seen around the
-  explosions): `sb1_stages` writes the SB1 floor's most common color there.
+  the clouds (see "Flames' layer").
 * Stage IRQ (`$C0:F08D`, vector `JMP ($006D)`, `$033D` = `$A1`): line 0
   draws the HUD (TM `$16`, BG2 = its background: map `$3A` (`$3800`, 32 x
   64), scroll 0); line `$15` writes BG2SC = `$0369`, TM = `$030F` and BG3's

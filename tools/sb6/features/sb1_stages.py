@@ -53,9 +53,6 @@ STAGES = {
     # stages $67/$69/$6B (white, black, golden bomber) all draw map $8E
     "sb1_5-1": dict(stage=0x67, theme=0x28, map=0x8E, arc=0xF0, pal=0xF0, src_arc=0x1F, src_pal=0x1B,
                     new_theme=True, ext=True, rows=(3, 11), alt="sb1_5-8", gate="sb1_5-1_closed", wrap=True,
-                    # SB5's flame tiles also draw its grass's shadow in palette 2 entries 1 and 4, here the arena's
-                    # gray and brown (pixels at the flames' edges): drawn as the floor too
-                    flame_floor=(1, 4),
                     # the crowd: SB1 swaps 4 blocks of tiles between 2 pictures, each at its own pace (16, 24 and
                     # 19 frames; its VRAM, tiles $20-$27 / $30-$37: frames 1400-2400 of 5-1)
                     anim_groups=[("sb1_5-1_crowda", 16), ("sb1_5-1_crowdb", 24), ("sb1_5-1_crowdc", 19)],
@@ -71,7 +68,9 @@ SOFT_ID = 2
 PALS = (4, 5, 6)                # SB1 colors
 BURN_PAL = 3
 FLAME_FLOOR = range(5, 11)      # palette 2 entries of the floor around SB5's flames (tiles $010-$07F)
-FLAMES = os.path.join(ASSETS, "sb5_flames.bin")   # SB5's flame tiles $010-$07F (4bpp, palette 2, from its VRAM)
+# SB5's flame tiles $010-$07F (4bpp, palette 2, from its VRAM in 1-1): the set it draws on BG1 over a BG2 field
+# (color 0 around the fire; SB5's set for a field's own layer has its grass, grass shadows and sparks there)
+FLAMES_BG1 = os.path.join(ASSETS, "sb5_flames_bg1.bin")
 FLAME_VRAM = 0x0100             # their VRAM word
 BURN_TILES = range(0x16, 0x2A)  # archive tile indices of the 5 burning frames ($116-$129)
 BURN_FIRST = 0x26               # first frame shown; then $22, $1E, $1A, $16
@@ -107,19 +106,17 @@ def _decode_4bpp(b):
     return t
 
 
-def _flame_tiles(fcell, fcols, extra=()):
-    """SB5's flame tiles drawn over the stage's own floor: their floor pixels (palette 2 entries 5-10, SB5's
-    grass) take the floor cell's pixel at the same place (tile n sits in quadrant n & 3 of its cell: TL TR BL
-    BR, never flipped), in entries 5 + fcols.index(color)."""
-    data = open(FLAMES, "rb").read()
+def _flame_tiles(fcell, fcols):
+    """SB5's see-through flame tiles (FLAMES_BG1) drawn over the arena's own floor: their color 0 pixels take
+    the floor cell's pixel at the same place (tile n sits in quadrant n & 3 of its cell: TL TR BL BR, never
+    flipped), in palette 2 entries 5 + fcols.index(color)."""
+    data = open(FLAMES_BG1, "rb").read()
     out = bytearray()
     for k in range(len(data) // 32):
         t = _decode_4bpp(data[32 * k:32 * k + 32])
         q = (FLAME_VRAM // 16 + k) & 3
         part = fcell[8 * (q >> 1):8 * (q >> 1) + 8, 8 * (q & 1):8 * (q & 1) + 8]
-        floor = (t >= FLAME_FLOOR.start) & (t < FLAME_FLOOR.stop)
-        for e in extra:             # (spec `flame_floor`) SB5's grass shadows, entries the arena's palette changed
-            floor |= t == e
+        floor = t == 0
         idx = np.vectorize(lambda c: FLAME_FLOOR.start + fcols.index(c))(part)
         t[floor] = idx[floor]
         out += encode_4bpp(t)
@@ -415,9 +412,11 @@ def build(rb, name, spec):
         o = (row - first_row) * 16
         colors[o:o + 16] = [colors[o]] + list(pal) + [0] * (15 - len(pal))
     put(BURN_PAL, bpal)
-    # the flames (palette 2, SB5's) are drawn over their own floor pixels, colors FLAME_FLOOR: SB5's grass
-    # there showed through the explosions. A stage with the animation task gets its own flame tiles drawn
-    # over its floor cell (sent once by the task); the others take the SB1 floor's most common color
+    # the flames (palette 2, SB5's) on a BG2 field (1-4, 1-5) are drawn on BG1 over it with SB5's see-through
+    # set (FLAMES_BG1, as in 1-1), sent once by the animation task; an arena's field is BG1 itself (1-6, 1-7):
+    # that set's color 0 pixels take the floor cell's (colors FLAME_FLOOR). SB5's set for the field's own layer
+    # showed its grass shadows and sparks around every explosion. Without the task: the SB1 floor's most common
+    # color in FLAME_FLOOR
     o = (2 - first_row) * 16
     fcell = np.frombuffer(max(fcells, key=fcells.get), dtype=field.dtype).reshape(16, 16)
     fcount = {}
@@ -425,8 +424,12 @@ def build(rb, name, spec):
         fcount[v] = fcount.get(v, 0) + 1
     fcols = sorted(fcount, key=lambda c: -fcount[c])
     flames = None
-    if shock and 1 < len(fcols) <= len(FLAME_FLOOR):
-        flames = _flame_tiles(fcell, fcols, spec.get("flame_floor", ()))
+    if shock and "src_arc" not in spec:
+        flames = open(FLAMES_BG1, "rb").read()
+        for i in FLAME_FLOOR:
+            colors[o + i] = floor
+    elif shock and 1 < len(fcols) <= len(FLAME_FLOOR):
+        flames = _flame_tiles(fcell, fcols)
         for k, i in enumerate(FLAME_FLOOR):
             colors[o + i] = fcols[min(k, len(fcols) - 1)]
     else:

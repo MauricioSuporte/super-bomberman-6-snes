@@ -9,8 +9,8 @@
 ; !TABLE: [stage, frames each picture stays, pictures, VRAM word (word),
 ; block bytes (word), first picture (long), flames' VRAM word (word), their
 ; bytes (word, 0 = none), their source (word, bank !BANK)] ... $FF. The
-; flames (SB5's flame tiles drawn over the stage's own floor, tiles $010-$07F)
-; are sent once when the task starts, one entry a frame.
+; flames (tiles $010-$07F: SB5's see-through set for BG1, drawn over the
+; floor cell in the arenas) are sent once when the task starts, one entry a frame.
 ; anim_start (JSL, from world1's op FF 1A F6 5 / 6 in the stage's type 04
 ; script) finds the stage's row and starts a task that every "frames held"
 ; frames copies the next picture into SB5's VRAM queue (entries at
@@ -67,18 +67,8 @@ anim_start:
     bpl -
     sta.l !FOFF
     sta.l !FOFF+1
-    lda.l $7E1031               ; 1-6's duels only (see flames)
-    cmp #$67
-    beq .wait
-    cmp #$69
-    beq .wait
-    cmp #$6B
-    bne +
-.wait:
-    lda #!FDELAY
-    bra ++
-+   lda #$00
-++  sta.l !FWAIT
+    lda #!FDELAY                ; (see flames)
+    sta.l !FWAIT
     jsl $C020A1
     dl anim_task
     db $60                      ; skipped ($C020A1 returns past the dl)
@@ -163,9 +153,10 @@ anim_task:
     rtl
 
 ; the stage's flame tiles, !PART bytes a frame until all are sent (X = row offset, 8-bit), from
-; at once, or in 1-6's duels !FDELAY frames after the task's start: there SB5 writes tiles $010-$01F
-; itself some 25 frames after the type 04 script ($C0:1BC8 and $C5:14EF, CPU writes), over the first
-; ones sent (in 1-4 / 1-5 / 1-7 waiting showed SB5's own tiles instead)
+; !FDELAY frames after the task's start: SB5's stage set-up ($C5:140D, unless $1D1A bit 1) rewrites
+; the flames' end tiles $010-$01F some 25-35 frames after the type 04 script (CPU writes at
+; $C5:14EF), mixing them with SB5's floor tile ($7E:35D3): over the ones sent before, the SB1
+; floors' tiles showed as dots at the flames' ends (1-4, 1-6, 1-7)
 flames:
     lda.l !FWAIT
     beq +
