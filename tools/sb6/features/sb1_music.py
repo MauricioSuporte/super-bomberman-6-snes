@@ -38,10 +38,11 @@ from . import title_music as tm
 # World 1 stages that play SB1 songs: (stage id, song name: assets/sound/sb1_<name>_song.txt, SB1's sound RAM
 # assets/sound/sb1_stage_<name>.bin (from $0800), its sample directory there: SB1 DSP register DIR, World 3 has $2400)
 STAGES = [(0x0D, "w1m", 0x2300), (0x11, "w2m", 0x2300), (0x18, "w3m", 0x2400), (0x10, "w4m", 0x2300), (0x17, "w6m", 0x2300),
-          (0x67, "w5m", 0x2400), (0x69, "w5m", 0x2400), (0x6B, "w5m", 0x2400)]   # 1-6's duels: SB1 World 5 (song $14)
+          (0x67, "w5m", 0x2400), (0x69, "w5m", 0x2400), (0x6B, "w5m", 0x2400),   # 1-6's duels: SB1 World 5 (song $14)
+          (0x68, "bossm", 0x2400)]          # 1-7: SB1's boss song ($0A, 2-8's clown)
 # songs made by tools/midi_song.py from a MIDI (sb1_w5m_song.txt: khinsider's level.mid) play the samples of an
 # SB1 song's sound RAM image: song name -> image name
-IMAGES = {"w1m": "w1", "w2m": "w2", "w3m": "w3", "w4m": "w4", "w5m": "w5", "w6m": "w6"}
+IMAGES = {"bossm": "boss", "w1m": "w1", "w2m": "w2", "w3m": "w3", "w4m": "w4", "w5m": "w5", "w6m": "w6"}
 # 1-6's duels load SB5's boss music (id $0F = set $35 + song $0E, kept for 1-7) and play it after the intro:
 # their type 01 scripts' FF A0 0F (load, while the stage loads) and 42 0F 00 (play, ~500 frames in; another id
 # than the one loaded would upload it then: ~90 frames frozen) name id 6 instead (ZONE1's, which sb1m_song
@@ -50,7 +51,7 @@ IMAGES = {"w1m": "w1", "w2m": "w2", "w3m": "w3", "w4m": "w4", "w5m": "w5", "w6m"
 # 4.2 ms ticks kept Hudson's driver too busy to answer the CPU's sound commands at once (Hudson's handshake
 # $C0:0E7F waits for the echo: 1-6 fell to 47 fps with 4 players); 12 units a row halve its ticks
 SONG_UNITS = {"w5": (12,), "w5m": (12,), "w3m": (16,), "w6m": (12,)}
-MUSIC_SCRIPTS = {0x67: (0xC71B93, 0xC71BA2), 0x69: (0xC71F1D, 0xC71F2C), 0x6B: (0xC7215A, 0xC72169)}
+MUSIC_SCRIPTS = {0x68: (0xC71D71, 0xC71D80), 0x67: (0xC71B93, 0xC71BA2), 0x69: (0xC71F1D, 0xC71F2C), 0x6B: (0xC7215A, 0xC72169)}
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
 # SB5 directory entries the jingles name but never play: only the start jingle's percussion records (no key-on
 # of it in Mesen, the jingle keeps its percussion off) -> a silent block (2187 bytes saved)
@@ -641,6 +642,8 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
         if any(n["t"] + n["d"] > m["t"] for ns in lines_of(notes).values() for n, m in zip(ns, ns[1:])):
             raise BuildError(f"SB1 music: notes overlap at {units} units a row")
     bar = ROWS_PER_BAR * units
+    if (end - loop) % bar:  # SB1's boss song loops over 24.5 bars: chunks of half a bar
+        bar //= 2
     if loop % bar:          # a loop point inside a bar (World 6: row 9): the song starts with a rest up to it
         pad = bar - loop % bar
         for n in notes:
@@ -709,6 +712,22 @@ LIST_REGION = {"w1m": "stream_ed", "w3m": "stream_ed", "w2m": "stream_ec", "w4m"
                "w5m": "obj_f7", "w6m": "obj_f8"}
 
 
+# lists put in a region that only exists after bombers.free_stock_sheets (the first thing there, at that
+# address): 1-7's boss song (no room left in the OBJ / stream banks)
+LATE = {"bossm": ("free_c7_sheets", 0xC74000)}
+_late = []
+
+
+def late_alloc(rb):
+    """After bombers.free_stock_sheets: the LATE lists at their addresses."""
+    for name, lst, stage in _late:
+        region, at = LATE[name]
+        a = rb.alloc(region, lst, f"SB1 music {name} (stage ${stage:02X}...): Hudson upload list (sequence, samples)")
+        if a != at:
+            raise BuildError(f"SB1 music {name}: list at ${a:06X}, not ${at:06X} (allocate it first in {region})")
+    _late.clear()
+
+
 def apply(rb, sound_dir, b_lo):
     """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF."""
     table, infos, lists = bytearray(), [], {}
@@ -718,8 +737,12 @@ def apply(rb, sound_dir, b_lo):
             lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir,
                               SONG_UNITS.get(name, (24, 16, 12)),
                               sound_dir if name in crowd.SONGS else None, b_lo)
-            a = rb.alloc([LIST_REGION.get(name, "obj_f8"), "obj_f8", "obj_f7"], lst,
-                         f"SB1 music {name} (stage ${stage:02X}...): Hudson upload list (sequence, samples)")
+            if name in LATE:        # a region freed later in the build (late_alloc puts it there)
+                a = LATE[name][1]
+                _late.append((name, lst, stage))
+            else:
+                a = rb.alloc([LIST_REGION.get(name, "obj_f8"), "obj_f8", "obj_f7"], lst,
+                             f"SB1 music {name} (stage ${stage:02X}...): Hudson upload list (sequence, samples)")
             if (a & 0xFFFF) + len(lst) > 0x10000:
                 raise BuildError("SB1 music: an upload list crosses a bank")
             lists[name] = a
@@ -727,7 +750,7 @@ def apply(rb, sound_dir, b_lo):
         table += bytes([stage]) + lists[name].to_bytes(3, "little")
     for stage, (load, play) in MUSIC_SCRIPTS.items():
         rb.patch(load, bytes.fromhex("FF A0 0F"), bytes.fromhex("FF A0 06"),
-                 f"stage ${stage:02X} loads music id 6 (SB1 World 5's song through sb1m_song)")
+                 f"stage ${stage:02X} loads music id 6 (its SB1 song through sb1m_song)")
         # type 0E script: `42 j 03` (SB5's boss jingle) `FD 0E 40 00 00` (64 frames) `42 0F 00` `01` `00`: the
         # owner wants only the stage intro jingle, then the music (no boss jingle, no wait)
         o = play - 8

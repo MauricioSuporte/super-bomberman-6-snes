@@ -599,6 +599,13 @@ script accumulator (`61` = add).
   rows 3-31 (queue fill entries), group `$10` id 7 + group 2 id 5. Task
   yield = `JSL $C02160` (the return address becomes the task's resume
   point); a plain `RTL` keeps the old one.
+* Flags 5 / 6 of `$7E:2900` (`$C2:0372`): set by the title script (frame
+  ~729, cleared when the Normal Game opens); either one forces a
+  one-player session at `$C4:28B4` (co-op's `c4_tail`) and skips the stage
+  tasks at `$C5:3A2D`. A save written while one was set brought it back
+  with the save (`$C0:49C8`, the loader): every stage picked on the map
+  after a game over or the pause's world map started with one player.
+  `save_flags` (`asm/world1.asm`) clears them on load.
 * Stage end: `$1D1E` bit 2 (op `0F n` = `$1031` n + bit 2). The end task
   (`$C5:3AA7`) then checks `$1D1E & $22` (deaths: lives, game over mode
   8), else `JSR $3D19` (clear flag of `$102F` only when `$1D1A` bit 6),
@@ -738,7 +745,7 @@ script accumulator (`61` = add).
 * SB1's MIDIs (`assets/SB1 midi`, khinsider): melodic 8-interval n-grams
   of each voice of `assets/sound/sb1_w<n>_song.txt` against each MIDI
   track: W1 `level-1-3-`, W2 `level-2`, W3 `level-3`, W4 `level-4`, W5
-  (1-6) `level.mid`, W6 `level-6`. After the Golden: `JML $C5:02AB`, 240 frames later
+  (1-6) `level.mid`, W6 `level-6`. After the Golden: `victory_load`, `JML $C5:02AB`, 450 frames later
   `$1031` = `$68` / `$1D1E` = 4 written directly (exit_task). Running type
   `0B` through `$C2:00D7` from our task ended it twice and hung SB5.
   Stages `$69` / `$6B` stay in the ROM (records unchanged) but nothing
@@ -747,7 +754,25 @@ script accumulator (`61` = add).
   right 2 down 3 left 4 up, X = actor) sets `$1632` and the animation
   `$179A` + facing - 1. Stage start pose `$46-$49`; when play starts SB5
   sets `$15` (front only). 1-6 turns the seats up (`face_up` when the map
-  is in, `face_up_start` swaps `$15` for `$49`).
+  is in, `face_up_start` swaps `$15` for `$49`). 1-7 turns the start pose
+  up from the first frame the bombers exist (`start_up`, called by
+  `intro_pads` in the main loop, before the fade in), once per seat (bits
+  in the clown's `$7F:E038`; a new animation every frame cost 3 fps with 4
+  players) and only during the clown's intro (pads held, phase < 3); after
+  that the players are free. SB5 starts play during the intro (~stage frame
+  511, lights still out) and sets its idle `$15` (front): `start_up` turns it
+  back to the pose up (`$179A - $1692` = `$14`), so nobody idles until the fight.
+* Boss victory (1-6, 1-7): SB5 plays it with sound `$22` (`$C5:02D9`,
+  stages `$67-$70`; `$21` elsewhere) = command 3 of the song in ARAM; after
+  ZONE1-A that is set `$35` + song `$0E` (music id `$0F`, the boss music),
+  whose command 3 is the boss victory ("major victory", ~433 frames). The
+  SB1 lists of 1-6/1-7 hold only ZONE1's jingles (their command 3 is the
+  normal clear) and have no room for its ~15 KB of samples, so
+  `victory_load` (world1.asm, sb1_enemies.asm) requests music id `$0F`
+  through `$C0:0CED` right before `$C5:02AB` (~80 frames of upload while
+  the players stand; its command 1 is replaced by the victory a frame
+  later). Calling `$C0:0E31` / `$C0:0E9C` directly instead (past the
+  hooks of `$C0:0CED`) crashed into data at `$C0:C77C`.
 * 1-6's type `0E` script (`42 j 03` boss jingle, `FD 0E 40 00 00`,
   music, `01`) is `42 06 00 01 00`: the music right after the stage
   intro jingle (`sb1_music.MUSIC_SCRIPTS`).
@@ -857,19 +882,59 @@ script accumulator (`61` = add).
   scroll for the field; line `$17` BG2's scroll from `$0333`/`$0339` (low
   bytes of the NMI copies of `$031B`/`$0321`). BG12NBA is not split (0).
   In stage `$68` VRAM `$3400-$37FF` (BG1's lower screen, 32 x 64 map at
-  `$3000`, never shown) and `$4800-$4FFF` were zero.
+  `$3000`, never shown) and `$4800-$4FFF` were zero; BG2's HUD rows above
+  line 21 come from the lower screen of its map (`$3C00-$3C5F`, written
+  over -> garbage in the HUD), its upper screen `$3800-$3BFF` (the theme's
+  margin pattern) is never shown in `$68`, where `$0369` is the clown's.
 * 1-7's clown (`asm/sb1_enemies.asm` `clown*`, `features/sb1_enemies.py`
-  `clown_bg`): SB1 2-8's boss (about 32 16x16 OBJ in SB1, 112 x 92, mouth
-  open about 40-80 frames every 200) drawn on BG2 below the HUD through the
-  IRQ above: tiles `$340-$37F` (`$3400`; `$360-$37F` = the picture's own,
-  rewritten when the mouth opens/closes), maps `$4800` (open) / `$4C00`
-  (closed) by `$0369`, scroll `$031B`/`$0321`, hidden by `$030F` bit 1;
-  colors in BG palettes 3 and 6 (`extra_pals` of "sb1_4-8"; the burning
-  palette 3 is unused there). Body = enemy type 07 (record: empty
-  picture, routine `clown`): homes toward the nearest live bomber 1 px every
-  3 frames over walls, 6 hearts (`$1662`), hits on the 3 x 3 cells around
-  it (`knight_hit` -> `clown_hit`), the stock 180-frame blink (`$085F`);
-  contact on its cell kills. Started by `FF 1A F6 05` (with the fence).
+  `clown_bg`; SB1's boss: "SB1 2-8's clown" below): 23 pictures of
+  `assets/enemies/sb1_2-8_clown_frames.png` (`tools/sb1_clown_frames.py`,
+  drawn from SB1's own frame tables; row 1 = SB1's red flash palette) on
+  BG2 below the HUD through the IRQ above, double-buffered: tiles
+  `$340-$37F` (`$3400`) + map `$4800`, tiles `$380-$3BF` (`$3800`) + map
+  `$4C00` (64 tiles each, 16 x 15 map words; a picture goes into the buffer
+  not shown through the VRAM queue `$7E:8000` and `$0369` switches once the
+  queue's read pointer `$0355` passed it); scroll `$031B`/`$0321`, hidden
+  by `$030F` bit 1; colors in BG palettes 3 and 6 (`extra_pals` of
+  "sb1_4-8"), a color = its normal and its red value (23 pairs). Pictures,
+  maps and both palette sets: 40 KB at `$C8:0000` (`free_c8_sheets`, put
+  there by `clown_alloc` after `bombers.free_stock_sheets`; the code, in
+  `free_d6`, is assembled first with that address). Body = enemy type 07
+  (record: routine `clown`, empty mapping; its OBJ tiles / palette are the
+  shots' and explosions', `assets/enemies/sb1_2-8_fx.png`, drawn by
+  `clown_oam` into OAM slots 104-127 after SB5's builder, `JSL` at
+  `$C0:0B5D`): placed on the clown's center every frame (`$C3:4CFC`); SB1's
+  rules (states, tables, speeds, hits) run in its routine, contact kills go
+  through SB5's `$C3:47C9` with the seat distances (`$0110+`) set to 0 for
+  the seats touched. 8 hits (SB1 18); after a hit it blinks with its white
+  silhouettes (pictures 7-10, `!CWH`: no red flash), below half its hits
+  it keeps SB1's red colors softened (`hp_pal`; `CLOWN_RED` = 0.4 of the red over its own). The sinking shows every picture
+  (the next one waits until the queue sent it). The body is never killed
+  (SB5's enemy death sound / burst and, with `$1D50` = 0, the clear task's
+  door are not wanted): the routine stops drawing it and starts
+  `clown_win`, SB5's stage end as 1-6's after the Golden Bomber (`$C5:02AB`:
+  `$1D1E` bit 0, type 0A script = win pose, sound `$22`, after `victory_load`), and `clown_task`
+  ends the stage into `$1C` 450 frames later (the whole victory; `!CTIM` is a word, written 16-bit) (`$1031`, `$1D1E` = 4: what op
+  0F does). `clown_stop` (stage over) puts `$0369` back but leaves BG2 off:
+  turned on, BG2 showed its HUD map's upper screen over the fading field,
+  where buffer 1's tiles now are (a screen of garbage at the end). The dark
+  (SB1: subscreen BG2 subtracted, with a hole around the face): the fixed
+  color (`$0315-$0317`, up to (20, 22, 10) in 24 steps, back in 8)
+  subtracted from BG1, BG3 and the backdrop (`$0313` = `$20`, `$0314` =
+  `$A5`) except inside color window 1 (`$0308` = `$20`), whose left/right
+  per line come from HDMA channel 7 (`!CHT`, `$033E`/`$0AEA` bit 7): the
+  HUD lines (0-20) and, once the face shows, an oval 88 x 104 around it;
+  OBJ palettes dimmed in CGRAM alike (math reaches OBJ palettes 4-7 only),
+  Pictures over 64 tiles (3 tiles in all) lose their emptiest tiles to
+  the closest other tile in any of its 4 flips, or to blank when that
+  errs less (`clown_bg`; an unflipped closest tile left stray pixels on
+  the edges of the death pictures).
+  colors SB5 writes meanwhile (the start blink's restore `$C1:0035` every
+  frame) taken as the new originals (`obj_watch`). Players face up
+  from the stage's first frame to the end of the intro (`start_up`) and their pads are held (`intro_pads`, `$7F:E019` =
+  `$A5`) during the intro and the death. Started by `FF 1A F6 05` (with
+  the fence). Music: SB1's boss song from khinsider's `boss-battle.mid`
+  (`sb1_bossm_song.txt`), no SB5 boss jingle.
 * Boss stages: `$C5:3A2D` skips SB5's stage tasks (`$C4:221D`, `$C5:024D`,
   `$C5:0000`, the clear task `$C5:3B4E`) when `$1D1A` = 8; stage `$68`
   without its rival runs them (`$1D1A` = `$40`). Op `FF 7C slot x y char`
@@ -1089,8 +1154,60 @@ script accumulator (`61` = add).
   each: op `FF 1A F6 n`, the door hides in a random soft block, picked by a
   native task once the map is in), then bosses `$67` -> `$69` (1-6) -> `$68`
   (1-7) -> `$1C`. 1-7 has no rival (its `FF 7C` root and the portal root
-  are dropped, so is `10 10`): the clown (type 07 at 7, 4) and the World 1
-  door, which falls back to a floor cell near the middle.
+  are dropped, so is `10 10`, and the World 1 door root): the clown (type 07
+  at 7, 4); its routine ends the stage into `$1C`. A cleared stage's end stores
+  the stage it leads to in `$1046` (`stage_last`, `$C5:3ADC`), so the map
+  (and a reloaded save) opens 1-7 after 1-6.
+
+## SB1 2-8's clown (Super Bomberman (USA), HiROM, file offset = address & `$3FFFFF`)
+
+* Object `$1000`, created at `$C7:3CDA`: x `$88`, y `$5E` (obj; the face's
+  center is y - `$20`), 18 hits (`$32`), `$0314` |= 8 (players and timer
+  frozen), obj `$0E` = `$30`, `$0F` = 4, `$1E` = 8 (OBJ palettes 4-6, the
+  white silhouettes 7). SB1 draws every piece 8 px left of obj x.
+* Intro: `$3D21` 224 frames, then the field goes dark by color math
+  (CGADSUB `$9F` subtracting subscreen BG2: field about -(20, 22, 10) in
+  5-bit, the clown -(4, 4, 0), the bombers untouched), `$3D4E` 128 frames,
+  animation `$3A58` (N16 N6 I6 N4 I4 N4 I4 I6 N6 I10 N44, I = the eye
+  glint), lights on, state `$24`, main routine `$3DBC`.
+* `$3DBC`: target = nearest player (`$C6:39C0`); per axis acceleration +-1
+  (x: + when the player's x >= its own; y: + when its y - `$20` < the
+  player's) up to speed +-`$40` (1/256 px a frame; both doubled in state
+  `$0C`), added unless the speed already equals the cap; position x
+  clamped to `$3F00-$D000`, obj y to `$5000-$C000`. Flames: `$C6:370B`
+  with `$2020` (cells within 32 px of the center); contact `$C6:353D` with
+  `$1010` (16 px). Animation end (`$C6:2576`) -> `$C7:3EC9`: state =
+  next[state], animation = anim[state] (tables `$C7:425C` word + next byte
+  per state / 4, after-hit `$C7:428E`): 0 N255; 4 intro; 8 D10 E7 F13 ->
+  `$0C` (hit `$2C`); `$0C` F128 (crying, fast) -> `$24` (hit `$2C`; speeds
+  zeroed at its end); `$10` G255; `$14`/`$18`/`$1C`/`$20` N/D/E/G
+  alternating with their white silhouettes 3 + 3 frames, 10 times (G 12)
+  -> 8 (`$20` -> `$10`); `$24` N28 O22 loop (hit `$28`); `$28` N255 ->
+  `$14`; `$2C` N255 -> `$18`. Pictures N `$2B58`, O `$3452`, I `$2C0D`,
+  D `$2D7D`, E `$2E32`, F `$2EFB`, G `$2FC4`, white `$308D` `$3142`
+  `$31F7` `$3389`.
+* Hit (`$3EF1`): hits - 1 (0: death `$3FF8`), `$16` = `$60` stunned frames
+  (`$3F6B`: no move, no flames, contact on, its animation plays, OBJ
+  palettes `$0C-$0E` = `$C7:3FF0` (`0D 10 11` / red `12 12 12`) by stun &
+  2), state = after-hit[state], 8 shots (`$C7:412A`, directions 0-7: speeds
+  `$C7:421C` (0, -`$F0`), (`$A0`, -`$A0`), (`$F0`, 0) ..., offsets from the
+  center `$C7:423C` (0, -48), (29, -35), (40, -8), (29, 19), (0, 32) ...;
+  routine `$C7:4158`, OBJ palette 0, animation `$3C2E` 4 pictures 3/1/3/1
+  frames, gone off the screen, contact `$C6:34FC` 8 px, over walls). Red
+  palette: `7C1F 007F 0018 001F 000C 0013 001A 0119 0011 0017 0011 0012
+  000C 053F 0011 01DF`.
+* The dark seen in Mesen: CGWSEL `$02` / CGADSUB `$9F` all along; BG2
+  (map `$5400`, palette 1) is a darkness layer, color 4 = (20, 20, 11)
+  with an oval hole about 41 x 48 px with a 2-color soft edge (colors 1-2:
+  (4, 4, 1), ...) on the face; its colors step down over ~24 frames
+  (frames 1562-1586 of a run) and back up over ~8 (1786-1792).
+* Death (`$3FF8`): `$0314` |= 8, 385 frames of `$3B8F` (G / white G) and
+  the red flash, explosions (`$C6:31D7` with `$C7:40AA`: one every 4
+  frames at the center +- (random & `$3F`, minus when bit 0 is clear) on
+  each axis, animation `$C6:2F23` 5/4/2/1/1 frames, 32 x 32 = one 16 x 16
+  tile mirrored, sounds `$15` every 16 frames, `$1B` every 32), then
+  `$3BF9` sinks (G13 then 12 frames `$3507`-`$3A1C`, sound `$18`), the
+  players' win pose (`$C4:1AD8`), 128 frames, the map.
 
 ## Super Bomberman 1's sound driver (ZONE1 map music)
 
@@ -1148,7 +1265,11 @@ script accumulator (`61` = add).
   sound command, 1-6 at 47 fps with 4 players); their type 01 scripts load and play SB5's boss music (id
   `$0F` = set `$35` + song `$0E`, `FF A0 0F` while loading, `42 0F 00` after the intro): both name id 6
   now (`sb1_music.MUSIC_SCRIPTS`; a play op naming another id than the one loaded uploads it then, ~90
-  frames frozen). The World 1 stage without SB1 music (1-7) plays its own song (set `$35`, song `$0E`):
+  frames frozen). 1-7 (`$68`) plays SB1's boss song the same way (`bossm`: khinsider's `boss-battle.mid`
+  fitted to a DSP log of SB1 2-8 from its song command `$8A`, `sb1_boss_song.txt`; SB1 loops it over
+  24.5 bars, so its sequence is cut in half bars; samples from `sb1_stage_boss.bin` = SB1 2-8's sound RAM;
+  its 32 KB list is the first thing in `free_c7_sheets`, `sb1_music.LATE`). SB5's boss music (set `$35`,
+  song `$0E`) is no longer played by a World 1 stage;
   SB5's ZONE1 song is no longer heard; its own samples (`$25`, `$26`) are freed (`free_dc_zone1`). The list overwrites set
   `$2C`'s sequence while `$03CE` still says `$2C` (set to `$FF`, music id 6
   would send the set again over the list): `sb1m_song` marks `SB1M_FLAG`

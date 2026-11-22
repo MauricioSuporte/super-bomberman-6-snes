@@ -39,6 +39,9 @@ MAPS = {
     "w3m": dict(midi="SB1 midi/level-3.mid", ref="sb1_w3_song.txt", auto=True),
     "w4m": dict(midi="SB1 midi/level-4.mid", ref="sb1_w4_song.txt", auto=True),
     "w6m": dict(midi="SB1 midi/level-6.mid", ref="sb1_w6_song.txt", auto=True),
+    # SB1's boss song (2-8's clown, 1-7): khinsider's boss-battle.mid fitted to SB1's (sb1_boss_song.txt, a DSP
+    # log of SB1 2-8 from its song command $8A)
+    "bossm": dict(midi="SB1 midi/boss-battle.mid", ref="sb1_boss_song.txt", auto=True),
 }
 DRUM_NOTES = 6          # a track with at most this many different notes is fitted note by note (drums)
 OFFSETS = range(-48, 49)

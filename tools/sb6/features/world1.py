@@ -360,7 +360,7 @@ def code(rb, arena, anim_start=0, clown=None):
             "W1ARC": f"${arena['ext']['arc']:06X}", "BLINK": f"${blink:06X}", "BLINKN": str(nrows),
             "GATE": f"${gate:06X}", "GATEN": str(grows), "RIVALCHAR": str(RIVAL_CHAR), "INTROY": f"${INTRO_ROW * 16:02X}",
             "ANIMSTART": f"${anim_start:06X}", "CLOWNSTART": f"${clown['start']:06X}",
-            "CLOWNHIT": f"${clown['hit']:06X}", "CLOWN_TYPE": f"${sb1_enemies.KINDS['clownbody']['type']:02X}"}
+            "CLOWNHIT": f"${clown['hit']:06X}", "CLOWNHOLD": f"${clown['hold']:06X}", "CLOWN_TYPE": f"${sb1_enemies.KINDS['clownbody']['type']:02X}"}
     pool = ITEM_POOL
     if os.environ.get("SB6_ITEMTEST"):             # research: SB5 item ids 1-$10 at random, two a second
         pool = list(range(1, 0x11))
@@ -417,6 +417,12 @@ def code(rb, arena, anim_start=0, clown=None):
     rb.patch(0xC4367F, bytes.fromhex("BD 1F 10 D0 09 A9 03 EB A9 01 22 ED 0C C0"), jsl("rival_sfx", 14),
              "bomber death (Normal Game): the death sound for rivals too, the crowd for 1-6's first two "
              "(asm/world1.asm rival_sfx)")
+    rb.patch(0xC53ADC, bytes.fromhex("AD 2F 10 8D 46 10"), jsl("stage_last", 6),
+             "stage end: a cleared stage leaves the next one as the map's / save's stage $1046 "
+             "(asm/world1.asm stage_last)")
+    rb.patch(0xC049C8, bytes.fromhex("9F 00 29 7E"), jsl("save_flags", 4),
+             "save load: flags 5/6 (title / demo: one player forced) never come back from a save "
+             "(asm/world1.asm save_flags)")
     return syms
 
 
@@ -530,13 +536,10 @@ def chain(rb):
         for n, what in STAGE_OPS.get(stage, []):     # 1-6's stands (4) / intro (7), 1-7's fence (5): FF 1A F6 n
             op = rb.alloc("bulk", bytes([0xFF, 0x1A, 0xF6, n, 0x00]), f"World 1: stage ${stage:02X} {what} (op)")
             kept.append(rb.alloc("bulk", bytes([0x04]) + p(op) + bytes(1), f"World 1: stage ${stage:02X} {what} (root)"))
-        if sb1_enemies.stage_enemies(stage) is not None:     # SB5's portal is drawn with its theme's tiles:
-            kept = [r for r in kept if r != root]               # the World 1 door instead (a floor cell)
-            exit_ = rb.alloc("bulk", bytes([0x0F, nxt, 0x00]), f"World 1 door: boss ${stage:02X} -> ${nxt:02X}")
-            kept.append(rb.alloc("bulk", bytes([0x04]) + p(pick) + bytes([0x0D]) + p(queue) + bytes([0x0B])
-                                 + p(exit_) + bytes([0x0C]) + p(touch) + bytes(1), f"World 1 door root, boss ${stage:02X}"))
+        if sb1_enemies.stage_enemies(stage) is not None:     # no portal, no door: the boss's own routine
+            kept = [r for r in kept if r != root]               # ends the stage into nxt (sb1_enemies CNEXT)
             new = rb.alloc("bulk", b"".join(p(r) for r in kept) + bytes(3),
-                           f"World 1: boss ${stage:02X} record (SB1 enemy boss, door -> ${nxt:02X})")
+                           f"World 1: boss ${stage:02X} record (SB1 enemy boss, no door; -> ${nxt:02X} by its routine)")
             rb.patch(MODE_TABLE + 3 * (stage - 1), p(rec), p(new), f"World 1: boss ${stage:02X} = SB1 enemy boss")
             report.append(f"boss ${stage:02X} -> ${nxt:02X}")
             continue

@@ -67,10 +67,11 @@ KINDS = {
     # routine goes into the record once the characters' tables are built: chameleon())
     "frog": dict(type=0x05, sheet="sb1_3-6_frog", routine="chameleon",
                  anims=[[(0, 12), (1, 12), (2, 12), (1, 12), (3, 6), (4, 6), (5, 12), (4, 6), (3, 6)]] * 4),
-    # SB1 2-8's clown mask (1-7's boss): an enemy with an empty picture whose routine moves the clown, drawn
-    # on BG2 from assets/enemies/sb1_2-8_clown.png (asm/sb1_enemies.asm `clown`); type 07 was only in SB5
-    # stages $18-$1B (1-3's enemies are SB1's now)
-    "clownbody": dict(type=0x07, sheet="sb1_2-8_body", routine="clown", anims=[[(0, 60)]] * 4),
+    # SB1 2-8's clown mask (1-7's boss): an enemy with an empty picture whose routine is SB1's boss (asm/
+    # sb1_enemies.asm `clown`), the face drawn on BG2 (clown_bg); type 07 was only in SB5 stages $18-$1B (1-3's
+    # enemies are SB1's now). Its OBJ tiles and palette are the boss's shots and death explosions (fx: drawn by
+    # clown_oam straight into OAM, `_kind_fx`)
+    "clownbody": dict(type=0x07, sheet="sb1_2-8_fx", routine="clown", fx=True, anims=[[(0, 60)]] * 4),
     # 1-4 = SB1 4-4's UFOs and bomb robot with SB1 4-2's horned robots instead of SB5's tanks; mapping page 2,
     # one OBJ palette for the three (pal "w14": 1-4 with 4 players keeps a slot for the Louie palette).
     # Sheets drawn from SB1's tables by tools/sb1_enemy_frames.py; routines = SB1's (asm/sb1_enemies.asm).
@@ -88,9 +89,18 @@ KINDS = {
 }
 ORDER = sorted(KINDS, key=lambda n: KINDS[n].get("page", 0))   # page 0 kinds first (stable)
 PAGES = 3
-CLOWN = ("sb1_2-8_clown", "sb1_2-8_clown_closed")   # BG2 pictures, mouth open / closed (112 x 92, same box)
-CLOWN_CENTER = (56, 44)          # the body's cell center in the picture
-CLOWN_PALS = (3, 6)              # BG palettes of the 1-7 arena it takes (features/sb1_stages.py "sb1_4-8")
+# 1-7's boss = SB1 2-8's clown mask (tools/sb1_clown_frames.py): CLOWN_PICS pictures of CLOWN_W x CLOWN_H (row 0;
+# row 1 = the same in SB1's red flash palette), its center (SB1 obj x, y - 32) at CLOWN_CENTER; drawn on BG2
+# (asm/sb1_enemies.asm clown) in BG palettes CLOWN_PALS of the 1-7 arena (features/sb1_stages.py "sb1_4-8")
+CLOWN_FRAMES = "sb1_2-8_clown_frames"
+CLOWN_PICS, CLOWN_W, CLOWN_H = 23, 128, 120
+CLOWN_CENTER = (64, 72)          # SB1 draws its sprites 8 px left of obj x: the face is centered on 64
+CLOWN_PALS = (3, 6)
+CLOWN_TILES = 64                 # tiles per picture (one VRAM buffer)
+CLOWN_RED = 0.4                  # below half its hits: this much of SB1's red flash over its own colors (1 = SB1's)
+CLOWN_DATA = "free_c8_sheets"    # its pictures (one bank: free once bombers.free_stock_sheets ran, clown_alloc)
+CLOWN_AT = 0xC80000              # (the first thing put there: the code is assembled before, with this address)
+CODE_REGION = "free_d6"          # asm/sb1_enemies.asm (bank $E4 is full)
 # Starts closer than 6 cells to a seat (4 players: lower corners too) are moved to the nearest cell that is not,
 # tools/coop4_check.py spawn safety.
 # 1-2 (stage $11): 2 of each of SB1 2-1's kinds (SB1 has 4 spring heads; the 2 at (7, 6) and (3, 9) are left out
@@ -298,6 +308,8 @@ def _kind_big(name, k, cells, lut, map_id, budget=64):
 
 
 def _kind(rb, name, k, map_id):
+    if k.get("fx"):
+        return _kind_fx(name, k, map_id)
     cw, ch, ax, ay = k.get("cell", (CW, CH, AX, AY))
     sheet = np.asarray(Image.open(os.path.join(ASSETS, k["sheet"] + ".png")).convert("RGBA"))
     cells = [sheet[:, i * cw:(i + 1) * cw] for i in range(sheet.shape[1] // cw)]
@@ -375,102 +387,159 @@ OLD_DATA = [
 ]
 
 
-def clown_bg(rb):
-    """The clown's BG2 pictures (mouth open, closed): tiles both use (VRAM tiles $340-$35F), each one's own
-    (32 at most, $360-$37F, rewritten when the mouth changes; over 32 the least visible are drawn with
-    the closest tile) and its 32 x 32 map (background = tile 0, blank). One bank: shared tiles, closed
-    tiles, open tiles, open map, closed map; the two palettes (BG palettes CLOWN_PALS)."""
+def _kind_fx(name, k, map_id):
+    """The boss's OBJ effects (KINDS "clownbody", fx): 16 x 16 pictures laid out for 16x16 OBJ (picture j at VRAM
+    tile 32 * (j // 8) + 2 * (j % 8) of the kind's page grid: archive tiles TL, BL, TR, BR), its own colors; its
+    one mapping is empty (the body is not drawn)."""
+    sheet = np.asarray(Image.open(os.path.join(ASSETS, k["sheet"] + ".png")).convert("RGBA"))
+    cells = [sheet[:, i * 16:(i + 1) * 16] for i in range(sheet.shape[1] // 16)]
+    colors = sorted({_bgr(p) for c in cells for p in c.reshape(-1, 4) if p[3]})
+    if len(colors) > 15:
+        raise BuildError(f"SB1 enemy {name}: {len(colors)} colors (15 at most)")
+    lut = {c: i + 1 for i, c in enumerate(colors)}
+    tiles = {}
+    for j, cell in enumerate(cells):
+        base = 32 * (j // 8) + 4 * (j % 8)
+        for n, (y, x) in enumerate(((0, 0), (8, 0), (0, 8), (8, 8))):
+            idx = np.zeros((8, 8), np.uint8)
+            for yy in range(8):
+                for xx in range(8):
+                    if cell[y + yy, x + xx, 3]:
+                        idx[yy, xx] = lut[_bgr(cell[y + yy, x + xx])]
+            tiles[base + n] = encode_4bpp(idx)
+    count = max(tiles) + 1
+    count += count % 2
+    if count > 64:
+        raise BuildError(f"SB1 enemy {name}: {len(cells)} pictures need {count} tiles (64 at most)")
+    arc = b"".join(tiles.get(n, bytes(32)) for n in range(count))
+    maps = [bytes([1]) + struct.pack("<hhHB", 0x4000, 0, 0, 0x20)]      # one piece far right: nothing drawn
+    scripts = [b"".join(bytes([map_id + c, n]) for c, n in a) + b"\x00\x00" for a in k["anims"]]
+    return dict(arc=arc, colors=colors, maps=maps, scripts=scripts, tiles=count)
+
+
+def clown_bg():
+    """1-7's clown: every picture's own tiles (CLOWN_TILES at most: over that the least visible are drawn with the
+    closest; flips shared) and its 16 x 15 map (word = tile + 1 | palette | priority | flips, 0 = blank), colors
+    in two BG palettes (a color = its normal and red flash value). One bank: table (per picture: tiles, bytes,
+    map), tiles, maps, then the palettes (normal, red: 2 x 15 words each)."""
     from .world_map import _fit, _dist
-    pics = []
-    for name in CLOWN:
-        im = np.asarray(Image.open(os.path.join(ASSETS, name + ".png")).convert("RGBA"))
-        h, w = (im.shape[0] + 7) // 8 * 8, (im.shape[1] + 7) // 8 * 8
-        pic = np.zeros((h, w, 4), np.uint8)
-        pic[:im.shape[0], :im.shape[1]] = im
-        pics.append([(tx, ty, pic[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8]) for ty in range(h // 8) for tx in range(w // 8)
-                     if pic[ty * 8:ty * 8 + 8, tx * 8:tx * 8 + 8, 3].any()])
-    blocks = [blk for pic in pics for blk in pic]
-    sets = [{_bgr(p) for p in b.reshape(-1, 4) if p[3]} for _, _, b in blocks]
+    im = np.asarray(Image.open(os.path.join(ASSETS, CLOWN_FRAMES + ".png")).convert("RGBA"))
+    if im.shape[1] != CLOWN_PICS * CLOWN_W or im.shape[0] != 2 * CLOWN_H:
+        raise BuildError(f"clown: {CLOWN_FRAMES}.png is not {CLOWN_PICS} x 2 pictures of {CLOWN_W} x {CLOWN_H}")
+    norm, red = im[:CLOWN_H], im[CLOWN_H:]
+    cols, rows = CLOWN_W // 8, CLOWN_H // 8
+    blocks = []                                          # (picture, tx, ty, keys 8x8)
+    for n in range(CLOWN_PICS):
+        for ty in range(rows):
+            for tx in range(cols):
+                x0, y0 = n * CLOWN_W + tx * 8, ty * 8
+                b, r = norm[y0:y0 + 8, x0:x0 + 8], red[y0:y0 + 8, x0:x0 + 8]
+                if not b[..., 3].any():
+                    continue
+                keys = [[(_bgr(b[y, x]), _bgr(r[y, x])) if b[y, x, 3] else None for x in range(8)] for y in range(8)]
+                blocks.append((n, tx, ty, keys))
+    sets = [{kk for row in keys for kk in row if kk} for *_, keys in blocks]
     pals, where = _fit(sets, cap=15, most=2)
     if len(pals) > 2:
         raise BuildError(f"clown: {len(pals)} palettes")
     pals = [sorted(p) for p in pals]
-    # each block -> (palette, 8x8 indices); a tile = its canonical flip
-    cells, k = [], 0
-    for pic in pics:
-        out = []
-        for tx, ty, b in pic:
-            p = where[k]
-            k += 1
-            lut = {c: i + 1 for i, c in enumerate(pals[p])}
-            idx = np.zeros((8, 8), np.uint8)
-            for y in range(8):
-                for x in range(8):
-                    if b[y, x, 3]:
-                        c = _bgr(b[y, x])
-                        idx[y, x] = lut.get(c) or lut[min(pals[p], key=lambda d: _dist(c, d))]
-            out.append((tx, ty, p, idx))
-        cells.append(out)
+    near = 0
 
     def flips(idx):
-        return [(idx[::-1 if vf else 1, ::-1 if hf else 1], hf, vf) for hf in (False, True) for vf in (False, True)]
+        return [(encode_4bpp(idx[::-1 if vf else 1, ::-1 if hf else 1]), hf, vf) for hf in (False, True)
+                for vf in (False, True)]
+    pics = [{} for _ in range(CLOWN_PICS)]
+    for (n, tx, ty, keys), p in zip(blocks, where):
+        lut = {kk: i + 1 for i, kk in enumerate(pals[p])}
+        idx = np.zeros((8, 8), np.uint8)
+        for y in range(8):
+            for x in range(8):
+                kk = keys[y][x]
+                if kk:
+                    if kk not in lut:
+                        near += 1
+                        kk = min(pals[p], key=lambda d: _dist(kk[0], d[0]) + _dist(kk[1], d[1]))
+                    idx[y, x] = lut[kk]
+        pics[n][tx, ty] = (p, idx)
 
-    def canon(idx):
-        return min(encode_4bpp(t) for t, _, _ in flips(idx))
-    own = [{canon(i) for *_, i in pic} for pic in cells]
-    shared = sorted(own[0] & own[1])
-    if len(shared) > 32:
-        raise BuildError(f"clown: {len(shared)} shared tiles (32 at most)")
-    groups, mapping = [], [{}, {}]                      # per picture: canonical tile -> slot
-    for n, pic in enumerate(cells):
-        mine = sorted(own[n] - set(shared))
-        while len(mine) > 32:                           # the tile with the fewest opaque pixels goes to the closest
-            dec = {e: np.array([[(e[(y & 7) * 2 + (pl & 1) + (pl >> 1) * 16] >> (7 - x)) & 1 for x in range(8)]
-                                for y in range(8) for pl in range(4)]) for e in mine + shared}
-
-            def px(e):
-                d = dec[e].reshape(8, 4, 8)
-                return sum(d[:, pl] << pl for pl in range(4))
-            worst = min(mine, key=lambda e: (px(e) > 0).sum())
-            near = min((e for e in mine + shared if e != worst), key=lambda e: (px(e) != px(worst)).sum())
-            mapping[n][worst] = near
-            mine.remove(worst)
-        groups.append(mine)
-    slot = {}
-    for i, e in enumerate(shared):
-        slot[e] = 0x340 + i
-    tiledata = [b"".join(shared) + bytes(32 * (32 - len(shared)))]
-    maps = []
-    for n, pic in enumerate(cells):
-        mine = groups[n]
-        local = dict(slot)
-        for i, e in enumerate(mine):
-            local[e] = 0x360 + i
-        for e, near in mapping[n].items():
-            local[e] = local[near]
-        tiledata.append(b"".join(mine) + bytes(32 * (32 - len(mine))))
-        words = [0x0000] * 1024
-        for tx, ty, p, idx in pic:
-            e = canon(idx)
-            src = mapping[n].get(e, e)
-            # the flip that turns the stored (canonical) tile into this block
-            hf, vf = next((hf, vf) for t, hf, vf in flips(idx) if encode_4bpp(t) == src) if src == e else (False, False)
-            words[ty * 32 + tx] = local[e] | CLOWN_PALS[p] << 10 | 0x2000 | (0x4000 if hf else 0) | (0x8000 if vf else 0)
-        maps.append(b"".join(struct.pack("<H", x) for x in words))
-    # one bank: shared, closed's own, open's own, open map, closed map
-    data = tiledata[0] + tiledata[2] + tiledata[1] + maps[0] + maps[1]
-    regs = [r for r in ("free_cb_enemies1", "free_cb_enemies2", "obj_f9", "obj_f8", "bulk") if r in rb.regions]
-    a = rb.alloc(regs, data, f"SB1 clown (1-7's boss): BG2 tiles ({len(shared)} + {len(groups[0])} / "
-                             f"{len(groups[1])}) and 2 maps")
-    if a >> 16 != (a + len(data) - 1) >> 16:
+    def px(e):
+        d = np.frombuffer(e, np.uint8)
+        return np.array([[sum(((int(d[y * 2 + (pl & 1) + (pl >> 1) * 16]) >> (7 - x)) & 1) << pl for pl in range(4))
+                          for x in range(8)] for y in range(8)])
+    data_tiles, data_maps, merged = [], [], 0
+    for n, pic in enumerate(pics):
+        canon = {c: min(f for f, _, _ in flips(idx)) for c, (p, idx) in pic.items()}
+        uniq = sorted(set(canon.values()))
+        alias = {}                                       # tile -> (closest tile or None = blank, hflip, vflip)
+        while len(uniq) > CLOWN_TILES:                   # the tile with the fewest opaque pixels -> the closest
+            worst = min(uniq, key=lambda e: (px(e) > 0).sum())
+            uniq.remove(worst)
+            w = px(worst)
+            best = ((w > 0).sum(), None, False, False)   # blank: its opaque pixels lost (no stray pixels added)
+            for e in uniq:
+                q = px(e)
+                for hf in (False, True):
+                    for vf in (False, True):
+                        d = (w != q[::-1 if vf else 1, ::-1 if hf else 1]).sum()
+                        if d < best[0]:
+                            best = (d, e, hf, vf)
+            alias[worst] = best[1:]
+            for a, (b, h, v) in list(alias.items()):     # (a tile merged into this one earlier follows it)
+                if b == worst:
+                    alias[a] = (best[1], h ^ best[2], v ^ best[3]) if best[1] is not None else (None, False, False)
+            merged += 1
+        slot = {e: i for i, e in enumerate(uniq)}
+        words = [0] * (cols * rows)
+        for (tx, ty), (p, idx) in pic.items():
+            e = canon[tx, ty]
+            hf, vf = next((hf, vf) for f, hf, vf in flips(idx) if f == e)
+            if e in alias:
+                e, h2, v2 = alias[e]
+                if e is None:
+                    continue                             # left blank
+                hf, vf = hf ^ h2, vf ^ v2
+            words[ty * cols + tx] = ((slot[e] + 1) | CLOWN_PALS[p] << 10 | 0x2000 | (0x4000 if hf else 0)
+                                     | (0x8000 if vf else 0))
+        data_tiles.append(b"".join(uniq))
+        data_maps.append(b"".join(struct.pack("<H", w) for w in words))
+    head = 6 * CLOWN_PICS
+    a0 = CLOWN_AT
+    tile_at, at = [], a0 + head
+    for t in data_tiles:
+        tile_at.append(at)
+        at += len(t)
+    map_at = []
+    for m in data_maps:
+        map_at.append(at)
+        at += len(m)
+    pal_at = at
+    table = b"".join(struct.pack("<HHH", tile_at[n] & 0xFFFF, len(data_tiles[n]), map_at[n] & 0xFFFF)
+                     for n in range(CLOWN_PICS))
+    def soft(c):                                         # (normal, red) -> the red softened toward the normal
+        n, r = c
+        return sum(round(((n >> s) & 31) * (1 - CLOWN_RED) + ((r >> s) & 31) * CLOWN_RED) << s for s in (0, 5, 10))
+    palw = b"".join(struct.pack("<H", (pals[p][i][0] if v == 0 else soft(pals[p][i])) if i < len(pals[p]) else 0)
+                    for v in (0, 1) for p in (0, 1) for i in range(15))
+    data = table + b"".join(data_tiles) + b"".join(data_maps) + palw
+    if a0 >> 16 != (a0 + len(data) - 1) >> 16:
         raise BuildError("clown: BG2 data crosses a bank")
-    return dict(tiles=a, closed=a + 0x400, open=a + 0x800, map=a + 0xC00, pals=pals,
-                ntiles=len(shared) + max(len(g) for g in groups), merged=sum(len(m) for m in mapping))
+    print(f"SB1 clown: {CLOWN_PICS} pictures, {sum(len(t) for t in data_tiles) // 32} tiles "
+          f"(at most {max(len(t) for t in data_tiles) // 32} per picture, {merged} merged), "
+          f"{sum(len(p) for p in pals)} colors in 2 palettes ({near} pixels drawn with the closest), {len(data)} bytes")
+    return dict(table=a0, pal=pal_at, pals=[[c[0] for c in p] for p in pals], data=data)
+
+
+def clown_alloc(rb, bg):
+    """The clown's pictures, once free_c8_sheets exists (build.py, right after bombers.free_stock_sheets)."""
+    a = rb.alloc(CLOWN_DATA, bg["data"], f"SB1 clown (1-7's boss): {CLOWN_PICS} BG2 pictures (tiles, maps), palettes")
+    if a != CLOWN_AT:
+        raise BuildError(f"clown: its pictures went to ${a:06X}, the code reads ${CLOWN_AT:06X}")
 
 
 def code(rb, bg):
     from .. import asar
-    region = rb.regions["bulk"]
+    from .world1 import NEXT_WORLD
+    region = rb.regions[CODE_REGION]
     anims, aid = {}, ANIM_FIRST                          # each kind's first animation (apply() hands them out in order)
     for name in ORDER:
         k = KINDS[name]
@@ -482,18 +551,19 @@ def code(rb, bg):
                                                 "AUFO": f"${anims['ufo']:02X}", "ABOT": f"${anims['robot']:02X}",
                                                 "AHORN": f"${anims['horn']:02X}",
                                                 "CLOWN_TYPE": f"${KINDS['clownbody']['type']:02X}",
-                                                "CTILES": f"${bg['tiles']:06X}", "COPEN": f"${bg['open']:06X}",
-                                                "CCLOSED": f"${bg['closed']:06X}",
-                                                "CMAP": f"${bg['map']:06X}", "CBANK": f"${bg['tiles'] >> 16:02X}",
+                                                "CTAB": f"${bg['table']:06X}", "CPAL": f"${bg['pal']:06X}",
+                                                "CPICS": str(CLOWN_PICS),
+                                                "CBANK": f"${bg['table'] >> 16:02X}", "CPAL1": str(CLOWN_PALS[0]),
+                                                "CPAL2": str(CLOWN_PALS[1]),
                                                 "COX": str(CLOWN_CENTER[0]), "COY": str(CLOWN_CENTER[1]),
-                                                "CSTAGE": "$68"})
+                                                "CSTAGE": "$68", "CNEXT": f"${NEXT_WORLD:02X}"})
     start, end = region.cursor, syms["end"]
     out = bytearray(rb.d)
     for o, d in runs:
         if not (off(start) <= o and o + len(d) <= off(end)):
             raise BuildError(f"sb1_enemies.asm wrote outside its section at file offset {o:06X}")
         out[o:o + len(d)] = d
-    rb.alloc("bulk", bytes(out[off(start):off(end)]), "SB1 enemies: clown routines (asm/sb1_enemies.asm)")
+    rb.alloc(CODE_REGION, bytes(out[off(start):off(end)]), "SB1 enemies: routines, 1-7's clown (asm/sb1_enemies.asm)")
     return syms
 
 
@@ -501,7 +571,7 @@ def apply(rb):
     """Archives, palettes, records, tables; returns the asm defines for asm/bombers.asm."""
     for name, start, size, crc, purpose in OLD_DATA:      # (the new archives go there first)
         rb.free_old(name, start, size, crc, purpose)
-    bg = clown_bg(rb)
+    bg = clown_bg()
     syms = code(rb, bg)
     arc_tab = 0xE30000 + _w(rb, 0xC01C96 + 2 * 8)
     pal_tab = 0x810000 + _w(rb, 0xC00379 + 2 * 8)
@@ -577,7 +647,13 @@ def apply(rb):
                 (f"ENMAP{n + 1}", f"${mts[n] >> 16:02X}"),
                 (f"ENMAPBASE{n + 1}", f"${(mts[n] - 2 * (MAP_FIRST - 1)) & 0xFFFF:04X}"),
                 (f"ENANIM{n + 1}", f"${anim_page[n]:02X}"))}}
-    info["_clown"] = dict(pals=bg["pals"], start=syms["clown_start"], hit=syms["clown_hit"], tiles=bg["ntiles"])
+    print(f"SB1 clown: routine ${syms['clown']:06X}, start ${syms['clown_start']:06X}, contact kill "
+          f"${syms['clown_killseats']:06X}, OAM ${syms['clown_oam']:06X}")
+    o = syms["clown_oam"]
+    rb.patch(0xC00B5D, bytes.fromhex("22 59 14 C0"), bytes([0x22, o & 0xFF, o >> 8 & 0xFF, o >> 16]),
+             "main loop, OAM builder: then 1-7's clown's shots and explosions (asm/sb1_enemies.asm clown_oam)")
+    info["_clown"] = dict(pals=bg["pals"], start=syms["clown_start"], hit=syms["clown_hit"], hold=syms["clown_hold"],
+                          bg=bg)
     return defs, info
 
 

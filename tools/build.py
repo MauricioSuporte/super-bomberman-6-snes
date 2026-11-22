@@ -148,6 +148,8 @@ def main():
                              enemies=en_defs)
     sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
     bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
+    sb1_music.late_alloc(rb)                     # 1-7's boss song: first thing in free_c7_sheets
+    sb1_enemies.clown_alloc(rb, clown["bg"])  # 1-7's clown pictures (first in free_c8_sheets)
     cham = sb1_enemies.chameleon(rb, info, sheets, en_info)   # 1-3's chameleons walk as the characters
     print(f"chameleons: {cham['streamed']} streamed poses reused, {cham['cut']} cut from strips "
           f"({cham['blocks']} blocks, up to {cham['widest']} columns), {cham['scripts']} walk scripts")

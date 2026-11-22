@@ -475,7 +475,7 @@ rival_stats:
 !GOLDGRACE = 30                 ; once no item is left on the field (after this many frames)
 !SPX = $7FFB20                  ; 4 bytes: each seat's start x ($182A), then 4 its y ($1872)
 !GOLDN = $7FFB28                ; !NXT's carries (frames / 256)
-!EXITWAIT = 240                 ; then to the next duel
+!EXITWAIT = 450                 ; then to the next duel (SB5's boss victory: 433 frames)
 !FUP = $7FFBFB                  ; seats whose start pose was turned up (face_up_start)
 
 intro_start:
@@ -560,11 +560,22 @@ exit_task:
     lda.l $7E1031
     cmp.l !ITS
     bne .end
-    lda.l !NXT
+    lda.l !NXT                  ; frames: !NXT + 256 * !GOLDN
     inc a
     sta.l !NXT
-    cmp #!EXITWAIT
+    bne .lo
+    lda.l !GOLDN
+    inc a
+    sta.l !GOLDN
+.lo:
+    lda.l !GOLDN
+    cmp #!EXITWAIT>>8
     bcc .out
+    bne .due
+    lda.l !NXT
+    cmp #!EXITWAIT&$FF
+    bcc .out
+.due:
     lda.l $7E1D1E               ; what its op 0F does ($C2:0C20), not through the script engine (run
     and #$04                    ; from a task of ours, $C2:00D7 ended it twice and SB5 hung)
     bne .end
@@ -723,9 +734,11 @@ rival_dead:
 .end:
     lda #$00
     sta.l !NXT
+    sta.l !GOLDN
     jsl $C020A1                 ; exit_task: the type 0B script !EXITWAIT frames later
     dl exit_task
     db $60
+    jsr victory_load
     pla                         ; (rival_dead's return)
     pla
     plp                         ; the next duel, as in SB1 (no portal): SB5's stage end as
@@ -790,10 +803,81 @@ item_pool:
 
 ; $C0:0B54 (main loop, after the pad reader, before the objects): replaces
 ; JSL $C04733. While the rival walks in (!IPH = 1 in its stage) the four
-; seats' pads are empty and the rival's says "down".
+; seats' pads are empty and the rival's says "down"; while 1-7's clown
+; appears or dies (!CLOWNHOLD = $A5) the four seats' pads are empty.
+; 1-7 (the clown comes from above): SB5's stage start pose ($46 + facing - 1, made facing down) turned
+; up ($49) from the first frame the bombers exist, before the fade in, once per seat (a new animation
+; each frame cost 4-player frames), only while the clown's intro holds the pads (!CLOWNHOLD = $A5 and
+; its phase, !CLOWNHOLD - $19, under 3 = fight); seats done in !CLOWNHOLD + $1F (its $38, zeroed by
+; clown_start). SB5 starts play (~290 frames after the fade in) while the intro still holds the pads and
+; sets its idle animation $15 (front): turned back to the pose up, so nobody idles until the fight
+start_up:
+    lda.l $7E1031
+    cmp #$68
+    bne .rts
+    lda.l !CLOWNHOLD
+    cmp #$A5
+    bne .rts
+    lda.l !CLOWNHOLD-$19
+    cmp #$03
+    bcs .rts
+    ldx #$03
+-   lda $15A2,x
+    bmi +
+    lda.l !CLOWNHOLD+$1F
+    and.l .bit,x
+    bne +
+    lda $179A,x
+    sec
+    sbc $1692,x
+    cmp #$45
+    bne +
+    lda.l !CLOWNHOLD+$1F
+    ora.l .bit,x
+    sta.l !CLOWNHOLD+$1F
+    phx
+    ldy #$04
+    lda #$45
+    jsl $C43C24
+    plx
++   lda $15A2,x                 ; SB5 starts play during the intro: its idle animation $15 (front) back
+    bmi +                       ; to the start pose up (once: SB5 sets it once)
+    lda $179A,x                 ; (animations count from the character's first, $1692: $15 = 1 + $14)
+    sec
+    sbc $1692,x
+    cmp #$14
+    bne +
+    phx
+    ldy #$04
+    lda #$45
+    jsl $C43C24
+    plx
++   dex
+    bpl -
+.rts:
+    rts
+.bit:
+    db $01, $02, $04, $08
+
 intro_pads:
     php
     sep #$30
+    jsr start_up
+    lda.l !CLOWNHOLD            ; 1-7's clown holds the players (its intro and death, asm/sb1_enemies.asm)
+    cmp #$A5
+    bne .rival
+    lda.l $7E1031
+    cmp #$68
+    bne .rival
+    ldx #$03
+-   stz $2C,x
+    stz $31,x
+    stz $36,x
+    stz $3B,x
+    dex
+    bpl -
+    bra .go
+.rival:
     lda.l !IPH
     cmp #$03                    ; stands blinking before the Golden Bomber: players held too
     beq +
@@ -1159,6 +1243,61 @@ rows:
     sta $0352
     rts
 
+; SB5's stage end ($C5:3ADC, M 8-bit; reached only for a stage left through its exit: $1D1E & $22 = 0, the
+; clear bit just set by $C5:3D19): $1046 (the stage the world map and the save open, $4DB2) = the stage it
+; leads to ($1031, written by the door's op 0F / exit_task / the clown), so the next stage is open on the map
+; after a reset too (1-6 -> 1-7); the stage played when $1031 is not a stage
+stage_last:
+    lda $1031
+    cmp #$0D
+    bcc .played
+    cmp #$74
+    bcs .played
+    sta $1046
+    rtl
+.played:
+    lda $102F
+    sta $1046
+    rtl
+
+;
+; a save's flags ($C0:49C8, the loader's STA $7E2900,X, X = byte, DB = $30): flags 5 and 6 (byte 0 bits
+; 5-6) are the title's / the attract demo's (one player forced at $C4:28B4, no stage clear at $C5:3A2D),
+; set by the title script and cleared when the Normal Game opens; a save that kept them started every stage
+; picked on the map afterwards with one player (after a game over or the pause's world map)
+save_flags:
+    cpx #$00
+    bne +
+    and #$9F
++   sta.l $7E2900,x
+    rtl
+
+print "SYM save_flags ", hex(save_flags)
+; SB5's boss music (id $0F: set $35 + song $0E) through the sound API, as SB5's scripts load it (op 42,
+; its hooks): $C5:02AB's sound $22 is then its command 3, SB5's boss victory ("major victory"); the
+; stage's SB1 list has only ZONE1's jingles (no room for this one's 15 KB of samples). ~1 s of upload, at
+; the stage's end (nothing moves); its command 1 is replaced by the victory a frame later. M/X 8-bit.
+victory_load:
+    php
+    phb
+    phd
+    pea $0000
+    pld
+    sep #$30
+    phx
+    phy
+    lda #$00
+    xba
+    lda #$0F
+    jsl $C00CED
+    sep #$30
+    ply
+    plx
+    pld
+    plb
+    plp
+    rts
+
 print "SYM arc_entry ", hex(arc_entry)
 print "SYM rival_pal ", hex(rival_pal)
 print "SYM rival_stats ", hex(rival_stats)
@@ -1167,4 +1306,5 @@ print "SYM w1_op ", hex(w1_op)
 print "SYM knight_hit ", hex(knight_hit)
 print "SYM rival_item ", hex(rival_item)
 print "SYM rival_sfx ", hex(rival_sfx)
+print "SYM stage_last ", hex(stage_last)
 print "SYM end ", hex(pc())
