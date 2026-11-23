@@ -89,6 +89,14 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   flame never covers a burning soft block: `explosions.SKIP_CODE`), `features/eggs.py` (sheet `$1A`
   columns 6-15, SB6's idle loop in own tables via `asm/bombers.asm`, palette id `$51`).
   Checked by `qa_check.py fx` (also the HUD colors and the pause menu on every stage).
+* Stage HUD (Normal Game): `features/hud.py` + `asm/hud.asm` draw SB6 Unity's NormalGameHud (`assets/hud`)
+  on BG2 / BG1 (seats 2-3, 4 pixels right) tiles `$D0-$F9` / BG3 tiles `$42-$7F` in hidden map rows that SB5's
+  stage IRQ scrolls to (no clock, no score: the clock task stops); dividers, PUSH START blinking for a seat out
+  of the stage; its last lines and the lives tab are in the field's BG3 rows 2-4 (heart over the backdrop through
+  window 2: `hud_l21`, a line-31 IRQ in `c0_hi`; IRQ handlers run in bank `$80`, so above `$8000`); heads = the
+  picker's character / color (`assets/hud/portraits`, drawn at the stage load; CGRAM 15 = a purple for them in the Normal Game); `hud_tick` checks one seat every
+  4th frame, queues only changes and redraws every row after a pause. Battle keeps SB5's HUD. Checked by
+  `qa_check.py hud` (screen = `hud.render()` of the seats' RAM and picks on every stage, during / after a pause).
 * OBJ palettes: a bomber owns all 16 colors of its slot. Louies and eggs
   live in halves of a Louie palette (`asm/louies.asm`, at most two Louie
   colors at once); new OBJ sheets are registered in `objsheets.ObjSheets`.

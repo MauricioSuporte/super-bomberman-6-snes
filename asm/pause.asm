@@ -391,6 +391,8 @@ pause_nmi:
     sep #$20
     lda.b #!HDMA>>16
     sta $4374
+    lda $4212                       ; past the VBlank by now: a CGRAM write would land on the color the
+    bpl +                           ; PPU draws (the HUD's dark, CGRAM 5, went black); next NMI
     lda.l !bdf                      ; backdrop black (inside the panel the main screen is BG3 over it)
     bne ++
     stz $2121

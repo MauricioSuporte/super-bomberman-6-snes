@@ -381,6 +381,13 @@ script accumulator (`61` = add).
 | `$C7:14A9`, `$C7:14B9` | zone 1 map script | ZONE1 world map = SB1's (`tools/sb6/features/world_map.py`, below) |
 | `$C7:14D2`, `$C7:14EB` | zone 2 map script | ZONE2 world map = SB2's |
 | `$C0:1C98`, `$C0:037B`, `$C0:8003` | set 1 (null) | world map archive / palette / arrangement tables |
+| `$C5:054A` | `AD 1A 1D 29 08 F0 01 6B` | stage HUD task start: SB6 HUD off (`hud_begin`, `asm/hud.asm`) |
+| `$C5:05C6` | Battle `$49` / Normal `$4A` HUD tiles | Normal Game: SB6 HUD tiles and rows queued instead (`hud_load`) |
+| `$C5:06CD` | `AD 69 00 49 10 89 1F D0 63` | HUD task frame: SB6 HUD update instead of the score redraw (`hud_tick`) |
+| `$C0:F0A7`, `$C0:F140` | line-0 BG3 / BG2 (/ BG1) V scroll | stage IRQ: the HUD lines show the SB6 HUD's rows (`hud_irq`, `hud_irq_b`) |
+| `$C0:F0F1` | `A9 17 8D 09 42` | stage IRQ line 21 (Normal Game), after SB5's writes: BG1 back to the field, window 2 for the lives heart (`hud_l21`) |
+| `$C0:F07F` | `C2 20 A9 8D F0 ... 60` | stage IRQ line 23: `JMP` to the `c0_hi` stub, which chains a line-31 IRQ (window settings back from `$0306`/`$0311`/`$0312`/`$030D`) before line 0 |
+| `$C5:042E` | `AF AD 34 7E` | clock task: stops while the SB6 HUD is on (`time_gate`, no time limit in the Normal Game) |
 
 ## Script VM details, pads, OAM (found for the character selection)
 
@@ -1764,6 +1771,53 @@ The full list with sizes is generated in `build/sb6.map`.
   animations `$C0:171D` (bomber object set `$10`).
 * Bomber palettes: set 0 (`$81:8000`), id = `$C0:BB4E[char] + color`;
   Bomberman ids 1-7, `[dest $80, count 9, colors]`.
+
+## Stage HUD (SB6 HUD: `tools/sb6/features/hud.py`, `asm/hud.asm`)
+
+* Stage IRQ `$C0:F08D` (`$C0:F12A` also sets BG1; D = `$2100`): line 0 TM `$16`, BG2SC `$3A` (map `$3800`,
+  32 x 64), BG3 VOFS `$FFFC`, BG2 VOFS `$0100` (lower screen `$3C00`), H scroll 0; line `$15` (21) puts the
+  field's settings back. BG3 has priority (`$2105` = `$09`). Screen line 0 is never shown: the HUD is lines 1-20.
+* HUD task `$C5:054A` (every stage; returns at once when `$1D1A` bit 3): demo path `$0552-$05B4`; set 3
+  archives `$4C` (BG3 HUD tiles `$5000`) and `$4D` (font), then `$49` (Battle) / `$4A` (Normal) = BG2 tiles
+  `$D0-$F9` at VRAM `$0D00` (`$C5:05C6-$05DA`), palette set 3 id 1, `JSL $C42491` (arrangement), lives
+  `$C5:0C86`; loop `$C5:05F5`: `$1D1E & $A7`, lives change, `JSR $06CD` (score every 32 frames, BG3 rows
+  0-1), `JSR $066C` (participant masks `$1D25`/`$1D24`, heads), `e4_frame` (co-op).
+* Clock: `$0E1E` minutes, `$0E1D` seconds, `$0E1C` frames; task `$C5:0400` (resumes at `$0411`), `$C5:042E`
+  `LDA $7E34AD` then hurry (`$C5:0440`) and countdown (`$0460-$048F`), time up `$C5:0495`, printer `$C5:0BEF`.
+  The stage sets 3:00 a few frames after the stage start (QA fixtures' frame ~200).
+* Seat stats: `$17CA` fire (Full Fire = 8), `$7E:4EBD` bombs, `$15D2`/`$15EA` speed (start `$E0`, +`$20` per
+  skate, `$80-$200`), `$7E:4ED5` abilities (01 remote, 02 kick, 04 power glove, 08 boxing glove, 10 pierce,
+  20 mine, 40 slow fuse), `$167A` (`$E0`; bit 6 clear = bomb pass, the kick sets it; bit 5 clear = soft block
+  pass), `$1662` hearts, `$1D23` shared lives. Item handlers: table `$C5:4195` (item + 1).
+* SB6 HUD: BG2 / BG3 V scroll 484 / 450 (rows 28-31 of BG2's lower screen, rows 56-59 of BG3: HUD line y = BG3
+  row 56 line y + 4, so PUSH START's last lines and the panel's bottom border, other BG3 palettes, are in different
+  cells), BG1 (seats 2 and
+  3) BG1SC `$3C`, V scroll 196 (rows 24-27 of map `$3C00`), H scroll -4, TM `$17`: screen line s shows BG line
+  VOFS + 1 + s, HUD line y on screen line y + 1 (lines 1-23). Seats at x 8 / 68 / 132 / 192 (56 pixels each)
+  do not fit one layer's 8-pixel cells, so seats 1 / 4 are on BG2 and 2 / 3 on BG1 shifted 4 pixels. Line 21's
+  handler gives screen lines 22-23 the field's BG3 (scroll 0: screen line s = BG3 line s + 1), so HUD lines
+  20-22 and the lives tab (lines 21-30, x 116-139) are drawn in the field's BG3 rows 2-4 (blank in every stage);
+  `hud_l21` (after SB5's writes, so the BG1 restore lands late harmlessly: BG1's HUD rows are see-through from
+  HUD line 20) puts BG1 back and opens window 2 (x 120-135, BG1 / BG2 on the main and sub screens, BG logic
+  forced to OR: SB5 leaves BG2's AND, `$212A` = `$04`, which with the pause's window 1 hid nothing) so the
+  heart's see-through pixels show the backdrop; line 23's handler chains a line-31 IRQ (`c0_hi`, the IRQ entry
+  jumps through `$006D` in bank `$80`: handlers must be at `$8000+`) that puts `$2123`/`$212A`/`$212E`/`$212F`
+  back without an H-blank wait (the tab's bottom line covers the window on that line; the wait cost fps). During the pause the backdrop (CGRAM 0) is black, so the heart sits on black. On busy frames (1-2, 1-6,
+  the pause menu) line 21's writes land after line 21 starts: up to 16 pixels at its left show HUD line 21.
+  The blue is opaque (BG palette 0 entry 4 / palette 1 entry 12) and the pause menu rewrites BG3 rows, so
+  `hud_irq` asks for every row again while `$1D1D` is set. A seat out of the stage blinks SB6's PUSH START (Unity's
+  `HUD/Push_start.png`, BG3 palette 0: dark $18C6, grey $35AD, white; `$0069` bit 6 in its record so the change
+  redraws it), centered in the blue between the seat's dividers / borders (`hud.TEXT_X`, checked by the build). CGRAM 15 (SB5's pink, BG3 palette 3, unused by the Normal
+  Game) is a purple in Normal Game stages (`hud.PURPLE`, put in the CGRAM copy by `hud_load` / `hud_tick`): SB6's purple
+  skins had no near color; of CGRAM 8-15 it costs the icons least (3 pixels). Heads fill columns 0-14 of their 16 (a wider portrait cut evenly; `hud.HEAD_GAP`: 1 pixel of
+  blue before the grid in every seat, checked by the build); head colors are the Lab
+  nearest of palettes 0 / 1 (an RGB distance turned greys into the items' greens). Code and tables: bank `$C8`.
+* Character select choices (`$7F:FF02+seat` = character + 1, `$7F:FF08+seat` = color) -> heads: SB6's HUD
+  portraits (`assets/hud/portraits/<character>/<skin>.png`, skin = color + 1), a 16 x 16 window per character
+  with one color class per pixel and a 21-byte record per skin.
+* 1-7's darkness (`asm/sb1_enemies.asm` `hdma_build`): window 1 = whole lines 0-23 (`!CHUDL`), then x 116-139
+  on lines 24-31 (`!CTABL`, the tab). Note: `!CTAB` is the clown's picture table (passed by the build): a define
+  with that name in the asm replaced it and froze 1-7.
 
 ## Gameplay ids measured for the QA suites (`tools/qa_check.py`, Mesen, 1-1 with 4 players)
 

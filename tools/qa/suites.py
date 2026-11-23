@@ -137,7 +137,9 @@ def anim_scenarios():
         st += [[3, "cell", c, 0x30] for c in (cell(cx + 1, cy), cell(cx - 1, cy), cell(cx, cy + 1), cell(cx, cy - 1))]
         st += [[200 + 12 * s, "pad", s, "a", 3]]
     sc.append(Scenario("a_cornered_death", 520, steps=st, invincible=False, pose=(0, 1, 2, 3)))
-    sc.append(Scenario("a_timeup", 300, steps=[[1, "poke", 0x0E1E, 0], [1, "poke", 0x0E1D, 2]], pose=(0, 1, 2, 3)))
+    # (the Normal Game's clock stops with the SB6 HUD, asm/hud.asm time_gate: turned off here to see the pose)
+    sc.append(Scenario("a_timeup", 300, steps=[[1, "poke", 0x1FB40, 0], [1, "poke", 0x0E1E, 0], [1, "poke", 0x0E1D, 2]],
+                       pose=(0, 1, 2, 3)))
     # victory: enemies burnt, the door's soft block blown, P1 on the door; the next stage must start
     sc.append(Scenario("a_victory", 900, steps=[[5, "burn", 30], [60, "door_blast", 0], [262, "door", 0],
                                                 [264, "pad", 0, "down", 1]], pose=(0, 1, 2, 3)))
@@ -1060,3 +1062,247 @@ def pierce_eval(stage):
                == [rb.map_word(2, x, y) for y in range(3) for x in range(32)])
         return res
     return ev
+
+
+# ---------------------------------------------------------------- SB6 HUD (Normal Game, features/hud.py)
+# Every stage: the HUD lines on screen (scanlines 1-20) = hud.render() of each seat's
+# stats read from WRAM in the same frame (no clock, no score); the clock stopped (time poked to 0:02: no time up);
+# >= 50 fps. 1-1: items picked up through SB5's handlers change the cells (fire, full fire, bombs, speed, bomb
+# types, kick / bomb pass, punch, glove, heart, soft block pass) and the lives digit; with P3/P4 out of the
+# stage their blocks are empty until they join with Start.
+HUD_ON = 0x1FB40                     # asm/hud.asm !on ($A5 = shown); poke / read: >= $10000 = bank $7F
+HUD_READS = (("bombs", 0x4EBD, 4), ("ab", 0x4ED5, 4), ("on", HUD_ON, 1), ("picks", 0x1FF00, 16))
+# (frame, seat, item): SB5 item ids (features/items.py ICONS)
+HUD_ITEMS = ((300, 0, 0x01), (300, 1, 0x0B), (300, 2, 0x10), (300, 3, 0x14),
+             (310, 0, 0x0E), (310, 1, 0x11), (310, 2, 0x06), (310, 3, 0x03),
+             (320, 0, 0x02), (320, 1, 0x0C), (320, 2, 0x0D), (320, 3, 0x04),
+             (330, 3, 0x05))
+HUD_SHOT = 300                       # the stage has faded in
+
+
+def _hud_shot(k, name):
+    return [[k, "dump", name], [k, "shot", name]] + [[k, "read", f"{name}_{n}", a, c] for n, a, c in HUD_READS]
+
+
+def hud_scenarios(stage):
+    st = [[1, "invincible", 1], [200, "poke", 0x0E1E, 0], [200, "poke", 0x0E1D, 2], [210, "read", "t0", 0x0E1C, 3],
+          [400, "read", "t1", 0x0E1C, 3]] + _hud_shot(HUD_SHOT, "base")
+    sc = [Scenario("h_base", 410, steps=st)]
+    if stage == 0x0D:
+        st = [[1, "invincible", 1]] + [[k, "item", s, i] for k, s, i in HUD_ITEMS]
+        st += [[330, "poke", 0x1D23, 4]] + _hud_shot(370, "items")
+        sc.append(Scenario("h_items", 375, steps=st))
+    return sc
+
+
+def hud_pause_scenarios():
+    """1-1 (both character sets): the HUD during the pause menu and after it (its menu rewrites BG3)."""
+    st = [[1, "invincible", 1]] + _hud_shot(HUD_SHOT, "base") + [[320, "pad", 0, "start", 3]] + _hud_shot(380, "pause")
+    st += [[400, "pad", 0, "start", 3]] + _hud_shot(470, "resume")
+    return [Scenario("h_pause", 475, steps=st)]
+
+
+def hud_out_scenarios():
+    st = [[1, "invincible", 1], [5, "poke", 0x1D23, 3]] + _hud_shot(HUD_SHOT, "out")
+    st += _hud_shot(HUD_SHOT + 64, "out2")             # PUSH START's other blink phase
+    st += [[380, "pad", 2, "start", 3]] + _hud_shot(470, "join")
+    return [Scenario("h_out", 475, steps=st)]
+
+
+_HUD = {}
+
+
+def _hud_tables():
+    if not _HUD:
+        import struct
+        from sb6.features import hud, items
+        from sb6.romlib import off
+        from .engine import ROM
+        rom = open(ROM, "rb").read()
+        base = open(os.path.join(_root(), "Super Bomberman 5 (USA).sfc"), "rb").read()
+        p1 = list(struct.unpack("<16H", rom[off(items.PALETTE) + 4:off(items.PALETTE) + 36]))
+        _HUD.update(hud=hud, t=hud.build(base, p1))
+    return _HUD["hud"], _HUD["t"]
+
+
+def _hud_recs(d, l, name):
+    hud, _ = _hud_tables()
+    bombs, ab = l.value(f"{name}_bombs"), l.value(f"{name}_ab")
+    recs = []
+    for s in range(4):
+        act = d.wram[0x17FA + s] < 0x80 and not d.wram[0x15A2 + s] & 0x80
+        recs.append(hud.record(act, d.wram[0x17CA + s], d.wram[0x15D2 + s] | d.wram[0x15EA + s] << 8, bombs[s], ab[s],
+                               d.wram[0x167A + s], d.wram[0x1662 + s]))
+    return recs, min(d.wram[0x1D23], 9)
+
+
+def _hud_screen(res, label, tag, sc, name, l):
+    """The screenshot's HUD lines against hud.render(); returns the seat records."""
+    import numpy as np
+    from PIL import Image
+    from .dump import Dump
+    from .engine import OUT
+    hud, t = _hud_tables()
+    d = Dump(os.path.join(OUT, f"{tag}.log_{sc}_{name}.dump"))
+    recs, lives = _hud_recs(d, l, name)
+    on = l.value(f"{name}_on")
+    res.ok(f"{label}: SB6 HUD on ($7F:FB40 = $A5)", on and on[0] == 0xA5, f"{on.hex() if on else '?'}")
+    cg = [int(v) for v in d.cg]
+    picks = l.value(f"{name}_picks")
+    shot = np.asarray(Image.open(os.path.join(OUT, f"{tag}.log_{sc}_{name}.png")).convert("RGB")).astype(int) >> 3
+    # an out seat's PUSH START blinks with the frame of its last check (one seat every 4th frame): both phases
+    # the backdrop behind the heart (window 2; x WINL is never the heart's): CGRAM 0, or the HUD's blue while the
+    # pause blacks CGRAM 0 for the field only
+    bk = tuple(int(v) for v in shot[1 + 25, hud.WIN[0]])
+    backs = {tuple(hud.rgb5(c)): c for c in (cg[0], hud.P0[hud.BLUE[0]])}
+    res.ok(f"{label}: the lives heart's backdrop is CGRAM 0 or the HUD's blue", bk in backs, f"{bk}")
+    backdrop = backs.get(bk, cg[0])
+    out = [s for s in range(4) if not recs[s][0]]
+    best = None
+    for m in range(1 << len(out)):
+        rr = [list(r) for r in recs]
+        for i, s in enumerate(out):
+            rr[s][1] = m >> i & 1
+        w, o = hud.render(t, cg[16:32], [tuple(r) for r in rr], lives, p0=cg[:16], picks=picks, backdrop=backdrop)
+        diff = int(((shot[1:1 + len(w)] != w).any(2) & o).sum())
+        if best is None or diff < best[0]:
+            best = (diff, w, o, [tuple(r) for r in rr])
+    _, want, own, recs = best
+    n = len(want)                                              # (screenshot row y + 1 = HUD line y)
+    own = own.copy()
+    for k in range(128):                                       # the game's sprites are drawn over the HUD (SB5 too)
+        x, y, _, _ = d.oam[4 * k:4 * k + 4]
+        hb = d.oam[512 + k // 4] >> (2 * (k % 4)) & 3
+        x, sz = x - 256 if hb & 1 else x, 16 if hb >> 1 else 8
+        if y < 0xE0:
+            own[max(y - 1, 0):max(y + sz - 1, 0), max(x, 0):max(x + sz, 0)] = False
+    # HUD line 20's start: on busy frames (1-2, 1-6, the pause menu) the line-21 IRQ's scroll writes land after
+    # screen line 21 starts, whose first pixels (up to 16 seen) then show HUD line 21's dark green
+    same = (shot[1 + 20, :32] == want[21, :32]).all(1)
+    k = int(np.argmin(same)) if not same.all() else 32
+    own[20, :k] = False
+    bad = (shot[1:1 + n] != want).any(2) & own
+    rows = sorted({int(y) for y in np.nonzero(bad)[0]})
+    where = [(int(y), int(x)) for y, x in zip(*np.nonzero(bad))][:6]
+    # a chosen head never touches its grid: the HEAD_GAP columns left of the grid's line (x + 16) are the HUD's
+    # blue on the head's lines (2-17) for every seat in the game (heads of the character select only)
+    if picks and picks[1] == 1:
+        blue = np.array(hud.rgb5(cg[hud.BLUE[0]]))
+        gap = []
+        for s, r in enumerate(recs):
+            if not r[0]:
+                continue
+            x = hud.SEAT_X[s] + 16
+            col = shot[1 + 2:1 + 18, x - hud.HEAD_GAP:x]
+            sprite = own[2:18, x - hud.HEAD_GAP:x]
+            gap.append((s + 1, int(((col != blue).any(2) & sprite).sum())))
+        res.ok(f"{label}: {hud.HEAD_GAP} pixel of blue between each head and its grid (every seat in the game)",
+               gap and all(n == 0 for _, n in gap), f"(seat, pixels not blue) {gap}")
+    res.ok(f"{label}: HUD on screen = each seat's stats / PUSH START, heads of the chosen characters, dividers, "
+           f"the lives tab (lines 1-31)",
+           not bad.any(), f"{int(bad.sum())} pixels differ, HUD lines {rows[:8]} (line, x: {where}); records {recs}, lives {lives}, "
+           f"picks {picks.hex() if picks else '?'}")
+    return recs, lives
+
+
+def hud_eval(stage):
+    def ev(logs, boot, tag):
+        import numpy as np
+        res = Result()
+        name = STAGES[stage]
+        l = logs.get("h_base")
+        if not res.ok(f"{name}: HUD scenario ran", l, ""):
+            return res
+        recs, _ = _hud_screen(res, name, tag, "h_base", "base", l)
+        hud, _ = _hud_tables()
+        from .dump import Dump
+        from .engine import OUT
+        cg15 = int(Dump(os.path.join(OUT, f"{tag}.log_h_base_base.dump")).cg[hud.PURPLE_ENTRY])
+        res.ok(f"{name}: CGRAM {hud.PURPLE_ENTRY} = the HUD's purple (SB6's purple skins)", cg15 == hud.PURPLE,
+               f"${cg15:04X} (want ${hud.PURPLE:04X})")
+        res.ok(f"{name}: 4 seats in the HUD", all(r[0] for r in recs), f"{recs}")
+        t0, t1 = l.value("t0"), l.value("t1")
+        res.ok(f"{name}: the clock stopped at 0:02 (no time limit in the Normal Game)",
+               t0 is not None and t0 == t1 and t1[1:] == bytes([2, 0]), f"{t0.hex() if t0 else '?'} -> {t1.hex() if t1 else '?'}")
+        res.ok(f"{name}: no time up", not any(TIMEUP in l.anim_ids(s) for s in range(4)) and not _cmds(l, SFX["timeup"]), "")
+        res.ok(f"{name}: >= 50 fps with the HUD", all(r >= 50 for k, r in l.fps if k >= 240), f"{[r for _, r in l.fps]}")
+        if stage == 0x0D:
+            hud, t = _hud_tables()
+            bad = []
+            blue = np.array(hud.rgb5(hud.HUD_P0[hud.BLUE[0]]))
+            for c in range(len(t["heads"])):
+                for k in range(t["head_counts"][c]):
+                    picks = bytes([0, 1] + [c + 1] * 4 + [0, 0] + [k] * 4 + [0] * 4)
+                    img, _ = hud.render(t, t["p1"], [hud.record(1, 1, 0xC0, 1, 0, 0, 0)] * 4, 3, picks=picks)
+                    for s in range(4):
+                        x = hud.SEAT_X[s] + 16
+                        if (img[2:18, x - hud.HEAD_GAP:x] != blue).any():
+                            bad.append((hud.PORTRAITS[c], k + 1, s + 1))
+            res.ok("every character and color of the character select in every seat (hud.render): a pixel of blue "
+                   "between the head and its grid", not bad, f"{len(bad)} touch: {bad[:6]}")
+        l = logs.get("h_items")
+        if l:
+            hud, _ = _hud_tables()
+            recs, lives = _hud_screen(res, f"{name} items", tag, "h_items", "items", l)
+            p1, p2, p3, p4 = recs
+            res.ok("items: P1 fire 8 with Full Fire's icon, 2 bombs", p1[1] == 8 and p1[7] == hud.I_FULL and p1[3] == 2, f"{p1}")
+            res.ok("items: P2 kick, punch, power glove", p2[8:11] == (hud.I_KICK, hud.I_PUNCH, hud.I_GLOVE), f"{p2}")
+            res.ok("items: P3 pierce bomb (over the search bomb), soft block pass", p3[4] == hud.I_PIERCE and p3[6] == hud.I_WPASS,
+                   f"{p3}")
+            res.ok("items: P4 heart, speed 2, remote bomb, bomb pass",
+                   p4[5] == hud.I_HEART and p4[2] == 2 and p4[4] == hud.I_REMOTE and p4[8] == hud.I_BPASS, f"{p4}")
+            res.ok("items: lives digit 4", lives == 4, f"{lives}")
+        return res
+    return ev
+
+
+def hud_pause_eval(logs, boot, tag):
+    res = Result()
+    l = logs.get("h_pause")
+    if not res.ok("1-1 pause: HUD scenario ran", l, ""):
+        return res
+    for name in ("base", "pause", "resume"):
+        _hud_screen(res, f"1-1 {name}", tag, "h_pause", name, l)
+    return res
+
+
+def _push_centered(res, label, tag, sc, name, recs):
+    """PUSH START of each out seat shown in this shot: its pixels' left / right margins in the blue between the
+    seat's dividers (hud.blue_span) differ by at most 1."""
+    import numpy as np
+    from PIL import Image
+    from .engine import OUT
+    hud, _ = _hud_tables()
+    shot = np.asarray(Image.open(os.path.join(OUT, f"{tag}.log_{sc}_{name}.png")).convert("RGB")).astype(int) >> 3
+    text = [np.array(hud.rgb5(hud.P0[e])) for e in (1, 2, 3)]   # BG3 palette 0: PUSH START's colors
+    seen = []
+    for s, r in enumerate(recs):
+        if r[0] or not r[1]:
+            continue
+        a, b = hud.blue_span(s)
+        part = shot[1 + 2:1 + 19, a:b + 1]                     # HUD lines 2-18
+        xs = np.nonzero(np.any([(part == c).all(2) for c in text], 0).any(0))[0]
+        if not len(xs):
+            seen.append((s + 1, None))
+            continue
+        seen.append((s + 1, int(xs[0]), int(b - a - xs[-1])))
+    res.ok(f"{label}: PUSH START centered between the seat's dividers (left / right margins within 1 pixel)",
+           seen and all(len(v) == 3 and abs(v[1] - v[2]) <= 1 for v in seen), f"(seat, left, right) {seen}")
+
+
+def hud_out_eval(logs, boot, tag):
+    res = Result()
+    l = logs.get("h_out")
+    if not res.ok("1-1 P3/P4 out: HUD scenario ran", l, ""):
+        return res
+    recs, lives = _hud_screen(res, "1-1 P3/P4 out", tag, "h_out", "out", l)
+    res.ok("P3/P4 out: their blocks out, lives 3", [r[0] for r in recs] == [1, 1, 0, 0] and lives == 3, f"{recs}, {lives}")
+    recs2, _ = _hud_screen(res, "1-1 P3/P4 out, 64 frames later", tag, "h_out", "out2", l)
+    _push_centered(res, "1-1 P3/P4 out", tag, "h_out", "out" if recs[2][1] else "out2", recs if recs[2][1] else recs2)
+    ph = [(r[1], r2[1]) for r, r2 in zip(recs[2:], recs2[2:])]
+    res.ok("P3/P4 out: PUSH START blinks (shown in one shot, hidden in the other)",
+           [r[0] for r in recs2] == [1, 1, 0, 0] and all(sorted(p) == [0, 1] for p in ph), f"{ph}")
+    recs, lives = _hud_screen(res, "1-1 P3 joined", tag, "h_out", "join", l)
+    res.ok("P3 joined with Start: its block drawn, lives 2", [r[0] for r in recs] == [1, 1, 1, 0] and lives == 2,
+           f"{recs}, {lives}")
+    return res

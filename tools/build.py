@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, items, louies, menu_bg, options, pause, picker, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, hud, items, louies, menu_bg, options, pause, picker, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -67,6 +67,7 @@ def main():
     rb.add_region("wmap_f5", 0xF50000, 0xF58000, "world map graphics (ZONE1, ZONE2)")
     # $FF padding inside the code banks: code reached by JSR/JMP from the bank's own routines.
     rb.add_region("c0", 0xC04D70, 0xC05F00, "bank C0 code (co-op)")
+    rb.add_region("c0_hi", 0xC0FED0, 0xC0FFB0, "bank C0 code above $8000 (IRQ handlers: they run in bank $80)")
     rb.add_region("c1", 0xC177F0, 0xC17F00, "bank C1 code (co-op)")
     rb.add_region("c2", 0xC24210, 0xC27F00, "bank C2 code (co-op)")
     rb.add_region("c3", 0xC37E90, 0xC37FF0, "bank C3 code (co-op)")
@@ -192,6 +193,9 @@ def main():
               f"({i['approx']} pixels approximated), {i['bytes']} bytes LZ")
     pz = pause.apply(rb)             # in-stage pause menu (Normal Game): its NMI part goes through pick_nmi
     print(f"pause: RESUME / RETURN TO WORLD MAP / RETURN TO TITLE in the Normal Game ({pz['tiles']} BG3 glyphs)")
+    hz = hud.apply(rb, base_rom, os.path.join(args.out, "hud_preview.png"))
+    print(f"hud: SB6 status HUD in the Normal Game ({hz['bg3_tiles']} BG3 tiles; clock stopped), "
+          f"preview build/hud_preview.png")
     pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"], w1["w1_op"],
                         pz["pause_nmi"])
     print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")

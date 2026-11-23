@@ -45,6 +45,9 @@ BORDERS = [f"ItemBorder{i}" for i in range(1, 7)]
 NO_BORDER = (0x0E,)                 # SB6 draws these without the ring (its FullFire prefab: no BorderAnimation)
 BORDER_ENTRY = 2                    # palette 1 entry of the ring
 ICON_ENTRIES = [1] + list(range(3, 16))
+# entries kept for the SB6 HUD (features/hud.py), the items may use them too: 9-11 = BG3 palette 6 (CGRAM 25-27:
+# the lives heart's dark outline, red, white), 12 = the HUD's blue (= BG palette 0 entry 4: behind the HUD icons)
+FIXED = {9: (96, 0, 0), 10: (216, 0, 16), 11: (248, 248, 248), 12: (32, 56, 144)}
 ARCHIVE = 0x5D                      # index in $E3:BE60 (set 0 id $5E)
 ARC_ENTRY = 0xE3BE60 + 8 * ARCHIVE
 TILES = 0x80                        # first BG tile
@@ -122,7 +125,7 @@ def _lab(rgb):
     return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], -1)
 
 
-def quantize(pics, ring_cols, k=len(ICON_ENTRIES)):
+def quantize(pics, ring_cols, k=len(ICON_ENTRIES) - len(FIXED)):
     """Shared palette of k colors for the icons' pixels (not the ring): weighted k-means in Lab, seeded with
     the most used colors; returns (palette [(r, g, b)], {item: 16 x 16 entry indices}, mean error)."""
     ring = np.zeros((16, 16), bool)
@@ -163,6 +166,9 @@ def quantize(pics, ring_cols, k=len(ICON_ENTRIES)):
             m = [i for i in range(len(cols)) if lab[i] == j]
             if m:
                 pal.append(cols[max(m, key=lambda i: counts[cols[i]])])
+    free = [e for e in ICON_ENTRIES if e not in FIXED]
+    entries = free[:len(pal)] + list(FIXED)
+    pal = list(pal) + [FIXED[e] for e in FIXED]
     pal_lab = _lab(pal)
     out, err, n = {}, 0.0, 0
     for item, p in pics.items():
@@ -177,9 +183,9 @@ def quantize(pics, ring_cols, k=len(ICON_ENTRIES)):
                 j = int(np.argmin(d))
                 err += float(d[j])
                 n += 1
-                t[y, x] = ICON_ENTRIES[j]
+                t[y, x] = entries[j]
         out[item] = t
-    return pal, out, err / max(n, 1)
+    return dict(zip(entries, pal)), out, err / max(n, 1)
 
 
 def build():
@@ -193,7 +199,7 @@ def build():
             data += encode_4bpp(t[8 * (q >> 1):8 * (q >> 1) + 8, 8 * (q & 1):8 * (q & 1) + 8])
     words = [0] * 16
     words[BORDER_ENTRY] = bgr555(ring_cols[0])
-    for e, c in zip(ICON_ENTRIES, pal):
+    for e, c in pal.items():
         words[e] = bgr555(c)
     return bytes(data), words, [bgr555(c) for c in ring_cols], err, idx
 

@@ -29,6 +29,10 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            (flame tiles, fire colors), bombs (pictures, blues, on screen) and egg (pictures, colors, its idle loop
            and timing); every stage: a pierce bomb's flames in the normal colors, the HUD's colors (CGRAM 0-31)
            unchanged meanwhile, then the pause menu (opens, same colors / tiles / map as without a bomb) and resume
+  hud      SB6's HUD (features/hud.py): every stage's HUD lines on screen = each seat's stats (fire, speed, bombs,
+           bomb type, power-ups) and the lives, the clock stopped (no time up), >= 50 fps; 1-1: items picked up change
+           the cells, P3/P4 out of the stage: empty blocks until they join; the heads of the characters / colors chosen
+           (2 sets), the HUD during and after the pause menu
   (every scenario: SB5's static graphics queue never writes an OBJ page a bomber / Louie / egg owns)
   perf     tools/coop4_check.py (fps >= 50, Louie colors, P3/P4 colors, safe starts; ~1 min)
   flames   tools/flame_check.py (explosions look like 1-1's on every stage; ~1 min)
@@ -76,6 +80,10 @@ def _jobs():
             out[name].append((fx, sc, S.hold_eval_for(st, fx), f"{fx.name}_{name}"))
     out["fx"] = [(S.FX_A, S.fx_scenarios(), S.fx_eval(S.FX_A))]
     out["fx"] += [(S.stage_fx(st), S.pierce_scenarios(st), S.pierce_eval(st), f"s{st:02X}_4p_pierce") for st in S.STAGES]
+    out["hud"] = [(S.stage_fx(st), S.hud_scenarios(st), S.hud_eval(st), f"s{st:02X}_4p_hud") for st in S.STAGES]
+    out["hud"].append((S.out_fx(0x0D), S.hud_out_scenarios(), S.hud_out_eval, "s0D_4p_hud_out"))
+    for fx in (S.FX_A, S.FX_B):
+        out["hud"].append((fx, S.hud_pause_scenarios(), S.hud_pause_eval, f"{fx.name}_hud_pause"))
     out["chameleons"] = [(fx, S.cham_scenarios(), S.cham_eval(fx)) for fx in S.CHAM_FX]
     norm = {}
     for name, js in out.items():

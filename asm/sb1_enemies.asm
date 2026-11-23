@@ -120,7 +120,9 @@ endmacro
 !CDMAX = 24               ; darkness steps (SB1: about 24 frames down, 8 up)
 !CRX   = 44               ; the light: half width / height around the face's center
 !CRY   = 52
-!CHUDL = 21               ; screen lines of the HUD (no darkness)
+!CHUDL = 24               ; screen lines of the HUD (no darkness; features/hud.py: HUD lines 0-22 on lines 1-23)
+!CTABL = 8                ; then lines of the HUD's lives tab: window = its columns (hud.TAB_X, TAB_W)
+!CTOP  = (!CHUDL+!CTABL)    ; first line the field may be dark
 !CBUF0 = $3400            ; VRAM: buffer tiles, maps (BG2SC values), first tile
 !CBUF1 = $3800
 !CSC0  = $48
@@ -1481,7 +1483,8 @@ dk_b:
 oval:
     db 44, 44, 44, 44, 44, 44, 44, 44, 43, 43, 43, 43, 43, 43, 42, 42, 42, 42, 41, 41, 41, 40, 40, 39, 39, 39, 38, 38, 37, 37, 36, 35, 35, 34, 33, 33, 32, 31, 30, 29, 28, 27, 26, 25, 23, 22, 21, 19, 17, 15, 12, 9, 0
 
-; !CHT: the HUD's lines without darkness (window = the whole line), then the field: no window (all dark)
+; !CHT: the HUD's lines without darkness (window = the whole line), the lives tab's lines (window = its columns),
+; then the field: no window (all dark)
 ; or, A = 1, the oval around the face's screen position (window = the light). M/X 8-bit, DB = $80.
 hdma_build:
     sta.l !CT3
@@ -1496,9 +1499,18 @@ hdma_build:
     inx
     inx
     inx
+    lda #!CTABL
+    sta.l !CHT,x
+    lda #116
+    sta.l !CHT+1,x
+    lda #139
+    sta.l !CHT+2,x
+    inx
+    inx
+    inx
     lda.l !CT3
     bne .hole
-    lda #224-!CHUDL
+    lda #224-!CTOP
     jsr .gap
     jmp .end
 .hole:
@@ -1514,13 +1526,13 @@ hdma_build:
     sec
     sbc.w #!CRY                 ; first line of the light
     bmi +
-    cmp.w #!CHUDL
+    cmp.w #!CTOP
     bcs ++
-+   lda.w #!CHUDL
++   lda.w #!CTOP
 ++  sta.l !CT1                  ; line
     sep #$20
     sec
-    sbc #!CHUDL
+    sbc #!CTOP
     jsr .gap
 .line:
     lda.l !CT1
