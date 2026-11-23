@@ -25,6 +25,10 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            players each one faces up in its stand / riding pose, its Louie too, never SB5's idle)
   chameleons 1-3 with 4 players on Louies (2 sets of characters): every chameleon drawn every frame (frog,
            copy of a player, changing), >= 50 fps
+  fx       SB6's items (icons, colors, the border's blink, Full Fire without border, search bomb icon), explosions
+           (flame tiles, fire colors), bombs (pictures, blues, on screen) and egg (pictures, colors, its idle loop
+           and timing); every stage: a pierce bomb's flames in the normal colors, the HUD's colors (CGRAM 0-31)
+           unchanged meanwhile, then the pause menu (opens, same colors / tiles / map as without a bomb) and resume
   (every scenario: SB5's static graphics queue never writes an OBJ page a bomber / Louie / egg owns)
   perf     tools/coop4_check.py (fps >= 50, Louie colors, P3/P4 colors, safe starts; ~1 min)
   flames   tools/flame_check.py (explosions look like 1-1's on every stage; ~1 min)
@@ -70,6 +74,8 @@ def _jobs():
         sc = S.hold16_scenarios() if st == 0x67 else S.hold17_scenarios()
         for fx in (S.Fixture(f"s{st:02X}_4p_hold", stage=st, ready=30), S.mount_fx(st)):
             out[name].append((fx, sc, S.hold_eval_for(st, fx), f"{fx.name}_{name}"))
+    out["fx"] = [(S.FX_A, S.fx_scenarios(), S.fx_eval(S.FX_A))]
+    out["fx"] += [(S.stage_fx(st), S.pierce_scenarios(st), S.pierce_eval(st), f"s{st:02X}_4p_pierce") for st in S.STAGES]
     out["chameleons"] = [(fx, S.cham_scenarios(), S.cham_eval(fx)) for fx in S.CHAM_FX]
     norm = {}
     for name, js in out.items():

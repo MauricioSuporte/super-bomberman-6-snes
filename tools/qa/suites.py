@@ -12,6 +12,8 @@ Facts measured in Mesen for these checks (SB5's ids unless said; docs/ROM_MAP.md
   abilities $7E:4ED5+seat: 01 remote, 02 kick, 04 power glove (blue: lift / throw), 08 boxing glove (red:
     punch, Y), 10 pierce, 20 mine, 40 (slow fuse); fire range $17CA+seat; time $0E1E minutes / $0E1D seconds
 """
+import os
+
 from .engine import Fixture, Scenario
 
 R, D, L, U = range(4)
@@ -717,5 +719,344 @@ def spawn_out_eval(stage):
                " ".join(f"P{s + 3}({c & 15},{c >> 4})" if c != 0xFF else f"P{s + 3} out" for s, c in enumerate(after[2:])))
         died = [(k, s) for k, s in l.deaths if k > 0]
         res.ok(f"{name} (P3/P4 out): nobody dies standing still", not died, f"deaths {died}")
+        return res
+    return ev
+
+
+# ---------------------------------------------------------------- SB6's items, item border, explosions, bombs, egg
+# features/items.py, explosions.py, bombs.py, eggs.py. Seat 0's arena shows the 20 items (show_item: $C5:4557),
+# seats 1 (pierce) and 2 drop a bomb, seat 3's arena shows an egg; OAM every frame (the bombs, the egg's loop),
+# dumps (tools/qa/dump.py) while the flames are up.
+FX_DUMPS = tuple(range(150, 200, 5))
+FX_RING = range(40, 116)             # frames whose CGRAM entry 18 (the items' border) is read
+FX_OAM = range(10, 196)              # frames whose OAM is read
+BG_SC_SHADOW = 0x0368                # BG1SC / BG2SC as the stage writes them (WRAM $0368 / $0369)
+OBJ_BASE = 0x6000                    # OBJ name base (word) in a stage
+HUD_CG = 32                          # BG3's colors in a stage: CGRAM 0-31 (8 palettes of 4: the HUD, the pause menu)
+# but CGRAM 18 (BG palette 1 entry 2 = the items' blinking border, features/items.py) and, in the pause, color 0
+# (the pause's NMI makes it black for the panel and puts it back: a dump may see either)
+# (the pause's NMI makes it black for the panel and puts it back: a dump may see either); entries 4, 8 ... 28 are
+# BG3's see-through color 0 of palettes 1-7 (never drawn by BG3; 4 differs between runs)
+HUD_SKIP = (16 + 2,) + tuple(range(4, 32, 4))
+
+
+def hud_colors(cg, skip=HUD_SKIP):
+    return [int(v) for i, v in enumerate(cg[:HUD_CG]) if i not in skip]
+
+
+def egg_pieces(o):
+    """(body, left shadow, right shadow) OAM entries of the egg (features/eggs.py mappings: a 16 x 16 piece then
+    two 8 x 8 ones side by side, one Louie half palette), or None."""
+    e = _oam(o)
+    for i in range(len(e) - 2):
+        b, l, r = e[i:i + 3]
+        if b[4] and not l[4] and not r[4] and b[3] == l[3] == r[3] >= 3 and r[2] == l[2] + 1 and r[0] == l[0] + 8                 and r[1] == l[1] and 0 < l[1] - b[1] <= 16:
+            return b, l, r
+    return None
+
+
+def _flame_words(d, layers=(0, 1)):
+    """{(layer, map index): word} of the flame tiles ($010-$07F) on BG1 / BG2."""
+    import numpy as np
+    w = np.frombuffer(d.vram.tobytes(), "<u2")
+    out = {}
+    for layer in layers:
+        sc = d.wram[BG_SC_SHADOW + layer]
+        a0, n = (sc >> 2) << 10, (1, 2, 2, 4)[sc & 3]
+        m = w[[(a0 + i) & 0x7FFF for i in range(1024 * n)]]
+        for i in np.nonzero(((m & 0x3FF) >= 0x10) & ((m & 0x3FF) < 0x80))[0]:
+            out[layer, int(i)] = int(m[i])
+    return out
+
+
+def _oam(o):
+    """[(x, y, tile, palette, big)] of the visible OAM entries, in OAM order."""
+    out = []
+    for i in range(128):
+        x, y, t, a = o[4 * i:4 * i + 4]
+        hi = o[512 + i // 4] >> (2 * (i % 4))
+        if y >= 0xE0:
+            continue
+        out.append((x | (hi & 1) << 8, y, t | (a & 1) << 8, (a >> 1) & 7, hi >> 1 & 1))
+    return out
+
+
+def egg_frames(seq):
+    """SB6 egg frame shown in each OAM read ([(k, oam bytes)]): its body (16 x 16) followed by its two shadow pieces
+    (8 x 8, same palette) tell the frame by tile and line distances (features/eggs.py mappings)."""
+    import struct
+    from sb6.features import eggs
+    base = bytes(open(os.path.join(_root(), "Super Bomberman 5 (USA).sfc"), "rb").read())
+    sig = {}
+    for f, m in enumerate(eggs.mappings(base)):
+        (bx, by, bt, _), (sx, sy, st, _) = struct.unpack_from("<hhHB", m, 1), struct.unpack_from("<hhHB", m, 8)
+        sig.setdefault((bt - st, by - sy), 1 if f == 3 else f)      # frame 3 = frame 1's pieces
+    out = []
+    for k, o in seq:
+        p = egg_pieces(o)
+        out.append((k, sig.get((p[0][2] - p[1][2], p[0][1] - p[1][1])) if p else None))
+    return out
+
+
+def _root():
+    from .engine import ROOT
+    return ROOT
+
+
+def fx_scenarios():
+    st = arenas()
+    cx, cy = QUAD[0]
+    cells = [cell(x, y) for y in range(cy - 2, cy + 3) for x in range(cx - 2, cx + 3)
+             if abs(x - cx) + abs(y - cy) > 1]
+    for i in range(1, 0x15):
+        st.append([4, "show_item", cells[i - 1], i])
+    ex, ey = QUAD[3]
+    st += [[4, "show_item", cell(ex + 1, ey + 1), 0x15]]
+    st += [[3, "poke", 0x4ED5 + 1, B_PIERCE], [3, "poke", 0x4ED5 + 2, 0], [10, "pad", 1, "a", 3], [10, "pad", 2, "a", 3]]
+    st += [[k, "readcg", "ring", 18, 1] for k in FX_RING]
+    st += [[k, "readcg", "hud", 0, HUD_CG] for k in (8, FX_DUMPS[-1])]
+    st += [[k, "readoam", "oam"] for k in FX_OAM]
+    st += [[k, "dump", f"d{k}"] for k in FX_DUMPS]
+    return [Scenario("fx", FX_DUMPS[-1] + 2, steps=st)]
+
+
+def fx_eval(fx):
+    import numpy as np
+    from sb6.features import bombs, eggs, explosions, items
+    from sb6.features.louies import _low_half
+    from sb6.snesgfx import encode_4bpp
+    from .dump import Dump
+    from .engine import OUT, ROOT
+    tiles, words, ring, _, _ = items.build()
+    flames = explosions.tiles()
+    fire = explosions.fire_words()
+    base = open(os.path.join(ROOT, "Super Bomberman 5 (USA).sfc"), "rb").read()
+    egg = eggs.tiles(base)
+    egg_cols = [(r >> 3) | (g >> 3) << 5 | (b >> 3) << 10 for r, g, b in eggs._palette(base)]
+    bomb_pics, _ = bombs.pictures(base)
+    bomb_pal = bombs.palette(base)
+
+    def words_of(d, sc):
+        """{(screen, i): word} of a BG map (BGnSC value; 32 x 32 screens)."""
+        size, a0 = sc & 3, (sc >> 2) << 10
+        n = (1, 2, 2, 4)[size]
+        w = np.frombuffer(d.vram.tobytes(), "<u2")
+        return {(s, i): int(w[(a0 + 1024 * s + i) & 0x7FFF]) for s in range(n) for i in range(1024)}
+
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs["fx"]
+        dumps = {k: Dump(os.path.join(OUT, f"{tag}.log_fx_d{k}.dump")) for k in FX_DUMPS}
+        d0 = dumps[FX_DUMPS[0]]
+        # ---- items: tiles $080-$0CF and palette 1
+        a = (d0.chr_base(1) + 16 * items.TILES) * 2
+        res.ok("items: tiles $080-$0CF = SB6's icons (VRAM)", d0.vram[a:a + len(tiles)].tobytes() == tiles,
+               f"BG2 tiles at word {d0.chr_base(1):04X}")
+        got = [int(v) for v in d0.cg[16:32]]
+        res.ok("items: palette 1 = SB6's item colors (but the border)",
+               all(got[e] == words[e] for e in items.ICON_ENTRIES), " ".join(f"{v:04X}" for v in got))
+        m2 = words_of(d0, d0.wram[BG_SC_SHADOW + 1])
+        shown = {i for i in range(1, 0x15)
+                 if sum(1 for w in m2.values() if (w & 0x1C00) == 0x0400 and (w & 0x3FF) - 0x7C - 4 * i in range(4)) >= 4}
+        res.ok("items: the 20 items drawn on the field in palette 1", len(shown) == 20,
+               f"missing {sorted(set(range(1, 0x15)) - shown)}")
+        idx = items.build()[4]
+        no_ring = [i for i in items.NO_BORDER if (idx[i] == items.BORDER_ENTRY).any()]
+        res.ok("items: Full Fire has no blinking border (no pixel in the border's entry)", not no_ring,
+               f"items {no_ring}")
+        sb = tiles[128 * (0x10 - 1):128 * 0x10]
+        res.ok("items: the slow fuse bomb ($10) shows SB6's search bomb icon",
+               items.ICONS[0x10] == "SearchBombIcon" and d0.vram[a + 128 * 15:a + 128 * 16].tobytes() == sb)
+        # ---- the border's blink: SB6's colors in its order
+        seq = [int.from_bytes(v, "little") for k, v in sorted(l.values.get("ring", []))]
+        want = items.blink_sequence()
+        ok = len(seq) >= 2 * len(want) and any(
+            all(seq[j] == want[(j + o) % len(want)] for j in range(len(seq))) for o in range(len(want)))
+        res.ok("items: border blinks SB6's red / orange / yellow in its order (items.BLINK)", ok,
+               " ".join(f"{v:04X}" for v in seq[:18]))
+        # ---- flames: SB6's, in palette 2 for both bombs (the pierce one too: no palette 0 swap)
+        normal = pal0 = 0
+        okt = okc = True
+        for k, d in dumps.items():
+            a = (d.chr_base(0) + 16 * 0x10) * 2
+            okt &= d.vram[a:a + len(flames)].tobytes() == flames
+            okc &= [int(v) for v in d.cg[32 + explosions.FIRE.start:32 + explosions.FIRE.stop]] == fire
+            fl = _flame_words(d, (0,))
+            normal = max(normal, sum(1 for w in fl.values() if (w & 0x1C00) == 0x0800))
+            pal0 = max(pal0, sum(1 for w in fl.values() if (w & 0x1C00) == 0))
+        res.ok("explosions: tiles $010-$07F = SB6's flames (Itens.png, VRAM, every dump)", okt)
+        res.ok(f"explosions: palette 2 entries {explosions.FIRE.start}-{explosions.FIRE.stop - 1} = SB6's fire", okc)
+        res.ok("explosions: the normal and the pierce bomb's flames in palette 2", normal >= 16 and pal0 == 0,
+               f"{normal} palette 2 BG1 flame tiles, {pal0} in palette 0")
+        hud = [hud_colors(np.frombuffer(v, "<u2")) for k, v in sorted(l.values.get("hud", []))]
+        res.ok("HUD: BG3's colors (CGRAM 0-31 but the items' border) untouched by the explosions",
+               len(hud) == 2 and hud[0] == hud[1], " / ".join(" ".join(f"{c:04X}" for c in h) for h in hud))
+        # ---- bombs: SB6's pictures in VRAM, SB6's blues in OBJ palette 0, on screen
+        vr = d0.vram.tobytes()
+        bad = [f"${t:03X}" for t, p in bomb_pics.items()
+               if any(vr[(OBJ_BASE + 16 * (t + 16 * dy + dx)) * 2:(OBJ_BASE + 16 * (t + 16 * dy + dx)) * 2 + 32]
+                      != encode_4bpp(p[8 * dy:8 * dy + 8, 8 * dx:8 * dx + 8]) for dy in (0, 1) for dx in (0, 1))]
+        res.ok("bombs: SB6's bomb pictures in VRAM (normal, pierce, remote, search)", not bad, f"wrong {bad}")
+        got = [int(v) for v in d0.cg[128:144]]
+        res.ok("bombs: OBJ palette 0 = palette $58 with SB6's blues", got == bomb_pal,
+               " ".join(f"{v:04X}" for v in got))
+        seen = set()
+        for k, o in l.values.get("oam", []):
+            for x, y, t, pal, big in _oam(o):
+                if pal == 0 and big:
+                    seen.add(t)
+        res.ok("bombs: a normal bomb (large / medium / small) on screen", {0x10C, 0x10E, 0x120} <= seen,
+               " ".join(f"{t:03X}" for t in sorted(seen)))
+        res.ok("bombs: a pierce bomb (large / medium / small) on screen", {0x128, 0x12A, 0x12C} <= seen)
+        # ---- egg
+        d = dumps[FX_DUMPS[0]]
+        eg = egg_pieces(d.oam)
+        res.ok("egg: on screen (a Louie half palette)", eg)
+        if eg:
+            slot = eg[0][3]
+            half = [int(v) for v in d.cg[128 + 16 * slot:128 + 16 * slot + 16]]
+            # entries 8-15 (the stock tiles) or 1-7 + 8 (the copy with pixels 9-15 -> 1-7: asm/louies.asm)
+            res.ok("egg: SB6's colors (palette id $51 in a Louie half)",
+                   half[8:16] == egg_cols or half[1:8] == egg_cols[1:8],
+                   f"slot {slot}: " + " ".join(f"{v:04X}" for v in half))
+            body = egg[min(egg)]
+            res.ok("egg: SB6's pictures in VRAM", body in vr or _low_half(body) in vr)
+        fr = [f for k, f in egg_frames(sorted(l.values.get("oam", [])))]
+        runs = []
+        for f in fr:
+            if not runs or runs[-1][0] != f:
+                runs.append([f, 0])
+            runs[-1][1] += 1
+        tl = [{3: 1}.get(f, f) for f in eggs.timeline()]
+        want = []
+        for f in tl:
+            if not want or want[-1][0] != f:
+                want.append([f, 0])
+            want[-1][1] += 1
+        inner = runs[1:-1]           # the first / last runs are cut by the reads
+        order = [f for f, _ in inner]
+        names = [f for f, _ in want]
+        ok = None not in order and len(order) >= len(names) and any(
+            order == [names[(o + j) % len(names)] for j in range(len(order))] for o in range(len(names)))
+        res.ok("egg: SB6's idle loop (frames 0 1 2 1 0 1 2 1 7 4 5 6 7 1)", ok,
+               " ".join(f"{f}x{n}" for f, n in runs))
+        if ok:
+            o0 = next(o for o in range(len(names)) if order == [names[(o + j) % len(names)] for j in range(len(order))])
+            durs = [(n, want[(o0 + j) % len(want)][1]) for j, (_, n) in enumerate(inner)]
+            res.ok("egg: SB6's timing (8 frames a step, 38 on the last)", all(abs(a - b) <= 2 for a, b in durs),
+                   " ".join(f"{a}/{b}" for a, b in durs))
+        return res
+    return ev
+
+
+# The pierce bomb on every World 1 stage, with the HUD and the pause menu: P1 (invincible) drops pierce bombs from
+# its start (A pressed until the stage's intro lets it: the flames are up around frames 235-265 in 1-1; the 1-6 /
+# 1-7 intros hold the players longer); then Start opens the pause menu and Start again resumes. A second scenario,
+# "plain", does the same without a bomb: its HUD and pause menu are the reference (same frames, same clock).
+def pierce_dumps(stage):
+    return tuple(range(300, 900, 8)) if stage in (0x67, 0x68) else tuple(range(200, 330, 6))
+
+
+PAUSE_STAGES = tuple(s for s in STAGES if s != 0x67)      # 1-6 has no pause ($1D1A = 8, docs/ROM_MAP.md)
+BURN_STAGE = 0x0D                                        # cell (x, y) = BG1 map tiles (2x, 2y) (no scroll)
+PAUSE_FROM = 430                                         # Start is read once $0AEE is set (1-3: frame ~363)
+PAUSE_WAIT, RESUME_WAIT = 40, 50                         # frames from Start to the pause / resume dumps
+PANEL = (range(9, 24), range(3, 29))                       # the pause menu's frame on BG3 (rows, columns)
+BG3_TILES = 0x5000 * 2                                     # BG3 tiles $000-$1FF (2bpp) in a stage (byte address)
+
+
+def _pause_steps(stage, last):
+    if stage not in PAUSE_STAGES:
+        return [], last
+    p = max(last + 10, PAUSE_FROM)
+    st = [[p, "pad", 0, "start", 3], [p + PAUSE_WAIT, "dump", "pause"],
+          [p + PAUSE_WAIT + 10, "pad", 0, "start", 3], [p + PAUSE_WAIT + 10 + RESUME_WAIT, "dump", "resume"]]
+    return st, p + PAUSE_WAIT + 10 + RESUME_WAIT
+
+
+def pierce_scenarios(stage):
+    last = pierce_dumps(stage)[-1]
+    pause, end = _pause_steps(stage, last)
+    st = [[1, "invincible", 1], [2, "poke", 0x4ED5, B_PIERCE]] + [[k, "pad", 0, "a", 3] for k in range(6, last - 130, 20)]
+    if stage == BURN_STAGE:
+        st.append([2, "poke", 0x17CA, 3])       # fire range 3: the flames reach P1's soft blocks
+    st += [[k, "dump", f"d{k}"] for k in pierce_dumps(stage)]
+    plain = [[1, "invincible", 1], [pierce_dumps(stage)[0], "dump", "hud"]]
+    return [Scenario("pierce", end + 2, steps=st + pause), Scenario("plain", end + 2, steps=plain + pause)]
+
+
+def pierce_eval(stage):
+    from sb6.features import explosions
+    from .dump import Dump
+    from .engine import OUT
+    fire = explosions.fire_words()
+
+    def ev(logs, boot, tag):
+        res = Result()
+        name = STAGES.get(stage, f"${stage:02X}")
+        dump = lambda sc, n: Dump(os.path.join(OUT, f"{tag}.log_{sc}_{n}.dump"))
+        c2s, at0, at2 = [], set(), set()
+        okf = True
+        hud_ok, hud_bad = True, []
+        first = None
+        for k in pierce_dumps(stage):
+            d = dump("pierce", f"d{k}")
+            fl = _flame_words(d)
+            if first is None:
+                first = d
+            c2 = sum(1 for w in fl.values() if (w & 0x1C00) == 0x0800)
+            at2 |= {p for p, w in fl.items() if (w & 0x1C00) == 0x0800}
+            at0 |= {p for p, w in fl.items() if (w & 0x1C00) == 0}       # (1-7's own palette 0 tiles: elsewhere)
+            c2s.append(c2)
+            if c2:
+                okf &= [int(v) for v in d.cg[32 + explosions.FIRE.start:32 + explosions.FIRE.stop]] == fire
+            if hud_colors(d.cg) != hud_colors(first.cg):
+                hud_ok = False
+                hud_bad.append(k)
+        both = len(at0 & at2)
+        res.ok(f"{name}: a pierce bomb's flames in palette 2 (no palette 0 swap)", max(c2s) >= 8 and not both,
+               f"{max(c2s)} palette 2 flame words, {both} flame places also in palette 0")
+        res.ok(f"{name}: palette 2 entries {explosions.FIRE.start}-{explosions.FIRE.stop - 1} = SB6's fire", okf)
+        if stage == BURN_STAGE:
+            burning = over = 0
+            for k in pierce_dumps(stage):
+                d = dump("pierce", f"d{k}")
+                fl = _flame_words(d, (0,))
+                for c in range(256):
+                    v = d.wram[0x1052 + c]
+                    if v & 0x20 and v & 0x0F and not v & 0x80:      # a soft block burning in a flame cell
+                        burning += 1
+                        x, y = 2 * (c & 15), 2 * (c >> 4)
+                        over += any((0, (y + dy) * 32 + x + dx) in fl for dy in (0, 1) for dx in (0, 1))
+            res.ok(f"{name}: a pierce bomb's flame never covers a burning soft block (only its burning picture, "
+                   "as in SB5)", burning and not over, f"{burning} burning flame cells seen, {over} with a flame")
+        res.ok(f"{name}: HUD colors (BG3, CGRAM 0-31) unchanged while a pierce bomb's flames burn", hud_ok,
+               f"changed at frames {hud_bad[:5]}")
+        ref = dump("plain", "hud")
+        res.ok(f"{name}: HUD colors = the same frame without a bomb",
+               hud_colors(first.cg) == hud_colors(ref.cg), " ".join(f"{v:04X}" for v in hud_colors(first.cg)))
+        if stage not in PAUSE_STAGES:
+            return res
+        pz, rz = dump("pierce", "pause"), dump("plain", "pause")
+        rows, cols = PANEL
+        panel = lambda d: [d.map_word(2, x, y) for y in rows for x in cols]
+        glyphs = sum(1 for w in panel(pz) if 0x100 <= (w & 0x3FF) <= 0x119)
+        res.ok(f"{name}: pause menu open (stage frozen, SB6's frame and font on BG3)",
+               pz.wram[0x1D1D] == 1 and glyphs >= 40, f"$1D1D = {pz.wram[0x1D1D]}, {glyphs} menu tiles")
+        res.ok(f"{name}: pause menu colors (CGRAM 0-31) = without a bomb",
+               hud_colors(pz.cg, HUD_SKIP + (0,)) == hud_colors(rz.cg, HUD_SKIP + (0,)),
+               " ".join(f"{a:04X}/{b:04X}" for a, b in zip(hud_colors(pz.cg), hud_colors(rz.cg)) if a != b))
+        res.ok(f"{name}: pause menu tiles and map = without a bomb",
+               panel(pz) == panel(rz) and pz.vram[BG3_TILES:BG3_TILES + 0x200 * 16].tobytes()
+               == rz.vram[BG3_TILES:BG3_TILES + 0x200 * 16].tobytes())
+        ra, rb = dump("pierce", "resume"), dump("plain", "resume")
+        res.ok(f"{name}: resumed (Start), the menu gone and the HUD colors back",
+               ra.wram[0x1D1D] == 0 and hud_colors(ra.cg) == hud_colors(rb.cg)
+               and not any(0x100 <= (w & 0x3FF) <= 0x119 for w in panel(ra)),
+               f"$1D1D = {ra.wram[0x1D1D]}, colors {'ok' if hud_colors(ra.cg) == hud_colors(rb.cg) else 'differ'}, "
+               f"{sum(1 for w in panel(ra) if 0x100 <= (w & 0x3FF) <= 0x119)} menu tiles left")
+        res.ok(f"{name}: after the pause, the HUD (BG3 rows 0-2) = without a bomb",
+               [ra.map_word(2, x, y) for y in range(3) for x in range(32)]
+               == [rb.map_word(2, x, y) for y in range(3) for x in range(32)])
         return res
     return ev

@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, boot_logo, coop, game_sfx, louies, menu_bg, options, pause, picker, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, items, louies, menu_bg, options, pause, picker, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -77,6 +77,8 @@ def main():
     boot_logo.free_old(rb)           # the Hudson logo's tiles and arrangement (boot logo in set 5)
     title.free_old(rb)               # SB5's title scene / logo / (c) arrangements (animated title)
     options.free_old(rb)             # SB5's Options screen tiles / arrangements (OPTIONS is a title submenu)
+    explosions.free_old(rb)          # SB5's flame and item tiles (set 0 archives $5D / $5E: SB6's replace them)
+    bombs.free_old(rb)               # SB5's bomb sprites (set 0 archive $23: SB6's replace them)
 
     boot = boot_logo.convert(os.path.join(ROOT, "assets", "HU3DSON LOGO.png"))
     print(f"boot logo: {boot['count']} tiles, palette error {boot['error']:.0f}")
@@ -121,6 +123,10 @@ def main():
     print(f"bomberman: {bomber['tiles']} tiles and {bomber['palettes']} palettes changed")
 
     sheets = ObjSheets(rb)
+    egg_defs = eggs.apply(rb)        # SB6's egg (sheet $1A tiles, own frames, palette id $51): before the Louie half copies
+    bo = bombs.apply(rb, base_rom, sheets, preview=os.path.join(args.out, "bombs_preview.png"))
+    print(f"bombs: {bo['pictures']} SB6 bomb pictures ({bo['lz']} bytes LZ at ${bo['at']:06X}), SB6 blues in "
+          f"palette $58, mean error {bo['error']:.1f} (Lab; build/bombs_preview.png)")
     louie = louies.apply(rb, base_rom, sheets)
     print(f"louies: palette halves, {louies.LAST - louies.FIRST + 1} sheets recolored for the low half")
 
@@ -133,6 +139,7 @@ def main():
     mbg = menu_bg.apply(rb)
     print(f"menu background: blue checker ${mbg['checker'][0]:04X} / ${mbg['checker'][1]:04X}")
     en_defs, en_info = sb1_enemies.apply(rb)     # World 1's SB1 enemies (their tables go through the bombers' hooks)
+    en_defs.update(egg_defs)                     # the egg's frames: the same hooks
     clown = en_info.pop("_clown")                # 1-7's clown boss: its BG2 colors go into the arena's palette
     sb1_stages.STAGES["sb1_4-8"]["extra_pals"] = dict(zip(sb1_enemies.CLOWN_PALS, clown["pals"]))
     stages = sb1_stages.apply(rb)                # World 1's SB1 / SB6 stage pictures (1-6's palette id: pal_lookup)
@@ -153,6 +160,15 @@ def main():
     cham = sb1_enemies.chameleon(rb, info, sheets, en_info)   # 1-3's chameleons walk as the characters
     print(f"chameleons: {cham['streamed']} streamed poses reused, {cham['cut']} cut from strips "
           f"({cham['blocks']} blocks, up to {cham['widest']} columns), {cham['scripts']} walk scripts")
+
+    # SB6's explosions (flame tiles, fire colors in every stage palette) and items (icons,
+    # palette 1, the border's blink: its script in free_c5_sheets); after sb1_stages (World 1's palettes)
+    fx = explosions.apply(rb)
+    explosions.fire_palette(rb)
+    it = items.apply(rb, preview=os.path.join(args.out, "items_preview.png"))
+    print(f"explosions: SB6 flame tiles ({fx['lz']} bytes LZ), fire colors (set 6 palette 2); "
+          f"items: {it['tiles'] // 128} SB6 icons ({it['lz']} bytes LZ) in "
+          f"{it['colors']} colors + the blinking border, mean error {it['error']:.1f} (Lab; build/items_preview.png)")
 
     # after the stock sheets are freed: the title's alternate pose steps also use free_c8_sheets
     tinfo = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot,

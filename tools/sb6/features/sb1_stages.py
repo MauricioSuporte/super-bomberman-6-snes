@@ -28,6 +28,7 @@ from .. import lz
 from ..rombuild import BuildError
 from ..romlib import off
 from ..snesgfx import encode_4bpp
+from . import explosions
 from .world_map import _fit, _dist
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -67,11 +68,8 @@ SPARE_THEMES = (4,)            # theme 4 (SB5 stages $13 / $14, not played): its
 SOFT_ID = 2
 PALS = (4, 5, 6)                # SB1 colors
 BURN_PAL = 3
-FLAME_FLOOR = range(5, 11)      # palette 2 entries of the floor around SB5's flames (tiles $010-$07F)
-# SB5's flame tiles $010-$07F (4bpp, palette 2, from its VRAM in 1-1): the set it draws on BG1 over a BG2 field
-# (color 0 around the fire; SB5's set for a field's own layer has its grass, grass shadows and sparks there)
-FLAMES_BG1 = os.path.join(ASSETS, "sb5_flames_bg1.bin")
-FLAME_VRAM = 0x0100             # their VRAM word
+FLAME_FLOOR = explosions.FLOOR  # palette 2 entries of the floor around the flames (tiles $010-$07F)
+FLAME_VRAM = explosions.FLAME_VRAM   # SB6's flame tiles (features/explosions.py): see-through, fire in FIRE
 BURN_TILES = range(0x16, 0x2A)  # archive tile indices of the 5 burning frames ($116-$129)
 BURN_FIRST = 0x26               # first frame shown; then $22, $1E, $1A, $16
 N_TILES = 0xB0                  # archive tiles $100-$1AF (theme 2's size; VRAM up to $3600 is the stage's)
@@ -107,20 +105,11 @@ def _decode_4bpp(b):
 
 
 def _flame_tiles(fcell, fcols):
-    """SB5's see-through flame tiles (FLAMES_BG1) drawn over the arena's own floor: their color 0 pixels take
-    the floor cell's pixel at the same place (tile n sits in quadrant n & 3 of its cell: TL TR BL BR, never
-    flipped), in palette 2 entries 5 + fcols.index(color)."""
-    data = open(FLAMES_BG1, "rb").read()
-    out = bytearray()
-    for k in range(len(data) // 32):
-        t = _decode_4bpp(data[32 * k:32 * k + 32])
-        q = (FLAME_VRAM // 16 + k) & 3
-        part = fcell[8 * (q >> 1):8 * (q >> 1) + 8, 8 * (q & 1):8 * (q & 1) + 8]
-        floor = t == 0
-        idx = np.vectorize(lambda c: FLAME_FLOOR.start + fcols.index(c))(part)
-        t[floor] = idx[floor]
-        out += encode_4bpp(t)
-    return bytes(out)
+    """SB6's flame tiles drawn over the arena's own floor: the pixels around the fire take the floor cell's
+    pixel at the same place (tile n sits in quadrant n & 3 of its cell: TL TR BL BR, never flipped), in palette 2
+    entries FLAME_FLOOR.start + fcols.index(color)."""
+    idx = np.vectorize(lambda c: FLAME_FLOOR.start + fcols.index(c))(fcell)
+    return explosions.tiles(floor=idx)
 
 
 def _field(name):
@@ -412,8 +401,8 @@ def build(rb, name, spec):
         o = (row - first_row) * 16
         colors[o:o + 16] = [colors[o]] + list(pal) + [0] * (15 - len(pal))
     put(BURN_PAL, bpal)
-    # the flames (palette 2, SB5's) on a BG2 field (1-4, 1-5) are drawn on BG1 over it with SB5's see-through
-    # set (FLAMES_BG1, as in 1-1), sent once by the animation task; an arena's field is BG1 itself (1-6, 1-7):
+    # the flames (palette 2, SB6's fire in explosions.FIRE) on a BG2 field (1-4, 1-5) are drawn on BG1 over it with
+    # the see-through set (explosions.tiles(), as in 1-1), sent once by the animation task; an arena's field is BG1 itself (1-6, 1-7):
     # that set's color 0 pixels take the floor cell's (colors FLAME_FLOOR). SB5's set for the field's own layer
     # showed its grass shadows and sparks around every explosion. Without the task: the SB1 floor's most common
     # color in FLAME_FLOOR
@@ -425,7 +414,7 @@ def build(rb, name, spec):
     fcols = sorted(fcount, key=lambda c: -fcount[c])
     flames = None
     if shock and "src_arc" not in spec:
-        flames = open(FLAMES_BG1, "rb").read()
+        flames = explosions.tiles()
         for i in FLAME_FLOOR:
             colors[o + i] = floor
     elif shock and 1 < len(fcols) <= len(FLAME_FLOOR):
@@ -435,6 +424,8 @@ def build(rb, name, spec):
     else:
         for i in FLAME_FLOOR:
             colors[o + i] = floor
+    for i, w in zip(explosions.FIRE, explosions.fire_words()):     # SB6's fire
+        colors[o + i] = w
     if shock:
         shock[0]["flames"] = flames
     for p, pal in zip(PALS, pals):

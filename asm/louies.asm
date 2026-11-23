@@ -1,7 +1,7 @@
 ; Louie and egg colors in a palette of their own (tools/sb6/features/louies.py).
 ;
 ; The cartridge writes the 8 colors of a mount (set 0 palettes $50-$56; an
-; egg uses $52, the pink Louie) into entries 8-15 of its rider's OBJ palette
+; egg used $52, the pink Louie; now $51 = !EGGPAL, features/eggs.py) into entries 8-15 of its rider's OBJ palette
 ; ($C4:53EB). The bombers now use all 15 colors of theirs, so mounts and eggs
 ; get OBJ palette slots that hold two sets of Louie colors each:
 ;
@@ -136,7 +136,7 @@ louie_egg_ok:
 -   lda !lref,x
     beq +
     lda !lid,x
-    cmp #$52
+    cmp #!EGGPAL                    ; the egg's palette id ($80:C40B + 9)
     beq .yes
 +   dex
     bpl -

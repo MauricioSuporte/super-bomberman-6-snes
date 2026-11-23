@@ -5,10 +5,12 @@
 
 Runs tools/mesen/stage_test.lua with tools/mesen/flame_check.lua (on coop4_check.lua: 4 seats that walk and drop
 bombs, nobody dies) on build/Super Bomberman 6.sfc and, every FLAME_STEP stage frames, takes VRAM, CGRAM, the BG
-registers and the cells. Every BG1/BG2 map word showing a flame tile (tiles $010-$07F, palette 2) is checked
-against SB5's see-through flame set (assets/stages/sb5_flames_bg1.bin, 1-1's), pixel by pixel:
+registers and the cells. Every BG1/BG2 map word showing a flame tile (tiles $010-$07F, palette 2, or palette 0:
+a pierce bomb's would be a fault: its flames are the normal ones) is checked against SB6's see-through flame set (features/explosions.py tiles(), 1-1's), pixel by
+pixel:
   * fire: the set's fire pixels (color != 0) must be there unchanged (SB5's set-up $C5:140D rewriting the end
-    tiles $010-$01F over ours showed as dots at the flames' ends);
+    tiles $010-$01F over ours showed as dots at the flames' ends) and show SB6's fire colors (explosions.FIRE of
+    palette 2; a flame in palette 0 on a flame cell is a fault: no palette swap any more);
   * around the fire (color 0 in the set): the layer must show what it showed at that map place before and after
     the explosion (the nearest records without a flame there, equal to each other: a burnt soft block or a taken
     item is skipped): see-through on a layer over the field (1-1, 1-2, 1-4, 1-5: flames on BG1), the floor on
@@ -32,12 +34,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 from sb6.features.world1 import BOSSES, CHAIN  # noqa: E402
 from coop4_check import MESEN, NAMES, ROM  # noqa: E402
+from sb6.features import explosions  # noqa: E402
 
 ROM = os.environ.get("SB6_ROM", ROM)
 
 OUT = os.path.join(ROOT, "build", "flame_check")
-FLAMES = os.path.join(ROOT, "assets", "stages", "sb5_flames_bg1.bin")
-FIRST, LAST = 0x10, 0x7F            # SB5's flame tiles, palette 2
+FIRST, LAST = 0x10, 0x7F            # flame tiles, palette 2 (palette 0 on a flame cell: a fault)
+FIRE = {2: np.array(explosions.fire_words())}
 VBYTES = 0xA000
 HEAD = 4 + 4 + 6 + 8 + 256 + 512
 REC = HEAD + VBYTES
@@ -86,7 +89,8 @@ def _map(rec, layer):
 
 def _is_flame(w):
     t = w & 0x3FF
-    return (t >= FIRST) & (t <= LAST) & ((w >> 10) & 7 == 2)
+    p = (w >> 10) & 7
+    return (t >= FIRST) & (t <= LAST) & ((p == 2) | (p == 0))
 
 
 def _tile(rec, layer, w):
@@ -112,7 +116,7 @@ def _fire_cell(v):
 
 
 def analyse(recs, fire):
-    res = dict(records=len(recs), tiles=0, bad_fire=0, bad_floor=0, common_floor=0, unchecked=0, on_cell=0,
+    res = dict(records=len(recs), tiles=0, bad_fire=0, bad_colors=0, pierce=0, bad_floor=0, common_floor=0, unchecked=0, on_cell=0,
                misplaced=0, examples=[], flame_layers=set())
     floors, late = {}, []
     maps = [[_map(r, 0), _map(r, 1)] for r in recs]
@@ -139,14 +143,16 @@ def analyse(recs, fire):
                 if not (sx < 256 or sx > mw - 8) or not (sy < 224 or sy > mh - 8):
                     continue
                 w = int(maps[i][layer][ty, tx])
-                res["tiles"] += 1
                 where = f"frame {rec['frame']} BG{layer + 1} tile ({tx},{ty}) word {w:04X}"
                 # its cell: map pixel -> screen -> the field layer's map pixel
                 x = (8 * tx - rec["h"][layer] + rec["h"][field]) % 512
                 y = (8 * ty - rec["v"][layer] + rec["v"][field]) % 512
                 c, r_ = x // 16, y // 16
-                if c < 16 and r_ < 16 and any(_fire_cell(recs[j]["cells"][16 * r_ + c]) for j in (i, i - 1) if j >= 0):
-                    res["on_cell"] += 1
+                on = c < 16 and r_ < 16 and any(_fire_cell(recs[j]["cells"][16 * r_ + c]) for j in (i, i - 1) if j >= 0)
+                if (w >> 10) & 7 == 0 and not on:
+                    continue            # palette 0 off the flames: the stage's own tiles (1-6's stands), not a pierce bomb's
+                res["tiles"] += 1
+                res["on_cell"] += on
                 col, idx = _tile(rec, layer, w)
                 if col is None:
                     continue
@@ -161,6 +167,15 @@ def analyse(recs, fire):
                     res["bad_fire"] += 1
                     if len(res["examples"]) < 8:
                         res["examples"].append(f"{where}: {nfire} fire pixels changed")
+                else:
+                    pal = (w >> 10) & 7
+                    res["pierce"] += pal == 0
+                    got = col[fmask]
+                    exp = FIRE[pal][want[fmask] - explosions.FIRE.start] if pal in FIRE else None
+                    if exp is None or (got != exp).any():
+                        res["bad_colors"] += 1
+                        if len(res["examples"]) < 8:
+                            res["examples"].append(f"{where}: fire not in SB6's colors (palette {pal})")
                 # what this map place shows without a flame: the nearest records before and after
                 before = next((j for j in range(i - 1, -1, -1) if not flame[j][layer][ty, tx]), None)
                 after = next((j for j in range(i + 1, len(recs)) if not flame[j][layer][ty, tx]), None)
@@ -207,7 +222,7 @@ def run(stage):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1800)
     if not os.path.exists(out):
         return stage, None
-    fire = _planar(np.frombuffer(open(FLAMES, "rb").read(), np.uint8).copy())
+    fire = _planar(np.frombuffer(explosions.tiles(), np.uint8).copy())
     res = analyse(_records(out), fire)
     if os.environ.get("FLAME_KEEP") != "1":
         os.remove(out)
@@ -230,6 +245,8 @@ def main():
             why.append("no flame seen")
         if r["bad_fire"]:
             why.append(f"{r['bad_fire']} tiles with changed fire")
+        if r["bad_colors"]:
+            why.append(f"{r['bad_colors']} tiles whose fire is not in SB6's colors")
         if r["bad_floor"]:
             why.append(f"{r['bad_floor']} tiles with a wrong floor around the fire")
         if r["misplaced"]:

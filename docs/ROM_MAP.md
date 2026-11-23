@@ -740,9 +740,67 @@ script accumulator (`61` = add).
 * SB5's flame tiles have two sets: one drawn on the field's own layer
   (palette 2 entries 5-10 = its grass around the fire, 1 and 4 its
   shadow, sparks in the grass) and one drawn on BG1 over a BG2 field
-  (color 0 around the fire; 1-1, 1-2, 1-5). `assets/stages/sb5_flames_bg1.bin`
-  = the second (1-1's VRAM words `$0100-$07FF`); the first set is no
-  longer used (its grass shadows were the white dots of 1-4/1-7).
+  (color 0 around the fire; 1-1, 1-2, 1-5). Both are replaced by SB6's
+  see-through set (`features/explosions.py`, fire in palette 2 entries
+  8-14; the arenas' copy has the floor in entries 1-7).
+* Explosions (SB6, `features/explosions.py`): the flames are BG tiles
+  `$010-$07F` (set 0 archive `$5D`, array index `$5C`, VRAM word `$0100`):
+  7 kinds x 4 frames (`$10 + 16 kind + 4 frame`: right end, down end,
+  left end, up end, horizontal middle, vertical middle, center; tile n in
+  quadrant n & 3, never flipped). Word table `$80:8BE6` (8 words per
+  kind: `$0910` = none, f0 f1 f2 f3 f2 f1 f0), redrawn every 4 frames by
+  `$C5:1E77` -> `$C5:1EFA` (stack: explosion index, then cell, both
+  8-bit), which adds the stage's bits at `$C5:1F58` (`PHP / ORA $0F62 /
+  PLP`, flags of `CMP #$0910` kept) and calls `$C0:420A`. Pierce:
+  `$0ECC + explosion` bit `$10`. The fire colors come from set 6 palette
+  2, loaded by every stage's set-up (`$C5:13DC`: set 6 archives 1, 2,
+  palettes 1 (the items') and 2) after the stage's palettes; SB5's had 5
+  colors for entries 11-15, SB6's 6 go to 8-13. No pink pierce flames: palette 0's
+  entries 8-15 are BG3 palettes 2-3 (HUD, pause menu) and every other BG palette is
+  taken in a stage (a swap there recolored the HUD and the pause menu).
+  A cell's flame is left out at `$C5:1F28` only when the flames are on the field's layer and `$1152`
+  bit 7; a pierce bomb's flames go through soft blocks, whose cell keeps `$1052` bit `$20` while it burns
+  (`$30` -> `$2n`), so on BG1 over a BG2 field (World 1) a flame covered the burning block. Now a JSR
+  (bank `$C5`, `explosions.SKIP_CODE`) also leaves out cells with bit `$20`: only the block burns there.
+* `$C0:420A` (A = word or metatile id, `$AE` = cell) writes a field
+  metatile: at `$C0:427D` `LDA $A6 / BNE` picks `$C0:42A4` (a tile word:
+  A-2..A+1 into the 4 map words) or `$C0:42C0` (a metatile id: table
+  `$047E + 4 id`), both ending with RTS; `$C0:42A3` is its RTL (a word
+  in palette 0 with a tile < `$100` would be taken for an id). Items: `$C5:4557` (A = item, `$AE` = cell)
+  draws item i as tiles `$07C + 4i .. +3` in palette 1 (set 0 archive
+  `$5E`, index `$5D`, VRAM `$0800`; palette 1 = `$81:9094`, also set 6
+  id 1), item ids: 1 fire, 2 bomb, 3 skate, 4 remote, 5 bomb pass, 6 wall
+  pass, 7 vest, 8 clock, 9 1-up, `$0A` geta, `$0B` kick, `$0C` power
+  glove, `$0D` pierce, `$0E` full fire, `$0F` mine, `$10` slow fuse,
+  `$11` boxing glove, `$12`/`$13` skull, `$14` heart, `$15` egg (a
+  sprite). SB6 icons (`features/items.py`): `$10` = SB6's search bomb,
+  `$0E` Full Fire without the ring (no pixel in entry 2). The items' border is palette 1 entry 2, animated by the
+  palette task `$C1:09B0` (script table `$85:EDA1`, the items' script
+  `$85:EDCF`: [frames, id]... 0 = loop; ids 1-5 = single colors at
+  `$81:D756 + 6 (id - 1)`, `[$12, 1, color]`). Every step sets `$0351`
+  (whole CGRAM sent, `$2C0` of the DMA budget): 1-frame steps cost fps.
+* The egg (mount character 9, `[sheet $1A, row 2]`, Louie sheet at
+  `$CA:0800`, raw): body = sheet tiles 6, 7 of rows 2-3 (OBJ `$86`
+  16 x 16), shadow = tiles 8, 9 of row 2 (two 8 x 8, 11 lines lower at
+  rest); its palette id is `$80:C40B + 9` and also `LDA #id / JSR $53EB`
+  at `$C4:5078` (an egg out of a block) and `$C4:5140` (`$52` in SB5,
+  `$51` now, `features/eggs.py`). It is a type 0 object in animation `$15`
+  (script `$85:8825`: mappings `$40 $41 $42 $41`, 8/7 frames: a bob; type 0
+  mapping ids are 1-based, `$85:8000 + 2 (id - 1)`, every one of 1-`$F7` in
+  use). Lines 2-3 of sheet `$1A`: columns 0-5 character 2's animations, 6-9
+  the egg, 10-15 empty. Now: SB6's idle loop in its own tables (`objmap`),
+  given by `asm/bombers.asm` (`enemy_map` / `enemy_anim` `.egg`) to type 0
+  objects in animation `$15`; 3 bodies + 4 shadows in columns 6-15.
+* Bombs: 16 x 16 OBJ pieces of type 0 (animation 1 normal: mappings 1 2 3 2,
+  12 frames: tiles `$10C`/`$10E`/`$120`; pierce `$128`/`$12A`/`$12C`; remote
+  `$122`/`$124`/`$126`, 8 frames; ability `$40` (slow fuse) `$EC` 30 /
+  `$EE` 10 frames; mine `$12E`) from set 0 archive `$23` (index `$22`, LZ,
+  `$CA:D400`, 96 tiles from OBJ `$0E0`, column pairs: archive tile
+  `32r + 2c + line`; also stock OBJ sheet `$23`), OBJ palette 0 = set 0
+  palette id `$58` (`$81:881A`): entries 1-4 used by the bombs only (OBJ
+  flames 5-8 and 15, smoke 10-15, mine 1-3, 7, 14, 15; 9 only by SB5's remote
+  and slow fuse bombs). SB6's pictures, blues in 1-4, a gray in 9 and a neutral
+  outline in 14: `features/bombs.py`.
 * SB1's MIDIs (`assets/SB1 midi`, khinsider): melodic 8-interval n-grams
   of each voice of `assets/sound/sb1_w<n>_song.txt` against each MIDI
   track: W1 `level-1-3-`, W2 `level-2`, W3 `level-3`, W4 `level-4`, W5

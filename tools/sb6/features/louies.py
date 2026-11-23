@@ -22,6 +22,7 @@ FIRST, LAST = 0x15, 0x22     # Louie sheets
 ANIM_TABLES = 0x80C415       # word per mount character -> [sheet, row] per animation
 ANIMS = 34
 EGG = 9                      # character of an egg: one [sheet, row] pair
+ANIM_PALS = 0x80C40B         # palette id per mount character
 # Test aid: extra items hidden in the soft blocks of a campaign stage
 # ($1031: $0D = ZONE1 - 1), as (item, count): $15 egg, $0C power glove.
 # Empty the dict to get the cartridge's items back.
@@ -66,11 +67,14 @@ def apply(rb, base_rom, sheets):
         src = base_rom[e + 4] | base_rom[e + 5] << 8 | base_rom[e + 6] << 16
         # a page is 1 KB from row * $200, also past the sheet's own size
         length = max((size + 0x3FF) & ~0x3FF, rows.get(n, 0) * 0x200 + 0x400)
-        sheets.add(_low_half(base_rom[off(src):off(src) + length]), f"louie: sheet ${n:02X} in colors 1-7")
+        # from the ROM being built: features/eggs.py redraws the egg in sheet $1A first
+        sheets.add(_low_half(bytes(rb.d[off(src):off(src) + length])), f"louie: sheet ${n:02X} in colors 1-7")
     delta = first - FIRST
 
     reg = rb.regions["bulk"]
-    runs, syms = asar.assemble_into(rb.d, ASM, {"E4": f"${reg.cursor:06X}", "DELTA": f"${delta:02X}"})
+    egg_pal = rb.d[off(ANIM_PALS + EGG)]      # features/eggs.py: $51 (SB5: $52)
+    runs, syms = asar.assemble_into(rb.d, ASM, {"E4": f"${reg.cursor:06X}", "DELTA": f"${delta:02X}",
+                                                "EGGPAL": f"${egg_pal:02X}"})
     start, end = reg.cursor, syms["end_e4"]
     out = bytearray(rb.d)
     for o, d in runs:
@@ -113,15 +117,16 @@ def _test_eggs(rb):
     hides one more item in a random soft block without one."""
     if not TEST_ITEMS:
         return
-    code = bytearray.fromhex("E2 10 AD 1A 1D 89 01 D0")   # SEP #$10 / LDA $1D1A / BIT #$01 / BNE out
+    addr = rb.regions["c5"].cursor
     body = bytearray()
     for stage, items in TEST_ITEMS.items():
         for item, count in items:
             # LDA $1031 / CMP #stage / BNE next / LDY #count / - LDA #item / JSR $40DE / DEY / BNE -
             body += bytes([0xAD, 0x31, 0x10, 0xC9, stage, 0xD0, 0x0A, 0xA0, count,
                            0xA9, item, 0x20, 0xDE, 0x40, 0x88, 0xD0, 0xF8])
-    code += bytes([len(body)]) + body
-    addr = rb.regions["c5"].cursor
+    out = addr + 12 + len(body)
+    # SEP #$10 / LDA $1D1A / BIT #$01 / BEQ +3 / JMP out (Battle: none; the body may pass 127 bytes)
+    code = bytearray.fromhex("E2 10 AD 1A 1D 89 01 F0 03 4C") + bytes([out & 0xFF, out >> 8 & 0xFF]) + body
     code += bytes([0xA9, 0x01, 0x4C, 0x50, 0x40])          # out: LDA #$01 / JMP $4050
     if rb.alloc("c5", bytes(code), "test: extra items in a stage's soft blocks") != addr:
         raise BuildError("test items moved")

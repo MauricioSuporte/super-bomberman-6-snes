@@ -80,6 +80,15 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   the closest, listed by the build), shared by characters with the same
   picture. Cells still equal to bomber_sb6.png are drawn with the nearest
   colors.
+* Items, explosions, bombs, eggs drawn like SB6 (Unity sheets `assets/items/sb6_items_sheet.png` =
+  Itens.png, `assets/eggs`): `features/items.py` (icons in palette 1, the border's blink: set 0 archive `$5E`,
+  script at `$85:EDA1`; Full Fire without border), `features/explosions.py` (flame tiles `$010-$07F` from
+  Itens.png's Explosion* cells, fire in palette 2 entries 8-13 from set 6 palette 2; a pierce bomb's flames are
+  the normal ones: no BG palette is free, palette 0 entries 8-15 are the HUD's / pause's BG3 colors),
+  `features/bombs.py` (OBJ archive `$23`, blues in palette `$58` entries 1-4, gray 9, outline 14; a pierce
+  flame never covers a burning soft block: `explosions.SKIP_CODE`), `features/eggs.py` (sheet `$1A`
+  columns 6-15, SB6's idle loop in own tables via `asm/bombers.asm`, palette id `$51`).
+  Checked by `qa_check.py fx` (also the HUD colors and the pause menu on every stage).
 * OBJ palettes: a bomber owns all 16 colors of its slot. Louies and eggs
   live in halves of a Louie palette (`asm/louies.asm`, at most two Louie
   colors at once); new OBJ sheets are registered in `objsheets.ObjSheets`.
@@ -123,8 +132,8 @@ when the soft blocks are scattered; enemy starts go where the check allows
 **Explosions must look like 1-1's on every stage.** After changing a stage's
 tiles, palettes, BG layers, scripts or `asm/stage_anim.asm`, run
 `python tools/flame_check.py [stage ...]` (Mesen, 4 seats dropping bombs):
-every flame tile on screen must keep SB5's fire pixels
-(`assets/stages/sb5_flames_bg1.bin`), show the place's own floor around the
+every flame tile on screen must keep SB6's fire pixels and colors
+(`features/explosions.py` `tiles()`, a pierce bomb's too), show the place's own floor around the
 fire (see-through on BG1 over a BG2 field; an arena drawing flames on its
 field layer may show its most common floor), scroll with the field and sit
 on flame cells. A new stage draws its flames on BG1 over the field (`$0F61`

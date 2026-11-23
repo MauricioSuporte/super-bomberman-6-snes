@@ -139,8 +139,8 @@ for _, scx in ipairs(PLAN.scenarios) do
         if sc and sc.exec then
           local s = emu.getState()
           local sp = s["cpu.sp"]
-          W(string.format("X %d exec %06X A=%04X X=%04X Y=%04X $AE=%02X $AF=%02X ret=%02X%02X%02X", k, a, s["cpu.a"], s["cpu.x"],
-            s["cpu.y"], r(0xAE), r(0xAF), r(sp + 3), r(sp + 2), r(sp + 1)))
+          W(string.format("X %d exec %06X A=%04X X=%04X Y=%04X $AE=%02X $AF=%02X ret=%02X%02X%02X $BD=%02X%02X%02X", k, a, s["cpu.a"], s["cpu.x"],
+            s["cpu.y"], r(0xAE), r(0xAF), r(sp + 3), r(sp + 2), r(sp + 1), r(0xBF), r(0xBE), r(0xBD)))
         end
       end, emu.callbackType.exec, a, a)
     end
@@ -248,6 +248,8 @@ end
 --   door seat                  the seat stands on World 1's exit door
 --   burn_clown n               n frames of flames around 1-7's clown
 --   shot name                  screenshot QA_OUT_<scenario>_<name>.png
+--   dump name                  VRAM / CGRAM / OAM / WRAM $0000-$1FFF to QA_OUT_<scenario>_<name>.dump (tools/qa/dump.py)
+--   show_item cell item        a visible item on the cell (SB5's $C5:4557)
 local killing = false
 local burning = 0
 local burnt = {}           -- cell -> value before the flame
@@ -352,6 +354,28 @@ function OPS.door(st)       -- door seat: the seat stands on World 1's exit door
   place(st[3], rm(0x7FFB10), rm(0x7FFB11))
 end
 function OPS.shot(st) local h = io.open(OUTP .. "_" .. sc.name .. "_" .. st[3] .. ".png", "wb") h:write(emu.takeScreenshot()) h:close() end
+-- dump name: QA_OUT_<scenario>_<name>.dump = "QAD1" + VRAM (64 KB) + CGRAM (512) + OAM (544) + WRAM $0000-$1FFF (8 KB)
+--   + BG1SC, BG2SC, BG12NBA, BG34NBA, BG3SC, BGMODE as last written (the field's BG2SC is in WRAM $0369, the scrolls in $0331-$0339)
+local ppureg = {[0x05] = 0, [0x07] = 0, [0x08] = 0, [0x09] = 0, [0x0B] = 0, [0x0C] = 0}
+local function ppu_w(addr, v) ppureg[addr & 0xFF] = v end
+emu.addMemoryCallback(ppu_w, emu.callbackType.write, 0x002105, 0x00210C)
+emu.addMemoryCallback(ppu_w, emu.callbackType.write, 0x802105, 0x80210C)
+function OPS.dump(st)
+  local h = io.open(OUTP .. "_" .. sc.name .. "_" .. st[3] .. ".dump", "wb")
+  local t = {"QAD1"}
+  local function chunk(mem, a, n)
+    local c = {}
+    for i = 0, n - 1 do c[#c + 1] = string.char(emu.read(a + i, mem)) end
+    t[#t + 1] = table.concat(c)
+  end
+  chunk(emu.memType.snesVideoRam, 0, 0x10000)
+  chunk(emu.memType.snesCgRam, 0, 512)
+  chunk(emu.memType.snesSpriteRam, 0, 544)
+  chunk(emu.memType.snesWorkRam, 0, 0x2000)
+  t[#t + 1] = string.char(ppureg[0x07], ppureg[0x08], ppureg[0x0B], ppureg[0x0C], ppureg[0x09], ppureg[0x05])
+  h:write(table.concat(t))
+  h:close()
+end
 function OPS.louie_type(st) louie_type = st[3] end
 function OPS.mark(st) W(string.format("X %d mark %s", k, st[3])) end
 
@@ -369,7 +393,21 @@ local function run_steps()
 end
 
 -- the clear check of a "kill" step (stage_test.lua): a stub calling JSL $C5:3B4E from the task runner
+-- show_item cell item: SB5's visible item placement $C5:4557 (A = item, $AE = cell: $145A, $1052 = $10, $1152 bit 7,
+-- the item's metatile on the field layer), one per pass of the task runner (queue)
+local shows = {}
+function OPS.show_item(st) shows[#shows + 1] = {st[3], st[4]} end
 local function kcb()
+  if not killing and #shows > 0 then
+    local c, it = shows[1][1], shows[1][2]
+    table.remove(shows, 1)
+    -- PHP / SEP #$30 / LDA #cell / STA $AE / LDA #item / JSL $C5:4557 / PLP / JML $C0:22F0
+    local stub = {0x08, 0xE2, 0x30, 0xA9, c & 0xFF, 0x85, 0xAE, 0xA9, it & 0xFF, 0x22, 0x57, 0x45, 0xC5, 0x28,
+                  0x5C, 0xF0, 0x22, 0xC0}
+    for i, b in ipairs(stub) do wm(0x7FF000 + i - 1, b) end
+    local s = emu.getState() s["cpu.k"] = 0x7F s["cpu.pc"] = 0xF000 emu.setState(s)
+    return
+  end
   if not killing then return end
   killing = false
   local stub = {0x08, 0xE2, 0x30, 0x22, 0x4E, 0x3B, 0xC5, 0x28, 0x5C, 0xF0, 0x22, 0xC0}
@@ -387,6 +425,7 @@ local function begin(i)
     return
   end
   watch, forced, invincible, runs, killing, extra_pads, burning, clown_burn, burnt = {}, {}, sc.invincible ~= false, 0, false, {}, 0, 0, {}
+  shows = {}
   wlog_on = {}
   W("S " .. sc.name)
   if sc.rec and sc.rec.pose then posef = io.open(OUTP .. "_" .. sc.name .. ".pose", "wb") end

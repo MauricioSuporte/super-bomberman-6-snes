@@ -401,7 +401,7 @@ if !ENMAP != 0
 enemy_map:
     LDA $04FF,Y
     CMP #$07
-    BNE .no
+    BNE .egg
     LDA $049F,Y
     CMP #!ENMAPFIRST
     BCC .no
@@ -436,6 +436,23 @@ enemy_map:
     SEP #$20
     SEC
     RTS
+; the stage egg (features/eggs.py): type 0 in animation !EGGANIM reads its own mappings (ids 1-8)
+.egg
+if !EGGANIM != 0
+    CMP #$00
+    BNE .no
+    LDA $079F,Y
+    CMP #!EGGANIM
+    BNE .no
+    LDA #!EGGMAP
+    STA $5D
+    REP #$20
+    LDA #!EGGMAPBASE
+    STA $5B
+    SEP #$20
+    SEC
+    RTS
+endif
 .no
     CLC
     RTS
@@ -444,7 +461,7 @@ enemy_map:
 enemy_anim:
     LDA $04FF,Y
     CMP #$07
-    BNE .no
+    BNE .egg
     LDA $079F,Y
     CMP #!ENANIMFIRST
     BCC .no
@@ -456,6 +473,22 @@ enemy_anim:
     SEP #$20
     SEC
     RTS
+.egg
+if !EGGANIM != 0
+    CMP #$00
+    BNE .no
+    LDA $079F,Y
+    CMP #!EGGANIM
+    BNE .no
+    LDA #!EGGANIMB
+    STA 3,S
+    REP #$20
+    LDA #!EGGANIMBASE
+    STA $5B
+    SEP #$20
+    SEC
+    RTS
+endif
 .no
     CLC
     RTS
