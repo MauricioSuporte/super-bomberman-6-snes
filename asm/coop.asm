@@ -1163,13 +1163,18 @@ e4_reserve:
     phk
     plb                             ; (res_dir / res_side)
     sep #$30
+    ldx #$03                        ; seats out of the stage: SB5's 3x3 kept clear ($C5:01B4 does it for bombers)
+-   jsr seat_out
+    bcs +
+    jsr keep3x3
++   dex
+    bpl -
     ldx #$03
 .seat:
-    lda.l $7E17FA,x
-    bpl +
+    jsr seat_cell
+    bcc +
     jmp .next
 +
-    lda.l $7E16AA,x
     sta.l $7E0000|!t0               ; start cell
     phx
     lda #$01
@@ -1244,6 +1249,61 @@ e4_reserve:
     sta.l $7E2700,x
     rts
 
+; Seat X's start cell -> A, C clear: its bomber's ($16AA), or for a seat of the roster out of this stage
+; (it may join with Start: e4_frame's revive starts from $4E8D/$4EA5, its corner) that spawn cell; C set: none.
+; Keeps X.
+seat_cell:
+    lda.l $7E17FA,x
+    bmi seat_out
+    lda.l $7E16AA,x
+    clc
+    rts
+; C clear + A = spawn cell only for a seat of the roster out of this stage.
+seat_out:
+    lda.l $7E17FA,x
+    bpl .no
+    txa
+    cmp.l $7E0000|!roster
+    bcs .no
+    lda.l $7E4EA5,x
+    asl a
+    asl a
+    asl a
+    asl a
+    ora.l $7E4E8D,x
+    beq .no
+    clc
+    rts
+.no:
+    sec
+    rts
+
+; The 3x3 around cell A: no soft block ($7E:2700 | $10, as $C5:0230). Keeps X.
+keep3x3:
+    phx
+    sec
+    sbc #$11
+    ldy #$03
+-   tax
+    lda.l $7E2700,x
+    ora #$10
+    sta.l $7E2700,x
+    inx
+    lda.l $7E2700,x
+    ora #$10
+    sta.l $7E2700,x
+    inx
+    lda.l $7E2700,x
+    ora #$10
+    sta.l $7E2700,x
+    txa
+    clc
+    adc #$0E
+    dey
+    bne -
+    plx
+    rts
+
 ; Then every seat is shut in by soft blocks: its pocket (the cells kept clear, $10 and not $80, reachable
 ; from its cell within !SHMAX steps) gets a soft block, as the scatter's ($7E:2400 = 2, $7E:2700 | $90,
 ; one less of $0E1F for the random ones), on every cell around it the scatter could fill (no $F0 bit):
@@ -1264,11 +1324,10 @@ shield:
     rts
 +   ldx #$03
 .seat:
-    lda.l $7E17FA,x
-    bpl +
+    jsr seat_cell
+    bcc +
     jmp .next
 +   phx
-    lda.l $7E16AA,x
     sta.l !SHQ
     lda #$00
     sta.l !SHD

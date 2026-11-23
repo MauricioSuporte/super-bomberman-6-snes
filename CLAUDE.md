@@ -88,7 +88,8 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 
 **After changing the ROM run `python tools/qa_check.py`** (`all` adds coop4 + flames, `--list`, `-v`): the
 regression suites in Mesen headless, no AI tokens (tools/qa/suites.py: picker colors, every animation in 4
-directions with a frame-by-frame pose check, SFX ids, music, every stage's 4 starts, 1-6 / 1-7 flows and their
+directions with a frame-by-frame pose check, SFX ids, music, every stage's 4 starts (also with P3/P4 out of the
+stage, joining with Start: `Fixture.absent`), 1-6 / 1-7 flows and their
 intro holds on foot and on Louies (`Fixture.mounts`: Louies kept from the stage before), 1-3's chameleons drawn
 every frame; every
 scenario fails if SB5's static graphics queue writes a page a bomber / Louie / egg owns). Fixtures (4 players, picks,
@@ -113,7 +114,8 @@ docs/ROM_MAP.md.
 start where it has to die to open a way, or next to an enemy. The check
 fails a seat that, with every random soft block it could get, cannot drop a
 bomb and hide from it (any fire range) within 5 + 5 cells, or that has an
-enemy starting fewer than 6 walking cells away (soft blocks ignored).
+enemy starting fewer than 6 walking cells away (soft blocks ignored). A seat out of the stage (it joins with Start)
+is judged at its spawn cell (`$4E8D`/`$4EA5`), which must be its corner.
 `e4_reserve` (asm/coop.asm) keeps a bomb-and-hide run clear for each seat
 when the soft blocks are scattered; enemy starts go where the check allows
 (`sb1_enemies.STAGE_ENEMIES`). Never ship a stage failing this.

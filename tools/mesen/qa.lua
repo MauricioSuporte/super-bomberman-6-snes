@@ -184,7 +184,11 @@ end
 -- stage forcing (fixture.stage): the first stage id written to $1031 is replaced
 local stage_forced = phase == "load"   -- (a loaded fixture is already in its stage)
 local function force(a, v)
-  if FX.stage and not stage_forced and v >= 0x0D and v < 0x74 then stage_forced = true return FX.stage end
+  if FX.stage and not stage_forced and v >= 0x0D and v < 0x74 then
+    stage_forced = true
+    for _, seat in ipairs(FX.absent or {}) do wr(0x012C, r(0x012C) & ~(1 << seat)) end   -- out of the stage (co-op !pmask)
+    return FX.stage
+  end
 end
 emu.addMemoryCallback(force, emu.callbackType.write, 0x1031, 0x1031)
 emu.addMemoryCallback(force, emu.callbackType.write, 0x7E1031, 0x7E1031)
@@ -279,6 +283,9 @@ function OPS.spawn(st)
     if r(0x17FA + a) < 0x80 and r(0x16C2 + a) ~= 0 then en[#en + 1] = string.format("%02X:%02X", cell_of(a), r(0x16C2 + a)) end
   end
   t[#t + 1] = "seats " .. table.concat(seats, " ")
+  local pts = {}               -- each seat's spawn cell ($4E8D x / $4EA5 y: where a revive with Start starts looking)
+  for seat = 0, 3 do pts[#pts + 1] = string.format("%02X", (r(0x4EA5 + seat) << 4 | r(0x4E8D + seat)) & 0xFF) end
+  t[#t + 1] = "points " .. table.concat(pts, " ")
   t[#t + 1] = "enemies " .. table.concat(en, " ")
   W(string.format("X %d spawn %s", k, table.concat(t, "|")))
 end

@@ -658,3 +658,64 @@ def cham_eval(fx):
                all(r >= 50 for k, r in l.fps if k > 120), f"worst {min([r for k, r in l.fps if k > 120] or [0])}")
         return res
     return ev
+
+
+# ---------------------------------------------------------------- every stage, P3/P4 out at the start
+# A seat of the roster out of the stage (it died without a life) joins with Start while a life is left
+# (asm/coop_e4.asm e4_frame -> revive: the nearest safe floor to its spawn cell $4E8D/$4EA5). Its spawn
+# cell must be its corner and as safe as a seat's that started there (e4_spawn_all sets it, e4_reserve keeps
+# it clear and shut in); Start brings it in there.
+def out_fx(stage):
+    return Fixture(f"s{stage:02X}_4p_out34", stage=stage, ready=120, absent=(2, 3))
+
+
+def spawn_out_scenarios(stage):
+    t = 600 if stage == 0x68 else 270           # (1-7: the clown's intro holds every pad, Start too)
+    st = [[k, "spawn"] for k in range(0, 260, 5)]
+    st += [[t - 5, "poke", 0x1D23, 3], [t, "pad", 2, "start", 3], [t + 30, "pad", 3, "start", 3], [t + 70, "spawn"]]
+    return [Scenario("sp_out", t + 80, steps=st, invincible=False)]
+
+
+def spawn_out_eval(stage):
+    def ev(logs, boot):
+        import os, sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import coop4_check
+        res = Result()
+        l = logs["sp_out"]
+        snap = [(int(m.split()[1]), m.split(" ", 3)[3].replace("|", "\n")) for m in l.msgs if " spawn " in m]
+        name = STAGES[stage]
+        if not snap:
+            res.ok(f"{name} (P3/P4 out): start state read", False, "no spawn line")
+            return res
+
+        def field(text, key):
+            return [int(x, 16) for x in text.split(key + " ")[1].split("\n")[0].split()]
+        start = [(k, t) for k, t in snap if k < 260]
+        has_en = [k for k, t in start if t.split("enemies")[1].split("\n")[0].strip()]
+        k0 = has_en[0] + 60 if has_en else start[-1][0]
+        text = min(start, key=lambda s: abs(s[0] - k0))[1]
+        seats, pts = field(text, "seats"), field(text, "points")
+        res.ok(f"{name} (P3/P4 out): P1/P2 in the stage, P3/P4 out", seats[0] != 0xFF and seats[1] != 0xFF
+               and seats[2] == 0xFF and seats[3] == 0xFF, " ".join(f"{c:02X}" for c in seats))
+        if stage not in (0x67, 0x68):
+            where = [((c & 15) >= 8, (c >> 4) >= 7) for c in pts]
+            res.ok(f"{name} (P3/P4 out): P3/P4's spawn cells in their corners",
+                   all(where[s] == tuple(map(bool, CORNERS[s])) for s in (2, 3)),
+                   " ".join(f"P{s + 1}({c & 15},{c >> 4})" for s, c in enumerate(pts)))
+        # every seat judged at its spawn cell, as if it stood there
+        lines = text.split("\n")
+        as_in = "\n".join("seats " + " ".join(f"{c if s < 2 else pts[s]:02X}" for s, c in enumerate(seats))
+                          if x.startswith("seats ") else x for x in lines)
+        bad = coop4_check.spawn_safety(as_in, stage not in (0x67, 0x68))
+        res.ok(f"{name} (P3/P4 out): every spawn cell is safe (bomb + hide with any soft blocks, enemies >= 6 cells,"
+               " shut in)", not bad, "; ".join(bad))
+        after = field(snap[-1][1], "seats") if snap[-1][0] >= 260 else [0xFF] * 4
+        dist = [abs((after[s] & 15) - (pts[s] & 15)) + abs((after[s] >> 4) - (pts[s] >> 4)) if after[s] != 0xFF else 99
+                for s in (2, 3)]
+        res.ok(f"{name} (P3/P4 out): Start brings P3/P4 in at their spawn cells", all(d <= 1 for d in dist),
+               " ".join(f"P{s + 3}({c & 15},{c >> 4})" if c != 0xFF else f"P{s + 3} out" for s, c in enumerate(after[2:])))
+        died = [(k, s) for k, s in l.deaths if k > 0]
+        res.ok(f"{name} (P3/P4 out): nobody dies standing still", not died, f"deaths {died}")
+        return res
+    return ev

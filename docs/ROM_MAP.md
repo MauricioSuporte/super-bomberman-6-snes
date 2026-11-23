@@ -1740,6 +1740,14 @@ upload rewrote the page on screen (`c5_alloc` took its own page); the portal loa
 `tools/qa_check.py anims` checks every frame; a bomber at the top edge of the screen (SB5 hides the pieces
 above line 0, as with one player) is accepted when what is left is part of a pose.
 
+Seats out of the stage at its start (a seat of the roster that died without a life; `!pmask` bit clear)
+join with Start while a life is left (`e4_frame` -> `revive`: the nearest safe floor to the seat's spawn
+cell `$4E8D`/`$4EA5`). Before, nothing set that cell for P3/P4 out of the stage (it read (0,0)), so they came
+in next to P1 in the top left corner, and their corners got no keep-clear area: `e4_spawn_all` now sets it
+to their anchor (corner), and `e4_reserve` / `shield` treat a seat out of the stage at that cell like a
+bomber (SB5's 3x3, the bomb-and-hide run, shut in by soft blocks; `seat_cell` / `seat_out` / `keep3x3`).
+`tools/qa_check.py spawn` checks it on every stage (`Fixture.absent`).
+
 Start safety (`tools/coop4_check.py` spawn_safety) passes on every World 1 stage: SB1 enemy starts next to the
 lower corners were moved (1-2 spring (13,9) -> (11,7); 1-3 chameleons (13,8), (1,8), (11,11) -> (11,7), (3,7),
 (7,11); 1-4 UFOs (3,9), (11,11) -> (5,7), (7,11); 1-4's horned robots at (7,3), (9,9)). 1-4 leaves out the

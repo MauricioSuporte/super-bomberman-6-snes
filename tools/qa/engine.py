@@ -43,12 +43,16 @@ class Fixture:
     picks: tuple = ((0, 0), (1, 0), (2, 0), (3, 0))   # (character, color) per seat
     ready: int = 300                # stage frame of the savestate
     mounts: tuple = ()              # Louie type 0-5 per seat (-1 none): the stage starts with the seats riding
+    absent: tuple = ()              # seats out of the stage at its start (as after dying without a life): Start
+                                    # brings them in when a life is left
 
     def lua(self):
         d = {"stage": self.stage, "players": self.players, "ready": self.ready,
              "picks": [{"c": c, "k": k} for c, k in self.picks]}
         if self.mounts:
             d["mounts"] = list(self.mounts)
+        if self.absent:
+            d["absent"] = list(self.absent)
         return d
 
 

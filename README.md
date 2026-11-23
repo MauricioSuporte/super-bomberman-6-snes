@@ -212,7 +212,8 @@ ocioso, encurralado, morte, tempo esgotado, vitória, Louies) quadro a quadro
 contra a folha de poses de cada personagem, efeitos sonoros (bomba, explosão
 por alcance, pierce, soco, quique, chute, item, Louies, mortes), música de cada
 fase, largada dos 4 jogadores em cada fase (cada um no seu canto, com espaço
-para bombar e se esconder, sem inimigo perto), 1-6 (intro, 3 duelos, torcida,
+para bombar e se esconder, sem inimigo perto; também com P3/P4 fora da fase,
+entrando depois com Start), 1-6 (intro, 3 duelos, torcida,
 itens, vitória) e 1-7 (intro, luzes, 8 acertos, vermelho, morte, vitória), e
 nas travas das intros de 1-6/1-7 todos virados para cima, sem animação de
 ocioso, a pé e montados em Louie; na 1-3 cada camaleão desenhado em todo quadro

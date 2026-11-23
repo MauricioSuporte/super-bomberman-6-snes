@@ -14,7 +14,8 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            and every frame of each bomber = a pose of its character's sheet (tools/qa/poses.py)
   sfx      bomb, explosion by fire range, pierce bomb, enemy death, item, remote
   spawn    every stage: the 4 seats start in their corners, safe (bomb + hide with any soft blocks, no enemy
-           within 6 cells, shut in by soft blocks), nobody dies standing still
+           within 6 cells, shut in by soft blocks), nobody dies standing still; and with P3/P4 out of the stage at
+           its start (they join with Start): their spawn cells in their corners and as safe, Start brings them there
   music    each World 1 stage's music plays (Hudson driver), the title / save menu music, fps without input
   boss16   1-6: intro (players held, rival walks in), white -> black -> Golden, crowd / death sounds, items,
            the kick drop, victory, 1-7 next
@@ -61,6 +62,7 @@ def _jobs():
     out["sfx"] = [(S.FX_A, S.sfx_scenarios(), S.sfx_eval(S.FX_A))]
     out["music"] = [(S.stage_fx(st), S.music_scenarios(), S.music_eval(st)) for st in S.STAGES]
     out["spawn"] = [(S.stage_fx(st), S.spawn_scenarios(), S.spawn_eval(st)) for st in S.STAGES]
+    out["spawn"] += [(S.out_fx(st), S.spawn_out_scenarios(st), S.spawn_out_eval(st)) for st in S.STAGES]
     out["boss16"] = [(S.stage_fx(0x67), S.b16_scenarios(), S.b16_eval(None))]
     out["boss17"] = [(S.stage_fx(0x68), S.b17_scenarios(), S.b17_eval(None))]
     for st in (0x67, 0x68):

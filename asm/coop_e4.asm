@@ -415,8 +415,15 @@ e4_spawn_all:
     bcs .done
     lda.l seat_bits,x
     and.l $7E0000|!pmask
-    beq .next
-    cpx #$02
+    bne +
+    cpx #$02                        ; P3/P4 out of this stage (may join with Start): their anchor is where
+    bcc .next                       ; revive starts looking (e4_reserve keeps it safe, as the others')
+    lda.l $7E0000|!anchx-2,x
+    sta.l $7E4E8D,x
+    lda.l $7E0000|!anchy-2,x
+    sta.l $7E4EA5,x
+    bra .next
++   cpx #$02
     bcs .extra
     lda.l $7E4E8D,x
     sta.l $7E1D28
