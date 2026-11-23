@@ -150,8 +150,12 @@ copy_walk:
 ; --- changing (standing): FLICK; flames kill
 changing:
     phx
+    lda #$01                    ; contact and flames only: the seat distances of seats 16 px or more away are
+    sta.l $7FF76F               ; left out (co-op's c3_near, as for the walker)
     jsl $C34C13
     sep #$30
+    lda #$00
+    sta.l $7FF76F
     plx
     ldy $17FA,x
     jsr alive

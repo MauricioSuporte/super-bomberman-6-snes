@@ -111,7 +111,9 @@ intro holds on foot and on Louies (`Fixture.mounts`: Louies kept from the stage 
 every frame; every
 scenario fails if SB5's static graphics queue writes a page a bomber / Louie / egg owns). Fixtures (4 players, picks,
 stage) are booted once per ROM sha1 and kept as savestates (`build/qa/states`); scenarios load them
-(`tools/mesen/qa.lua` steps: pad, poke, place, item, burn, blast, door, louie_type...). A new feature gets
+(`tools/mesen/qa.lua` steps: pad, poke, place, item, burn, blast, door, louie_type...). A scenario's `profile=(from, to)`
+counts the instructions run per 16-byte code block in those frames (`Log.prof`; `$80:F490` is the NMI wait):
+find what costs fps there before optimizing. A new feature gets
 a scenario + checks there; ids and addresses it relies on are listed at the top of tools/qa/suites.py.
 
 **SB6 is played as the Normal Game with 4 players and Louies: every stage has

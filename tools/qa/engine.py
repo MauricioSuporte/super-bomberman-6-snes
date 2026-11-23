@@ -66,6 +66,7 @@ class Scenario:
     watch: tuple = ()               # more actors whose animation / object is logged
     exec: tuple = ()                # CPU addresses logged when run ("X k exec ...")
     dma: bool = False               # log every DMA ("Y") and NMI milestones ("Z")
+    profile: tuple = ()             # (from, to) frames: instructions per 16-byte code block ("J", Log.prof)
 
     def lua(self):
         d = {"name": self.name, "len": self.len, "steps": self.steps, "invincible": self.invincible}
@@ -75,6 +76,8 @@ class Scenario:
             d["exec"] = list(self.exec)
         if self.dma:
             d["dma"] = True
+        if self.profile:
+            d["profile"] = list(self.profile)
         if self.pose:
             d["rec"] = {"pose": list(self.pose)}
         return d
@@ -95,6 +98,7 @@ class Log:
         self.modes = []        # (k, mode)
         self.deaths = []       # (k, seat)
         self.fps = []          # (k, runs)
+        self.prof = {}         # code block address -> instructions run (Scenario.profile)
         self.values = {}       # name -> [(k, bytes)]
         self.msgs = []
         self.dma = []          # raw "Y" / "Z" lines
@@ -120,6 +124,8 @@ class Log:
                 self.modes.append((int(f[1]), int(f[2], 16)))
             elif t == "D":
                 self.deaths.append((int(f[1]), int(f[2])))
+            elif t == "J":
+                self.prof[int(f[1], 16) << 4] = int(f[2])
             elif t == "F":
                 self.fps.append((int(f[1]), int(f[2])))
             elif t == "V":

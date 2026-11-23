@@ -1095,6 +1095,56 @@ def hud_scenarios(stage):
     return sc
 
 
+def hud_var_fx(stage):
+    """Every stage with other characters / colors than stage_fx's: each stage 4 different characters of the
+    character select's 7 (all 7 over World 1) and colors spread over their first 25."""
+    i = list(STAGES).index(stage)
+    return Fixture(f"s{stage:02X}_4p_hudvar", stage=stage, ready=120,
+                   picks=tuple(((i + 2 * s) % 7, (5 * i + 7 * s + 3) % 25) for s in range(4)))
+
+
+def hud_var_scenarios(stage):
+    """The HUD with those picks, then every seat given items (as 1-1's h_items) on this stage."""
+    st = [[1, "invincible", 1]] + _hud_shot(HUD_SHOT, "base")
+    st += [[k + 40, "item", s, i] for k, s, i in HUD_ITEMS] + [[370, "poke", 0x1D23, 4]] + _hud_shot(410, "items")
+    return [Scenario("h_var", 415, steps=st)]
+
+
+def _hud_item_checks(res, name, recs, lives):
+    hud, _ = _hud_tables()
+    p1, p2, p3, p4 = recs
+    res.ok(f"{name}: P1 fire 8 with Full Fire's icon, 2 bombs", p1[1] == 8 and p1[7] == hud.I_FULL and p1[3] == 2, f"{p1}")
+    res.ok(f"{name}: P2 kick, punch, power glove", p2[8:11] == (hud.I_KICK, hud.I_PUNCH, hud.I_GLOVE), f"{p2}")
+    res.ok(f"{name}: P3 pierce bomb (over the search bomb), soft block pass", p3[4] == hud.I_PIERCE and p3[6] == hud.I_WPASS,
+           f"{p3}")
+    res.ok(f"{name}: P4 heart, speed 2, remote bomb, bomb pass",
+           p4[5] == hud.I_HEART and p4[2] == 2 and p4[4] == hud.I_REMOTE and p4[8] == hud.I_BPASS, f"{p4}")
+    res.ok(f"{name}: lives digit 4", lives == 4, f"{lives}")
+
+
+def hud_var_eval(stage):
+    def ev(logs, boot, tag):
+        res = Result()
+        name = f"{STAGES[stage]} other picks"
+        l = logs.get("h_var")
+        if not res.ok(f"{name}: HUD scenario ran", l, ""):
+            return res
+        fx = hud_var_fx(stage)
+        pk = l.value("base_picks")
+        chars = [c + 1 for c, _ in fx.picks]        # (colors: the picker skips those taken, so not the presses)
+        cols = list(pk[8:12]) if pk else []
+        res.ok(f"{name}: the character select's choices: characters {chars}, 4 different colors, not the first",
+               pk is not None and pk[1] == 1 and list(pk[2:6]) == chars and len(set(cols)) == 4
+               and sum(1 for c in cols if c) >= 3, f"{pk.hex() if pk else '?'}")
+        recs, _ = _hud_screen(res, name, tag, "h_var", "base", l)
+        res.ok(f"{name}: 4 seats in the HUD", all(r[0] for r in recs), f"{recs}")
+        recs, lives = _hud_screen(res, f"{name}, items", tag, "h_var", "items", l)
+        _hud_item_checks(res, f"{name}, items", recs, lives)
+        res.ok(f"{name}: >= 50 fps with the HUD", all(r >= 50 for k, r in l.fps if k >= 240), f"{[r for _, r in l.fps]}")
+        return res
+    return ev
+
+
 def hud_pause_scenarios():
     """1-1 (both character sets): the HUD during the pause menu and after it (its menu rewrites BG3)."""
     st = [[1, "invincible", 1]] + _hud_shot(HUD_SHOT, "base") + [[320, "pad", 0, "start", 3]] + _hud_shot(380, "pause")
@@ -1244,14 +1294,7 @@ def hud_eval(stage):
         if l:
             hud, _ = _hud_tables()
             recs, lives = _hud_screen(res, f"{name} items", tag, "h_items", "items", l)
-            p1, p2, p3, p4 = recs
-            res.ok("items: P1 fire 8 with Full Fire's icon, 2 bombs", p1[1] == 8 and p1[7] == hud.I_FULL and p1[3] == 2, f"{p1}")
-            res.ok("items: P2 kick, punch, power glove", p2[8:11] == (hud.I_KICK, hud.I_PUNCH, hud.I_GLOVE), f"{p2}")
-            res.ok("items: P3 pierce bomb (over the search bomb), soft block pass", p3[4] == hud.I_PIERCE and p3[6] == hud.I_WPASS,
-                   f"{p3}")
-            res.ok("items: P4 heart, speed 2, remote bomb, bomb pass",
-                   p4[5] == hud.I_HEART and p4[2] == 2 and p4[4] == hud.I_REMOTE and p4[8] == hud.I_BPASS, f"{p4}")
-            res.ok("items: lives digit 4", lives == 4, f"{lives}")
+            _hud_item_checks(res, "items", recs, lives)
         return res
     return ev
 

@@ -129,6 +129,21 @@ emu.addMemoryCallback(function()
   end
 end, emu.callbackType.exec, HATCH, HATCH)
 
+-- scenario.profile = {from, to}: instructions per 16-byte code block between those scenario frames (finish())
+local prof = nil
+local prof_on = false
+for _, scx in ipairs(PLAN.scenarios) do if scx.profile then prof_on = true end end
+if prof_on then
+  local function pcb(a)
+    if prof and sc and sc.profile and k >= sc.profile[1] and k < sc.profile[2] then
+      local b = a >> 4
+      prof[b] = (prof[b] or 0) + 1
+    end
+  end
+  emu.addMemoryCallback(pcb, emu.callbackType.exec, 0x800000, 0xFFFFFF)
+  emu.addMemoryCallback(pcb, emu.callbackType.exec, 0x008000, 0x3FFFFF)
+end
+
 -- scenario.exec = {addresses}: "X k exec <addr> A=.. X=.." when the CPU runs them (research / checks of a routine)
 local execs = {}
 for _, scx in ipairs(PLAN.scenarios) do
@@ -429,8 +444,13 @@ local function begin(i)
   wlog_on = {}
   W("S " .. sc.name)
   if sc.rec and sc.rec.pose then posef = io.open(OUTP .. "_" .. sc.name .. ".pose", "wb") end
+  prof = sc.profile and {} or nil
 end
 local function finish()
+  if prof then      -- scenario.profile: "J bank:addr>>4 n" instructions run per 16-byte block (research of the frame cost)
+    for a, n in pairs(prof) do W(string.format("J %05X %d", a, n)) end
+    prof = nil
+  end
   if music then
     local pages = {}
     for pg = 0, 255 do pages[#pages + 1] = string.format("%02X", math.min(255, (music[3][pg] or 0) // 4)) end

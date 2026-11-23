@@ -1532,7 +1532,9 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   around `$C3:4B7B` by the SB1 enemies (`sb1w`) and by SB5's walker `$C3:4B5A` (`c3_walk`), whose moves
   (`$C3:4DA2`, `$C3:4610`) never read the arrays; only the contact test `$C3:47C9` (< 8 px) does. The
   chasers' nearest-seat routine `$C3:4641` (callers `$C3:0DAB` .. `$C3:41CA`) is never under the flag.
-  1-2 with 4 players dropping bombs: 35 -> 50-60 fps.
+  1-2 with 4 players dropping bombs: 35 -> 50-60 fps. 1-3's chameleons set it around their change (`$C3:4C13`,
+  `changing` in `asm/chameleon.asm`): 4 players on Louies with the chameleons went from 48 to 54 fps at worst
+  (the full distances were ~6% of the frame; measured with `Scenario.profile`).
 * `$C3:475C` (clears the 24 bytes of seat distances at `$0110`, every enemy every frame) is unrolled
   in co-op's `c3_fill`. `$C5:060E` is not a
   per-frame hook: that task only runs while a player is dead.
