@@ -261,6 +261,11 @@ def apply(rb, louie_tick, pick):
     rb.patch(0xC50171, bytes.fromhex("20 B4 01"), _jsr(s("c5_reserve")), "co-op: every seat keeps an escape clear of soft blocks")
     rb.patch(0xC56AE3, bytes.fromhex("20 F5 6A B0 0A"), _jmp(s("c5_service")) + b"\xEA\xEA",
              "co-op: sprite page service")
+    rb.patch(0xC56A72, bytes.fromhex("9C FF 1C"), _jsr(s("c5_dedupe")),
+             "co-op: a strip already in the bomber's page is not queued again")
+    rb.patch(0xC56A15, bytes.fromhex("8D 10 1D"), _jsr(s("c5_pginit")), "co-op: page setup forgets the kept strips")
+    rb.patch(0xC56AA7, bytes.fromhex("A9 01 8D FF 1C"), _jsr(s("c5_urgent")) + b"\xEA\xEA",
+             "co-op: a strip copied into the page on screen is served first, its animation set before the OAM")
     rb.patch(0xC542F5, bytes.fromhex("E0 18 90 E4"), _jmp(s("c5_clock")) + b"\xEA",
              "co-op: Clock does not freeze mounts")
     rb.patch(0xC5060E, bytes.fromhex("AD FA 17 0D FB 17"), _jsl(syms["e4_frame"]) + b"\xEA\xEA",

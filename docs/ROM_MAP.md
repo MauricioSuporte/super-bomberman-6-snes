@@ -753,14 +753,25 @@ script accumulator (`61` = add).
   leads there.
 * Bomber facing: `JSL $C4:3C24` (A = animation - `$1692,x`, Y = facing 1
   right 2 down 3 left 4 up, X = actor) sets `$1632` and the animation
-  `$179A` + facing - 1. Stage start pose `$46-$49`; when play starts SB5
-  sets `$15` (front only). 1-6 turns the seats up (`face_up` when the map
-  is in, `face_up_start` swaps `$15` for `$49`). 1-7 turns the start pose
-  up from the first frame the bombers exist (`start_up`, called by
-  `intro_pads` in the main loop, before the fade in), once per seat (bits
-  in the clown's `$7F:E038`; a new animation every frame cost 3 fps with 4
-  players) and only during the clown's intro (pads held, phase < 3); after
-  that the players are free. SB5 starts play during the intro (~stage frame
+  `$179A` + facing - 1. Stage start pose `$46-$49` (SB5 shows `$47` with
+  `$1632` already 4); when play starts SB5 sets `$15` (front only). The
+  animation base of a seat's state: `$C4:42EC` (input after standing:
+  `$17E2` = 0; `$1782` bit 7 = on a Louie -> `$C4:4346`: base `$80:BB58`
+  indexed by the Louie's character `$16C2 + seat + $0128`; bit 3 = carrying
+  -> `$2E`; else 0 = walk). A Louie copies its rider's facing in its own
+  routine (`$C4:5289`) and sets its animation (`$C4:547F`, bank-local);
+  that routine runs from stage frame ~100 (the fade in). While an intro
+  holds the pads (1-6: a rival walks in / the stands blink, `intro_pads`;
+  1-7: the clown's intro, phase < 3, `start_up`, from the first frame the
+  bombers exist, before the fade in) `hold_up` keeps each seat facing up in
+  the stand pose of its state (`up_base`: on a Louie its riding animation,
+  else `$46`) and `$17E2` = 0 (no idle), asking for a new animation only
+  when `$079F` shows another one (one every frame cost 3 fps with 4
+  players); death, getting on / thrown off a Louie, time up, victory and a
+  carried bomb are left alone. Before: riders kept facing down in 1-7, and
+  in 1-6 showed SB5's idle on a Louie (`$3F`/`$40`) through the stands'
+  blink and got the pose on foot `$49` from `spawn_reset` (now `up_base`
+  too). After the intro the players are free. SB5 starts play during the intro (~stage frame
   511, lights still out) and sets its idle `$15` (front): `start_up` turns it
   back to the pose up (`$179A - $1692` = `$14`), so nobody idles until the fight.
 * Boss victory (1-6, 1-7): SB5 plays it with sound `$22` (`$C5:02D9`,
@@ -1112,6 +1123,14 @@ script accumulator (`61` = add).
   player's palette slot; own script held (`$07A0` = `$FF`). `cham_hit` (JSL at `$C3:4D41`, then
   `gs_enemy`) restores the own slot of one killed outside its routine. Checked in Mesen frame by frame
   (Bomberman = cut poses, character 1 = streamed poses): no frame with the wrong tiles.
+  Unseen copies (fixed): the OAM builder (`$C0:146F`) skips an object whose mapping id `$049F` is 0 (and
+  one whose blink count `$085F` is odd). `$C3:4C13` is SB5's stop-watch routine: after the contact /
+  flame test it blinks the enemy by clearing `$049F` on the frames its table (`$B934`, by `$0E20` and the
+  frame counter `$0069`) says; with no stop watch running (`$0E20` = 0) it still reaches that table, so a
+  changing chameleon was blanked every few frames, and a copy whose change ended on such a frame walked
+  with id 0 (its script is held) until it turned: up to 35 frames unseen. `show_copy` now puts the frog's
+  last id (`$1E7E`) back when `$049F` is 0 and no stop watch runs. `tools/qa_check.py chameleons` checks
+  every chameleon has sprites on its spot every frame.
 * Stage field (BG2), type `02` script `2A n 27 n 0A map theme` (set 4):
   op `0A` (`$C2:0BED`, `$1B7E` map, `$1B7D` theme; `$C0:3550`/`$357B`).
   Map m = 16 x 13 metatile ids (LZ, row 13 = 0) at the first 24-bit
@@ -1440,7 +1459,9 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   does not repaint it) and searches again; `e4_tick` (main loop `$C0:0B44`)
   gives them a free slot 4-7 back every 16 frames, and saves that slot's blink backup (`$C1:0015`):
   the death / blink restore `$C1:0035` copies it back, and without it a P3/P4 that reclaimed slot 6/7
-  (1-2: its 3 enemy palettes take 3-5) died black.
+  (1-2: its 3 enemy palettes take 3-5) died black. A one-slot request whose mask leaves out a free slot 3
+  (the exit portal asks for `$30` = slots 4/5, P3/P4's) gets slot 3 first (`c0_palfail`): P3 kept P1's colors
+  for ~20 frames when 1-1's portal appeared.
 * `$C3:46CC` (distances from enemy X to seat Y into the `$0110+` arrays, 4 seats x every enemy x every
   frame) -> `c3_near`: while `$7F:F76F` = 1 a seat 16 px or more away on either axis keeps `$FF`. Set
   around `$C3:4B7B` by the SB1 enemies (`sb1w`) and by SB5's walker `$C3:4B5A` (`c3_walk`), whose moves
@@ -1460,8 +1481,42 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   stage (5 to all 11: stages `$41`,`$42`,`$44-$46`,`$60-$62` use all 16).
 * Co-op pages: four bombers take four of the five pool pages, so eggs and
   Louies were drawn with a bomber's tiles. `c0_vmadd` (`$C0:0573`) records
-  the highest static page written; 240 frames into the stage `e4_tick`
-  frees every `$7E` page above it and sets `$1D10` = 15.
+  the highest static page written; at count 32 of `$0154` (it runs once the
+  start blink is over; the static loads end by count 2-6) `e4_tick` frees
+  every `$7E` page above it and sets `$1D10` = 15. The lent pages are marked
+  used (`$7E`) in SB5's OBJ VRAM map `$7E:2FAA` (16 columns per page, `$FF`
+  free, first fit from `$0AE8` by `$C0:1A3C`, freed by owner through
+  `$C0:196D` when an enemy kind's last object goes), so no later load lands
+  on them. The exit portal (created by `$C5:3B60`, 38 columns in one run)
+  fits in the columns the dead enemies free in 1-2 to 1-5; in 1-1 they free
+  only 2 pages, so 1-1 (and any stage not in `lend_w1`) keeps the first 3
+  free pages above the static ones for it (before: it was loaded at
+  `$7400-$79FF`, over P3's page, ~60 frames of garbage).
+* OBJ page allocator in co-op (`asm/coop.asm`): SB5's rule (`$C5:6AF5`) is a
+  double buffer: an object gets a free page, its old one becomes `$7F` and
+  is freed at the next upload, so the page on screen is never written. With
+  four bombers no `$FF` page is left: `c5_alloc` takes a `$7F` page too, and
+  only with neither reloads the object's own page. SB5 queues a walking
+  bomber's strip again every frame (`$C4:3A27` -> `$C5:6A6B`) and the NMI
+  sends one 1 KB strip per frame (`$C5:6AAF`, round robin from `$1CFE`):
+  `c5_dedupe` (`$C5:6A72`) does not queue a strip already in the object's
+  page (`c5_record` keeps owner / sheet `$1CCC` / row `$1CEA` per page at
+  `$7F:FE80`) and sets its animation at once, as the upload would
+  (`$C5:6B56`: `$1CF4` bit 7 -> `$C0:11DD` keep the frame, else `$C0:11EC`).
+  Animation 0 requests (getting on a Louie) are never served by SB5 (`$1CE0`
+  = 0 is a free entry) and are left alone. With every page taken (4 bombers
+  + 4 Louies) `c5_urgent` (`$C5:6AA7`) puts one in-place strip per frame
+  first (`$1CFE`) and sets its tile base (`$073F` = (page * 2 - row) << 4,
+  sign-extended, as `$C5:6B36`) and animation before the OAM is built
+  (in a frame the strip requests run before the OAM builder), and
+  `c5_service` keeps it in that page even if one was freed since.
+  A kept strip whose animation is the one shown and kept going (`$AE` bit 7)
+  calls nothing: `$C0:11DD` resolves the mapping again, and for a streamed
+  character queues its pose again; with 4 bombers walking every frame 1-3
+  (chameleons, Louies, characters 3/4/6/5) fell to 34 fps (now 51-55).
+  Measured (4 bombers walking, 1-1): VRAM bytes per NMI 2052 -> 1047 on
+  average, last DMA of the NMI ending at line 253 -> 238 on average, worst
+  261 -> 258 (vblank ends at 261).
 * P3/P4 spawn in the lower corners (moved to the nearest safe floor after
   the map copy, `$C5:3D5B`), use red/blue, and rejoin with Start at the
   nearest safe cell for one shared life.
@@ -1652,7 +1707,38 @@ The full list with sizes is generated in `build/sb6.map`.
 * Bomber palettes: set 0 (`$81:8000`), id = `$C0:BB4E[char] + color`;
   Bomberman ids 1-7, `[dest $80, count 9, colors]`.
 
+## Gameplay ids measured for the QA suites (`tools/qa_check.py`, Mesen, 1-1 with 4 players)
+
+* Bomber animations (`$079F+obj`), d = 0 right, 1 down, 2 left, 3 up: walk `1+d`, stand `$46+d`, punch
+  (boxing glove, Y) `$27+d`, lift (power glove, A held on the bomb) `$2C`, carry walk `$2F+d`, carry stand
+  `$4A+d`, throw `$33+d`, idle `$15`, death `$16`, jump onto / thrown off a Louie `$17-$1A` (by facing),
+  riding `$05-$14` (four per Louie kind: `$05-$08`, `$09-$0C`, `$0D-$10`, `$11-$14`), cornered `$21`,
+  victory `$20`, time up `$1F` (all seats; then they die and the stage restarts). Louie actors = seat +
+  `$0128` (19-22 with 4 players): their own walk / idle ids by kind (e.g. `$23-$26`, `$3D-$40`).
+* Idle: `$17E2+seat` counts frames standing (input resets it); SB5 sets `$15` when it runs out (~210
+  frames). 1-7's `start_up` (asm/world1.asm) zeroes it while the intro holds the pads: seat 2 comes out
+  ~40 frames before the others and showed `$15` for 4 frames at stage frame ~412.
+* Sounds (command sent by `$C0:0E7F`): bomb `$26`, kick `$27`, punch `$28`, bounce `$29` (once per
+  landing, again on each taken cell it hops over), explosion `$2A` + fire range (request group 2 id `$0A`
+  + range), pierce bomb's explosion `$34` + range (id `$14` + range), item `$3F`, lift = group 3 id 2
+  (stream) then `$50`, Louie cry `$48` + kind (id `$28` + n), Louie hit `$42`, time up `$58` + `$55`,
+  stage clear = request (0, `$21`) (command 3).
+* Abilities `$7E:4ED5+seat`: `01` remote (B), `02` kick (item `$0B`), `04` power glove (item `$0C`),
+  `08` boxing glove (item `$11`), `10` pierce (item `$0D`), `20` mine (item `$0F`), `40` item `$10`
+  (later fuse). Items `05` / `06` clear `$167A` bits 6 / 5. Fire range `$17CA+seat`.
+* Time: `$0E1E` minutes, `$0E1D` seconds, `$0E1C` frames.
+* 1-6's Golden drops the kick at its cell 60 frames after its death (`$C4:3E10` -> `$C5:4557`); a bomb of
+  its own going off there 6 frames later burnt it in the QA run (as any item in a flame).
+
 ## Known 4-player failures
+
+Torn bomber poses (fixed): with 4 players some frames showed a bomber with tiles of another pose (walking
+streamed characters 17-34 of 84 frames, Bomberman 2-3; lift / throw starts; ~40 frames when 1-1's exit portal
+appeared; getting on / thrown off Louies). Measured causes: no free OBJ page with 4 bombers, so SB5's strip
+upload rewrote the page on screen (`c5_alloc` took its own page); the portal loaded over P3's lent page; with
+4 Louies too every page is taken. See "Co-op pages" / "OBJ page allocator in co-op" above.
+`tools/qa_check.py anims` checks every frame; a bomber at the top edge of the screen (SB5 hides the pieces
+above line 0, as with one player) is accepted when what is left is part of a pose.
 
 Start safety (`tools/coop4_check.py` spawn_safety) passes on every World 1 stage: SB1 enemy starts next to the
 lower corners were moved (1-2 spring (13,9) -> (11,7); 1-3 chameleons (13,8), (1,8), (11,11) -> (11,7), (3,7),

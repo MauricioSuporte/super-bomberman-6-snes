@@ -805,12 +805,10 @@ item_pool:
 ; JSL $C04733. While the rival walks in (!IPH = 1 in its stage) the four
 ; seats' pads are empty and the rival's says "down"; while 1-7's clown
 ; appears or dies (!CLOWNHOLD = $A5) the four seats' pads are empty.
-; 1-7 (the clown comes from above): SB5's stage start pose ($46 + facing - 1, made facing down) turned
-; up ($49) from the first frame the bombers exist, before the fade in, once per seat (a new animation
-; each frame cost 4-player frames), only while the clown's intro holds the pads (!CLOWNHOLD = $A5 and
-; its phase, !CLOWNHOLD - $19, under 3 = fight); seats done in !CLOWNHOLD + $1F (its $38, zeroed by
-; clown_start). SB5 starts play (~290 frames after the fade in) while the intro still holds the pads and
-; sets its idle animation $15 (front): turned back to the pose up, so nobody idles until the fight
+; 1-7 (the clown comes from above): while the clown's intro holds the pads (!CLOWNHOLD = $A5 and its
+; phase, !CLOWNHOLD - $19, under 3 = fight) every seat faces up (hold_up), from the first frame the bombers
+; exist, before the fade in. SB5 starts play (~290 frames after the fade in) while the intro still holds the
+; pads and would set its idle animation $15 (front).
 start_up:
     lda.l $7E1031
     cmp #$68
@@ -821,43 +819,84 @@ start_up:
     lda.l !CLOWNHOLD-$19
     cmp #$03
     bcs .rts
-    ldx #$03
--   lda $15A2,x
-    bmi +
-    lda.l !CLOWNHOLD+$1F
-    and.l .bit,x
-    bne +
-    lda $179A,x
-    sec
-    sbc $1692,x
-    cmp #$45
-    bne +
-    lda.l !CLOWNHOLD+$1F
-    ora.l .bit,x
-    sta.l !CLOWNHOLD+$1F
-    phx
-    ldy #$04
-    lda #$45
-    jsl $C43C24
-    plx
-+   lda $15A2,x                 ; SB5 starts play during the intro: its idle animation $15 (front) back
-    bmi +                       ; to the start pose up (once: SB5 sets it once)
-    lda $179A,x                 ; (animations count from the character's first, $1692: $15 = 1 + $14)
-    sec
-    sbc $1692,x
-    cmp #$14
-    bne +
-    phx
-    ldy #$04
-    lda #$45
-    jsl $C43C24
-    plx
-+   dex
-    bpl -
+    jmp hold_up
 .rts:
     rts
-.bit:
-    db $01, $02, $04, $08
+
+; Seats held by an intro (1-6's rivals, 1-7's clown): each faces up in the stand pose of its state (on a
+; Louie: its riding animation; before, a rider kept facing down in 1-7 and showed SB5's idle on a Louie
+; while 1-6 held it), and SB5's frames-standing count ($17E2) stays 0, so nobody idles. A new animation
+; only when the seat shows another one (one each frame cost 3 fps with 4 players). Left alone: death
+; ($16), jumping onto / thrown off a Louie ($17-$1A), time up / victory ($1F/$20), a carried bomb. (Until the
+; strip with the new pose is served, $079F still shows the old one: asked again, as SB5 does for a walk.)
+hold_up:
+    ldx #$03
+.seat:
+    lda $15A2,x
+    bmi .next                   ; no bomber in this seat
+    stz $17E2,x
+    lda $1782,x
+    and #$08
+    bne .next
+    ldy $17FA,x
+    lda $079F,y                 ; the animation shown (SB5's stage start pose $47 is set with $1632 = 4 already),
+    sec                         ; counted from the character's first ($1692)
+    sbc $1692,x
+    cmp #$15
+    beq .next
+    cmp #$16
+    bcc +
+    cmp #$1A
+    bcc .next
++   cmp #$1E
+    beq .next
+    cmp #$1F
+    beq .next
+    pha
+    jsr up_base
+    clc
+    adc #$03                    ; (+ facing up - 1)
+    cmp 1,s
+    bne .turn
+    pla
+    lda $1632,x
+    cmp #$04
+    beq .next
+    bra .set
+.turn:
+    pla
+.set:
+    jsr up_base
+    phx
+    ldy #$04                    ; up ($C4:3C24: A = animation - $1692, Y = facing, X = actor)
+    jsl $C43C24
+    plx
+.next:
+    dex
+    bpl .seat
+    rts
+
+; A = the stand animation of seat X's state, counted from its first ($1692): on a Louie ($1782 bit 7) its
+; riding animation (SB5's $C4:4346: $80:BB58 by the Louie's character, $16C2 + seat + $0128), else the
+; stand pose $46 (+ facing - 1).
+up_base:
+    lda $1782,x
+    bpl .foot
+    phx
+    txa
+    clc
+    adc $0128
+    tax
+    lda $16C2,x
+    tax
+    lda.l $80BB58,x
+    plx
+    rts
+.foot:
+    lda #$46
+    sec
+    sbc $1692,x
+    rts
 
 intro_pads:
     php
@@ -901,6 +940,7 @@ intro_pads:
     bpl -
     lda #$04
     sta $31+4
+    jsr hold_up                 ; the players face up, no idle
 .go:
     plp
     jml $C04733
@@ -942,11 +982,9 @@ face_up:
 -   lda $15A2,x
     bmi +                       ; no bomber in this seat
     phx
+    jsr up_base                 ; the stand pose up of its state (SB5's stage start / its riding animation)
     ldy #$04                    ; up ($C4:3C24: A = animation - the character's first $1692, Y = facing,
-    lda $179A,x                 ; X = actor); the pose it shows now ($46 + facing - 1: SB5's stage start)
-    sec
-    sbc $1692,x
-    jsl $C43C24
+    jsl $C43C24                 ; X = actor)
     plx
 +   dex
     bpl -
@@ -1154,11 +1192,10 @@ spawn_reset:
     sta $05BF,y
     lda.l !SPX+4,x
     sta $1872,x
+    stz $17E2,x
+    jsr up_base                 ; (on a Louie: its riding animation, not the pose on foot)
     phx
     ldy #$04
-    lda #$46
-    sec
-    sbc $1692,x
     jsl $C43C24
     plx
 +   dex

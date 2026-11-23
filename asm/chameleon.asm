@@ -727,7 +727,16 @@ show_copy:
     sep #$30
     ply
     plx
-    rts
+    lda $049F,y                 ; an id: the OAM builder ($C0:146F) skips an object whose id is 0, and SB5's stand
+    bne +                       ; routine ($C3:4C13, changing) clears it every few frames to blink (meant for a stop
+    lda $0E20                   ; watch; with none running, $0E20 = 0, it blinks too). The copy's script is held,
+    ora $0E21                   ; so nothing set it back: walking copies stayed unseen until they turned. (A real
+    bne +                       ; stop watch's blink is kept.)
+    lda $1E7E,x
+    bne ++
+    lda #$01
+++  sta $049F,y
++   rts
 
 ;-----------------------------------------------------------------------------
 ; cham_nmi: replaces the JSL at $C0:F41D (NMI, after the OAM DMA): the queued poses, when this NMI sent

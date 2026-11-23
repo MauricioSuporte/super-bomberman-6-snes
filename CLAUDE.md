@@ -86,6 +86,16 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
 
 ## Testing
 
+**After changing the ROM run `python tools/qa_check.py`** (`all` adds coop4 + flames, `--list`, `-v`): the
+regression suites in Mesen headless, no AI tokens (tools/qa/suites.py: picker colors, every animation in 4
+directions with a frame-by-frame pose check, SFX ids, music, every stage's 4 starts, 1-6 / 1-7 flows and their
+intro holds on foot and on Louies (`Fixture.mounts`: Louies kept from the stage before), 1-3's chameleons drawn
+every frame; every
+scenario fails if SB5's static graphics queue writes a page a bomber / Louie / egg owns). Fixtures (4 players, picks,
+stage) are booted once per ROM sha1 and kept as savestates (`build/qa/states`); scenarios load them
+(`tools/mesen/qa.lua` steps: pad, poke, place, item, burn, blast, door, louie_type...). A new feature gets
+a scenario + checks there; ids and addresses it relies on are listed at the top of tools/qa/suites.py.
+
 **SB6 is played as the Normal Game with 4 players and Louies: every stage has
 to stay playable that way.** OBJ palette slots: 0 stage, P1-P4 one each, one
 Louie palette (two Louie colors at once, `asm/louies.asm`) -> at most 2 slots

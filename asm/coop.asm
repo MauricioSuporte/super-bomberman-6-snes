@@ -38,6 +38,10 @@ hirom
 !t0       = $0145       ; scratch (E4 routines, DBR = $7E)
 !t1       = $0146
 !t2       = $0147
+!PGOBJ    = $7FFE80    ; 16: object whose strip c5_record saw sent to the page ($FF = none)
+!PGSHEET  = $7FFE90    ; 16: its sheet ($1CCC)
+!PGROW    = $7FFEA0    ; 16: its row ($1CEA)
+!URG      = $7FFEB0    ; (+1 page * 2, +2 entry) $A5: an in-place strip was put first in the queue (c5_urgent), until the NMI serves it
 !t3       = $0148
 !t4       = $0149
 !t5       = $014A
@@ -362,8 +366,21 @@ c5_service:
     jmp $6AE8
 +   jmp $6AF2
 .coop:
+    lda.l !URG
+    cmp #$A5
+    bne .alloc
+    lda #$00
+    sta.l !URG
+    txa
+    cmp.l !URG+2
+    bne .alloc
+    jsr c5_ownpage                ; c5_urgent already set this frame's OAM for the page on screen: keep
+    bcc .got                        ;   to it, even if a page was freed since
+.alloc:
     jsr c5_alloc
     bcs .fail
+.got:
+    jsr c5_record
     jsr $6B36
     jsr $6B77
     jmp $6AEE
@@ -372,11 +389,22 @@ c5_service:
     jsr $6B56
     jmp $6AEE
 
+; Page for entry X / object Y. SB5's own rule ($C5:6AF5) first: a free page ($FF); the object's page
+; becomes $7F and is freed at the next upload, so the page on screen is never written while shown.
+; With 4 bombers no $FF page is left: a $7F page is free as well (it was replaced at an earlier NMI,
+; the OAM no longer shows it). Only without either the object's own page is reloaded in place.
 c5_alloc:
     phx
     ldx #$00
 -   lda $1D00,x
     bmi .free
+    inx
+    cpx #$10
+    bcc -
+    ldx #$00
+-   lda $1D00,x
+    cmp #$7F
+    beq .free
     inx
     cpx #$10
     bcc -
@@ -390,12 +418,194 @@ c5_alloc:
     jmp $6B04
 .free:
     jmp $6B04
+
 .own:
     txa
     asl a
     ora #$60
     sta $1D11
     clc
+    plx
+    rts
+
+; Object Y's own page for entry X (c5_urgent's strips); C set = it has none. Keeps X.
+c5_ownpage:
+    phx
+    ldx #$0F
+    tya
+-   cmp $1D00,x
+    beq c5_ownpage_got
+    dex
+    bpl -
+    plx
+    sec
+    rts
+c5_ownpage_got:
+    txa
+    asl a
+    ora #$60
+    sta $1D11
+    clc
+    plx
+    rts
+; Page $1D11 (VRAM high byte $60 + 2 * page) gets entry X's strip for object Y: kept per page
+; (!PGOBJ / !PGSHEET / !PGROW) so that the same strip asked again is not sent again (c5_dedupe).
+; M/X 8-bit; keeps X, Y.
+c5_record:
+    phx
+    lda $1CCC,x
+    pha
+    lda $1CEA,x
+    pha
+    lda $1D11
+    and #$1E
+    lsr a
+    tax
+    pla
+    sta.l !PGROW,x
+    pla
+    sta.l !PGSHEET,x
+    tya
+    sta.l !PGOBJ,x
+    plx
+    rts
+
+; $C5:6A72 (STZ $1CFF in the strip queue $C5:6A6B: object Y, animation $A8, sheet $AB, row $AC,
+; flags $AE). SB5 queues a walking bomber's strip again every frame and the NMI sends one strip per
+; frame: with 4 bombers each one waited up to 4 frames for a new animation behind 1 KB copies of
+; what its page already held. A strip already in the object's page (none queued for it) is not
+; queued: its animation is set now, as the upload would ($C5:6B56). Co-op stages only.
+c5_dedupe:
+    stz $1CFF
+    lda.l $7E0000|!coopst
+    beq .queue
+    lda $A8                         ; animation 0 (asked while getting on a Louie): SB5 never serves it
+    beq .queue
+    tya
+    ldx #$09
+-   cmp $1CD6,x
+    beq .queue                      ; one is pending: SB5 replaces it
+    dex
+    bpl -
+    ldx #$0F
+-   cmp $1D00,x
+    beq .page
+    dex
+    bpl -
+.queue:
+    rts
+.page:
+    cmp.l !PGOBJ,x
+    bne .queue
+    lda $AB
+    cmp.l !PGSHEET,x
+    bne .queue
+    lda $AC
+    cmp.l !PGROW,x
+    bne .queue
+    pla                             ; (our return address)
+    pla
+    lda $AE
+    bmi .keep
+    lda $A8
+    jsl $C011EC
+    jmp $6AA7
+.keep:
+    lda $A8
+    cmp $079F,y                     ; the same animation, kept going: nothing to do (each call resolves the
+    beq +                           ; mapping again, and a streamed character's pose is queued again: with
+    jsl $C011DD                     ; 4 walking bombers every frame, 1-3 with chameleons fell to 34 fps)
++   jmp $6AA7
+
+; $C5:6AA7 (LDA #$01 / STA $1CFF: end of the strip queue; entry X for object Y when $1D12 = 0, X >= 10:
+; none free). With every OBJ page taken (4 bombers + 4 Louies) the strip goes into the page on screen
+; (c5_alloc .own) and SB5 sets the animation in the NMI after the copy: that frame showed the old
+; pose's pieces over the new tiles. One such strip per frame is served first by the next NMI ($1CFE)
+; and its tile base ($073F) and animation are set now, before this frame's OAM is built: pose and
+; tiles change in the same vblank. (The NMI sets it once more, as SB5 always did.)
+c5_urgent:
+    lda #$01
+    sta $1CFF
+    lda.l $7E0000|!coopst
+    beq .out
+    lda $A8                         ; animation 0: SB5's NMI never serves it (a free entry), nor do we
+    beq .out
+    lda $1D12
+    bne .out
+    cpx #$0A
+    bcs .out
+    tya
+    cmp $1CD6,x                     ; entry X really queued for Y (c5_dedupe comes here with a page in X)
+    bne .out
+    lda.l !URG
+    bne .out
+    phx
+    ldx #$0F
+-   lda $1D00,x
+    bmi .no                         ; a free page: SB5's double buffer works
+    cmp #$7F
+    beq .no
+    dex
+    bpl -
+    tya
+    ldx #$0F
+-   cmp $1D00,x
+    beq .yes
+    dex
+    bpl -
+.no:
+    plx
+.out:
+    rts
+.yes:
+    txa
+    asl a
+    sta.l !URG+1                    ; page * 2 (= $1D11 & $1F)
+    plx
+    stx $1CFE
+    txa
+    sta.l !URG+2                    ; the entry
+    lda #$A5
+    sta.l !URG
+    phx
+    phy
+    lda.l !URG+1                    ; tile base as $C5:6B36: ((page * 2 - row) << 4), sign-extended
+    sec
+    sbc $1CEA,x
+    rep #$20
+    and #$00FF
+    asl a
+    asl a
+    asl a
+    asl a
+    bit #$0800
+    beq +
+    ora #$F000
++   sta $073F,y
+    sep #$20
+    lda $1CF4,x
+    bmi +
+    lda $1CE0,x
+    jsl $C011EC
+    bra ++
++   lda $1CE0,x
+    jsl $C011DD
+++  ply
+    plx
+    rts
+
+; $C5:6A15 (STA $1D10 in SB5's page setup $C5:6A14): the pages are new, nothing is kept in them.
+c5_pginit:
+    sta $1D10
+    phx
+    ldx #$0F
+    lda #$FF
+-   sta.l !PGOBJ,x
+    dex
+    bpl -
+    lda #$00
+    sta.l !URG
+    lda $1D10
     plx
     rts
 
@@ -598,7 +808,18 @@ c0_palfail:
     tax
     jmp $033D                       ; INC $0349,X / return slot X, C clear
 .stage:
-    lda.l $7E0347
+    lda.l $7E0347                   ; one slot, slot 3 free but not in the mask (the exit portal asks
+    cmp #$01                        ;   for 4/5 = P3/P4's): slot 3 first, no seat moves
+    bne +
+    lda.l $7E2B13
+    bne +
+    lda.l $7E0348
+    bit #$08
+    bne +
+    ora #$08
+    sta.l $7E0348
+    jmp $02E2                       ; search again
++   lda.l $7E0347
     sta.l $7E0000|!pfneed
     lda #$00
     sta.l $7E0000|!pfrun
@@ -1160,6 +1381,9 @@ print "SYM c4_cap ", hex(c4_cap)
 print "SYM c5_charge ", hex(c5_charge)
 print "SYM c5_settle ", hex(c5_settle)
 print "SYM c5_service ", hex(c5_service)
+print "SYM c5_dedupe ", hex(c5_dedupe)
+print "SYM c5_pginit ", hex(c5_pginit)
+print "SYM c5_urgent ", hex(c5_urgent)
 print "SYM c5_clock ", hex(c5_clock)
 print "SYM e4_frame ", hex(e4_frame)
 print "SYM e4_tick ", hex(e4_tick)

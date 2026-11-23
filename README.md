@@ -197,6 +197,30 @@ multitap (Super Multitap) na **porta 2**.
 Para ouvir a conversão da música sem emulador:
 `python tools/brr_preview.py build/cache/title_music_*.brr build/title_music_preview.wav`
 
+### 8. Testes de qualidade (depois de mudar a ROM)
+
+```
+python tools/qa_check.py            # tudo menos os lentos (~30 s com a ROM já testada uma vez)
+python tools/qa_check.py all        # + desempenho/cantos seguros e explosões (~2 min)
+python tools/qa_check.py anims sfx  # só algumas suítes;  --list mostra todas;  -v mostra cada teste
+```
+
+Roda o jogo no Mesen 2 sem janela, com 4 jogadores no Normal Game, e confere
+sozinho (sem IA): seleção de personagens e cores refletidas na fase, todas as
+animações (andar, socar, chutar, levantar/carregar/arremessar nas 4 direções,
+ocioso, encurralado, morte, tempo esgotado, vitória, Louies) quadro a quadro
+contra a folha de poses de cada personagem, efeitos sonoros (bomba, explosão
+por alcance, pierce, soco, quique, chute, item, Louies, mortes), música de cada
+fase, largada dos 4 jogadores em cada fase (cada um no seu canto, com espaço
+para bombar e se esconder, sem inimigo perto), 1-6 (intro, 3 duelos, torcida,
+itens, vitória) e 1-7 (intro, luzes, 8 acertos, vermelho, morte, vitória), e
+nas travas das intros de 1-6/1-7 todos virados para cima, sem animação de
+ocioso, a pé e montados em Louie; na 1-3 cada camaleão desenhado em todo quadro
+(sapo, cópia de um jogador, trocando), com os 4 montados. Na primeira execução depois de um build
+ele dá boot em cada fase uma vez e guarda um savestate (`build/qa/states`); as
+seguintes só rodam os cenários. Sai com código 1 se algo falhar;
+`build/qa/report.txt` lista cada teste. Não faz parte do build.
+
 ### Problemas comuns
 
 | Mensagem | Causa / solução |
@@ -219,6 +243,7 @@ tools/sb6/           biblioteca: ROM, compressão, gráficos, BRR, asar
 tools/sb6/features/  uma feature por arquivo (title.py, title_music.py, ...)
 tools/disasm65816.py desmontador 65816      tools/spc700dis.py desmontador SPC700
 tools/scriptdis.py   desmontador dos scripts do jogo (VM de $C2)
+tools/qa_check.py    testes de qualidade/regressão no Mesen (tools/qa/, tools/mesen/qa.lua)
 docs/ROM_MAP.md      o que se sabe da ROM do SB5 (formatos, rotinas, hooks)
 docs/FREE_SPACE.md   espaço livre na ROM, WRAM e ARAM, e quem usa o quê
 ```

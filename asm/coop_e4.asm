@@ -195,20 +195,31 @@ e4_tick:
     bcs ++
     inc a
     sta.l $7E0000|!xtimer
-    cmp #$F0
+    cmp #$20                        ; (the static loads end by count 2-6 in World 1)
     bne ++
     jsr lend_pages
 ++  jsr reclaim
 +   plp
     rtl
 
-; Four seconds into a co-op stage (its static sprite graphics are in VRAM by
-; then): OBJ pages above the last static one ($7E, never written: c0_vmadd)
+; 32 counts into a co-op stage (its static sprite graphics are in VRAM by
+; then: the last one at count 2-6 in every World 1 stage, $0154 runs once the start
+; blink is over): OBJ pages above the last static one ($7E, never written: c0_vmadd)
 ; join the animation pool, so eggs and Louies get tiles with four bombers.
 ; $1D10 = 15 lets the stock release loop ($C5:6B08) cover all 16 pages.
+; Graphics loaded later (the exit portal: 38 columns in one run, when the last
+; enemy dies) are placed by SB5's own map of OBJ VRAM ($7E:2FAA, 16 columns per
+; page, $FF free, first fit from the stage's first static page; allocator
+; $C0:1A3C). The lent pages are marked used there ($7E), so no later load can
+; land on a bomber's or a Louie's page. The portal fits in the columns freed by
+; the dead enemies in 1-2 to 1-5 (1-3 lends nothing: its chameleons hold the top
+; pages); in 1-1 they free only 2 pages, so the first 3 free pages above the
+; stage's stay SB5's there (and in any stage not measured: lend_keep).
 lend_pages:
-    lda.l $7E0000|!objmax
-    inc a
+    phy
+    jsr lend_keep
+    sec                             ; (+1: the page after the last static one)
+    adc.l $7E0000|!objmax
     tax
 -   cpx #$10
     bcs +
@@ -217,10 +228,50 @@ lend_pages:
     bne ++
     lda #$FF
     sta.l $7E1D00,x
+    jsr lend_map
 ++  inx
     bra -
 +   lda #$0F
     sta.l $7E1D10
+    ply
+    rts
+
+; A = free pages above the static ones kept for SB5's later loads in this stage.
+lend_keep:
+    lda.l $7E1031
+    ldx #lend_w1_end-lend_w1-1
+-   cmp.l lend_w1,x
+    beq +
+    dex
+    bpl -
+    lda #$03
+    rts
++   lda #$00
+    rts
+
+lend_w1:                            ; stages measured with the portal in the enemies' columns, boss stages
+    db $11,$18,$10,$17,$67,$68
+lend_w1_end:
+
+; Page X: its free columns in SB5's OBJ VRAM map become used. Keeps X.
+lend_map:
+    phx
+    txa
+    asl a
+    asl a
+    asl a
+    asl a
+    tax
+    ldy #$10
+-   lda.l $7E2FAA,x
+    cmp #$FF
+    bne +
+    lda #$7E
+    sta.l $7E2FAA,x
++   inx
+    dey
+    bne -
+    plx
     rts
 
 ; Every 16 frames, a P3/P4 bomber sharing P1's/P2's palette slot (or left
