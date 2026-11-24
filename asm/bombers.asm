@@ -440,7 +440,7 @@ enemy_map:
 .egg
 if !EGGANIM != 0
     CMP #$00
-    BNE .no
+    BNE .portal
     LDA $079F,Y
     CMP #!EGGANIM
     BNE .no
@@ -448,6 +448,26 @@ if !EGGANIM != 0
     STA $5D
     REP #$20
     LDA #!EGGMAPBASE
+    STA $5B
+    SEP #$20
+    SEC
+    RTS
+endif
+; World 1's exit portal (features/portal.py): type 6 in animation !PORTALANIM / +1 reads its own mappings
+.portal
+if !PORTALANIM != 0
+    LDA $04FF,Y
+    CMP #$06
+    BNE .no
+    LDA $079F,Y
+    SEC
+    SBC #!PORTALANIM
+    CMP #$02
+    BCS .no
+    LDA #!PORTALMAP
+    STA $5D
+    REP #$20
+    LDA #!PORTALMAPBASE
     STA $5B
     SEP #$20
     SEC
@@ -476,7 +496,7 @@ enemy_anim:
 .egg
 if !EGGANIM != 0
     CMP #$00
-    BNE .no
+    BNE .portal
     LDA $079F,Y
     CMP #!EGGANIM
     BNE .no
@@ -484,6 +504,25 @@ if !EGGANIM != 0
     STA 3,S
     REP #$20
     LDA #!EGGANIMBASE
+    STA $5B
+    SEP #$20
+    SEC
+    RTS
+endif
+.portal
+if !PORTALANIM != 0
+    LDA $04FF,Y
+    CMP #$06
+    BNE .no
+    LDA $079F,Y
+    SEC
+    SBC #!PORTALANIM
+    CMP #$02
+    BCS .no
+    LDA #!PORTALANIMB
+    STA 3,S
+    REP #$20
+    LDA #!PORTALANIMBASE
     STA $5B
     SEP #$20
     SEC

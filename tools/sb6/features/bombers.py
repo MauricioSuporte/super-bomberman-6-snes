@@ -423,7 +423,7 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
                                                 "PALS": str(PAL_IDS if palettes else 0),
                                                 "OWNID": f"${OWN_ID:02X}",
                                                 "BGTAB": f"${menu_bg['table']:06X}" if menu_bg else "0",
-                                                **{"ENMAP": "0", "W1PAL": "0", "EGGANIM": "0", **(enemies or {})}})
+                                                **{"ENMAP": "0", "W1PAL": "0", "EGGANIM": "0", "PORTALANIM": "0", **(enemies or {})}})
     start, end = reg.cursor, syms["end_e4"]
     out = bytearray(rb.d)
     for o, d in runs:

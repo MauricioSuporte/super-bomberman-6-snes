@@ -741,7 +741,12 @@ script accumulator (`61` = add).
   point at a dummy), instrument 29 (garbage in 1-6's set, no SFX there uses
   it), directory `$3E`; sequence + sample at the top of 1-6's music list
   (under the echo buffer, `$F500`), table entries sent by game_sfx's
-  upload while `$1031` = `$67`. A bomber's death sound (`$C4:367F`) goes
+  upload while `$1031` = `$67`. World 1's portal (1-1 to 1-5): Hudson SFX `$62`
+  (`features/portal_sfx.py`), SB1's bell (sample `$06` of the stage's SB1 song) through instrument 30 /
+  directory `$3B`, its 50-byte track in the song's list, the stage's entries (pointer, instrument, directory,
+  tuning; priority in game_sfx's patch list) sent by game_sfx's upload while an SB1 song is loaded; the
+  portal asks for SB5's group 2 `$33` with `$7F:FB14` = 2 and `gs_sound` sends `$62` instead (SB5's `$57`
+  when R is not in ARAM). A bomber's death sound (`$C4:367F`) goes
   through rival_sfx: 1-6's white and black mechas ask for `$61` (game_sfx's
   pending byte `$018C`), every other bomber gets the death sound.
 * SB5's flame tiles have two sets: one drawn on the field's own layer
@@ -1041,6 +1046,20 @@ script accumulator (`61` = add).
   `$63` (its beam tiles, OBJ `$160+`, `$D6:CAA7`). Op `12 x y`
   (`$C2:0C67`): sum of seat + 1 of the bombers on the cell -> `$0373`,
   `JSL $C174D1`. Player cell = (`$182A`+8)>>4, ((`$1872`+8)&`$F0`)>>4.
+* Object kinds (`$C2:265C`, A = kind, DBR `$80`): 10 bytes at `$80:CDE0 + 10*(kind-1)`, pointer built at
+  `$C2:26AF` (`$C9/$CA`): [0] draw group -> `$03D7` (`$38` = y-sorted with the bombers, `$48` SB5's floor
+  objects, drawn after = under them, `$10`/`$20` others), [1] set (`$0AE7`: archive / palette set), [2] OBJ
+  palette slot mask (`$0348`), [3] palette id, [4] archive id, [5] `$04A0` (low nibble -> type `$04FF`), [6]
+  first animation, [7] 0, [8-9] object script (bank `$80`). Returns the object slot in A (carry set: none);
+  `$199A,slot` = the object, its x / y `$055F` / `$05BF` (screen: `$C0:1F78` from cell `$1D28`/`$1D2A`,
+  back with `$C0:1FE2`). SB5's portal = kind `$41` `38 03 30 3D 63 26 01 00 1A D5`; object script
+  `$80:D51A` waits for its first animation's end (timer `$FF`), sets animation 2 and `$80:D525` marks the
+  cell a portal (`$1152` bit 6). Stepping on it (`$C4:2C30`): `$1D1E` bit 0, `$1CC8` = seat | `$80`; the
+  portal object runs its root's (`$037C-$037E` when made) `0C` test ~200 frames later, `0B` if it passes.
+  Archive / palette sets 2, 7, 9, 10, 11 are null in SB5. Hack (World 1, `features/portal.py`,
+  `asm/world1.asm` portal_task): SB1's portal at the middle cell, own kind (set 7: archive / palette 1,
+  6 OBJ columns, slots 3-7, group `$48`, type 6 animations `$70` appear / `$71` open through
+  `asm/bombers.asm` enemy_map / enemy_anim) made after the clear once the cell is free.
 * Soft block scatter `$C5:0141` (op `10 n`): `$7E:2700` per cell, `$80`
   wall (`$1052` is filled later), `$10` kept clear (`$C5:01B4`: row 12, each
   enemy's cell, the 3x3 around each bomber, offsets at `$80:8A7A`), `$90`

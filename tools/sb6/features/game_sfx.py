@@ -267,6 +267,8 @@ def build(rom, sound_dir, cache_dir):
     l_r = tm._list([(R_BASE, bytes(blob))])
     patch = [(0x4410 + 2 * (c - 0x21), struct.pack("<H", seqs[c])) for c in (CMD_CORNER, CMD_ENEMY, CMD_DEATH)]
     patch += [(0x4550 + (CMD_CORNER - 0x21), bytes([PRIO[CMD_CORNER], PRIO[CMD_ENEMY], PRIO[CMD_DEATH]]))]
+    from . import portal_sfx
+    patch.append(portal_sfx.prio())     # World 1's portal sound (its other entries: the PORTAL table's lists)
     adsr = bytes(SB1_ADSR)
     patch += [(0x44D0 + 4 * INST_DEATH, bytes([SRC_DEATH]) + adsr + bytes([SRC_ENEMY]) + adsr),
               (0x44D0 + 4 * INST_CORNER, bytes([SRC_CORNER, 0xFF, 0xE0, 0xA0])),
@@ -301,6 +303,10 @@ def apply(rb, sound_dir, cache_dir):
             "CMD_CORNER": f"${CMD_CORNER:02X}", "CMD_ENEMY": f"${CMD_ENEMY:02X}", "CMD_DEATH": f"${CMD_DEATH:02X}",
             "STREAM_SET": f"${STREAM_SET:02X}", "SB1M_SONG": f"${SB1M_SONG:02X}",
             "CHEER_STAGE": "$67"}
+    from . import portal_sfx
+    psize = 1 + 4 * len(portal_sfx.STAGES)
+    ptab = rb.alloc("bulk", bytes([0xFF]) * psize, "World 1 portal sound: stage -> entries list (filled by sb1_music)")
+    defs.update(PORTAL_TAB=f"${ptab:06X}", CMD_PORTAL=f"${portal_sfx.CMD:02X}")
     for name, data in lists.items():
         defs[name] = f"${rb.alloc('bulk', data, f'game SFX: upload list {name}'):06X}"
     defs["SONGS"] = f"${rb.alloc('bulk', songs, 'game SFX: per song (R ok, B1, B2)'):06X}"
@@ -330,6 +336,7 @@ def apply(rb, sound_dir, cache_dir):
     rb.patch(t, bytes(rb.d[off(t):off(t) + 3]), lr.to_bytes(3, "little"), "game SFX: set $48 = R (group-3 stream)")
     info["syms"] = syms
     info["sb1m_song"] = defs["SB1M_SONG"]
+    info["portal_table"] = (ptab, psize)
     return info
 
 

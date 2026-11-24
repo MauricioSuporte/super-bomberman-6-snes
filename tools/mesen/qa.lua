@@ -311,6 +311,29 @@ function OPS.lit(st)          -- lit name: V line, 1 byte = screen brightness (0
   W(string.format("V %d %s %02X", k, st[3], c["ppu.forcedBlank"] and 0 or (c["ppu.screenBrightness"] or 0)))
 end
 function OPS.readoam(st) W(string.format("V %d %s %s", k, st[3], hexs(0, 544, emu.memType.snesSpriteRam))) end
+-- dsplog: from its frame on, every S-DSP write "SW k <spc cycle> <reg> <value>", and once the S-DSP / ARAM
+-- at that moment ("SD <cycle>" + QA_OUT_<scenario>_aram.bin / _dsp.bin: tools/spc_render.py renders the log)
+local dsp_on = false
+function OPS.dsplog(st)
+  dsp_on = true
+  local t = {} for i = 0, 65535 do t[#t + 1] = string.char(emu.read(i, emu.memType.spcRam)) end
+  local h = io.open(OUTP .. "_" .. sc.name .. "_aram.bin", "wb") h:write(table.concat(t)) h:close()
+  local d = {} for i = 0, 127 do d[#d + 1] = string.char(emu.read(i, emu.memType.spcDspRegisters)) end
+  h = io.open(OUTP .. "_" .. sc.name .. "_dsp.bin", "wb") h:write(table.concat(d)) h:close()
+  W(string.format("SD %d", emu.getState()["spc.cycle"]))
+end
+do
+  local want = false
+  for _, s in ipairs(PLAN.scenarios) do
+    for _, st in ipairs(s.steps or {}) do if st[2] == "dsplog" then want = true end end
+  end
+  if want then
+    emu.addMemoryCallback(function(a, v)
+      if not sc or not dsp_on then return end
+      W(string.format("SW %d %d %02X %02X", k, emu.getState()["spc.cycle"], emu.read(0xF2, emu.memType.spcMemory), v))
+    end, emu.callbackType.write, 0xF3, 0xF3, emu.cpuType.spc, emu.memType.spcMemory)
+  end
+end
 -- wlog steps: the callbacks are set up when the script loads (Mesen ignores ones added later); each logs
 -- from its step's frame on, in the scenarios that have it
 local wlog_on = {}
@@ -440,6 +463,7 @@ local function begin(i)
     return
   end
   watch, forced, invincible, runs, killing, extra_pads, burning, clown_burn, burnt = {}, {}, sc.invincible ~= false, 0, false, {}, 0, 0, {}
+  dsp_on = false
   shows = {}
   wlog_on = {}
   W("S " .. sc.name)

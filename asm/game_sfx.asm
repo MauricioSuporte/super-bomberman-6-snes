@@ -149,6 +149,14 @@ gs_sound:
     xba
     cmp #$33                ; score of a dead enemy (~70 frames after the hit): silent like SB1,
     bne .no                 ; gs_enemy played the death sound at the hit
+    lda.l $7FFB14           ; 2: World 1's portal asks for the same id ($33 = SB5's portal sound;
+    cmp #$02                ; asm/world1.asm portal_task, docs/FREE_SPACE.md): SB1's bell echo instead
+    bne +                   ; (features/portal_sfx.py), SB5's when R is not in ARAM
+    lda #!CMD_PORTAL
+    jsr play
+    bcs .yes
+    bra .no
++
     lda.l !gs_valid
     beq .no
     bra .yes
@@ -234,7 +242,30 @@ upload:
     cmp #!CHEER_STAGE       ; stage's music list)
     bne +
     %sendlist(!L_CHEER)
-+   lda.l !gs_song
++   lda.l !gs_song          ; World 1's portal sound (features/portal_sfx.py): only while an SB1 song
+    cmp #!SB1M_SONG         ; (its bell) is in ARAM: elsewhere instrument 30 / directory $3B are the SB6
+    bne ++                  ; menu SFX's (docs/FREE_SPACE.md)
+    ldx #$00                ; the stage's list of its entries (pointer, instrument, the stage's SB1 bell,
+.portal:                    ; tuning), if it has one
+    lda.l !PORTAL_TAB,x
+    cmp #$FF
+    beq ++
+    cmp.l $7E1031
+    beq +
+    inx
+    inx
+    inx
+    inx
+    bra .portal
++   lda.l !PORTAL_TAB+1,x
+    sta $48
+    lda.l !PORTAL_TAB+2,x
+    sta $49
+    lda.l !PORTAL_TAB+3,x
+    sta $4A
+    stz $03D1
+    %c0call($C00F62)
+++  lda.l !gs_song
     tax
     lda.l !SONGS,x
     and #$02

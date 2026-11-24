@@ -184,7 +184,8 @@ exec callback at `$C0:0AF9` (end of the pad reader).
   area gets SB5's beeps back; changing the notes in `MENU_SFX` means
   reading the new pitch from voice 0 in Mesen (`SFX_PITCH`).
 * In-game SFX (cornered, SB1's player and enemy deaths: `features/game_sfx.py`,
-  `asm/game_sfx.asm`; every other stage sound is SB5's) are Hudson SFX `$5E-$60` whose data sits in ARAM
+  `asm/game_sfx.asm`; World 1's portal: `features/portal_sfx.py`, SFX `$62` on the SB1 song's bell; every other
+  stage sound is SB5's) are Hudson SFX `$5E-$60` whose data sits in ARAM
   `$5900-$657F` (SB5's group-3 voice buffer) + a part below the echo buffer;
   title_music's sound/set/song/loop hooks call `gs_*`. Only send them while
   `$0188` = 1 (R in ARAM). Research: `tools/spc_render.py` turns a Mesen log

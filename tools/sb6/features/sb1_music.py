@@ -529,9 +529,10 @@ class Space:
 
 # ---------------------------------------------------------------------------------------------------------
 
-def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, b_lo=None):
+def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, b_lo=None, portal=False):
     """cheer_dir: also the crowd SFX (features/crowd.py). b_lo: start of game_sfx's cornered part B, kept free
-    up to crowd.HIGH_LO ($DD00): gs_song sends it after the song (song 5 has room for B there)."""
+    up to crowd.HIGH_LO ($DD00): gs_song sends it after the song (song 5 has room for B there). portal: also
+    World 1's portal sound track (features/portal_sfx.py: it plays this song's SB1 bell)."""
     notes, meta = read_song(path)
     loop, end, row = meta["loop"], meta["end"], meta["row"]
     srcns = sorted({n["srcn"] for n in notes})
@@ -674,6 +675,16 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
     tr, subs = build_all(sub_addr)
     for a, data in zip(sub_addr, subs):
         blocks.append((a, data))
+    portal_info = None
+    if portal:
+        from . import portal_sfx
+        if portal_sfx.BELL not in dir_of:
+            raise BuildError(f"SB1 music {os.path.basename(path)}: no SB1 bell (sample {portal_sfx.BELL:02X}) for "
+                             "the portal sound")
+        n = len(portal_sfx.sequence(0))
+        pa = space.alloc(n, "the portal sound")
+        blocks.append((pa, portal_sfx.sequence(pa)))
+        portal_info = (pa, bytes(dirs[4 * dir_of[portal_sfx.BELL]:4 * dir_of[portal_sfx.BELL] + 4]))
     # SB5 samples kept only when there is room; else the SB1 sample of the song that sounds most alike
     # (zero-crossing rate) plays in their place
     for d in OPTIONAL_DIRS:
@@ -696,7 +707,7 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
     info = dict(seq=seq, samples=n_smp, notes=len(notes), tempo=tempo, unit_ms=unit_ms, row_ms=row,
                 cents=worst, channels=sorted(keys), subs=len(subs), units=units, jingles=(jlo, jhi), jingle_dirs=jdirs,
                 jingle_samples=jbytes, aram_left=space.free(), head=head, aliased=aliased,
-                dropped=channels_of.dropped)
+                dropped=channels_of.dropped, portal=portal_info)
     return tm._list(blocks, bytes([0x00, 0x08])), info
 
 
@@ -738,15 +749,21 @@ def late_alloc(rb):
     _late.clear()
 
 
-def apply(rb, sound_dir, b_lo):
-    """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF."""
-    table, infos, lists = bytearray(), [], {}
+def apply(rb, sound_dir, b_lo, portal_table=None):
+    """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF.
+    portal_table: game_sfx's PORTAL table (filled here: per stage of portal_sfx.STAGES [stage id, its list of the
+    portal sound's entries (long)], then $FF)."""
+    from . import portal_sfx
+    table, infos, lists, pinfo = bytearray(), [], {}, {}
+    portal_songs = {name for stage, name, _ in STAGES if stage in portal_sfx.STAGES}
     for stage, name, sb1_dir in STAGES:
         if name not in lists:       # one list per song, shared by its stages
             image = open(os.path.join(sound_dir, f"sb1_stage_{IMAGES.get(name, name)}.bin"), "rb").read()
             lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir,
                               SONG_UNITS.get(name, (24, 16, 12)),
-                              sound_dir if name in crowd.SONGS else None, None if name in NO_PART_B else b_lo)
+                              sound_dir if name in crowd.SONGS else None, None if name in NO_PART_B else b_lo,
+                              portal=name in portal_songs)
+            pinfo[name] = info["portal"]
             if name in LATE:        # a region freed later in the build (late_alloc puts it there)
                 a = LATE[name][1]
                 _late.append((name, lst, stage))
@@ -771,6 +788,22 @@ def apply(rb, sound_dir, b_lo):
                  f"stage ${stage:02X} plays music id 6 at once (no boss jingle)")
     table.append(0xFF)
     t = rb.alloc("bulk", bytes(table), "SB1 music: stage -> upload list")
+    if portal_table is not None:
+        ptab = bytearray()
+        for stage, name, _ in STAGES:
+            if stage in portal_sfx.STAGES:
+                seq, bell = pinfo[name]
+                pl = rb.alloc("bulk", tm._list(portal_sfx.entries(seq, bell)),
+                              f"World 1 portal sound: stage ${stage:02X} entries (SFX ${portal_sfx.CMD:02X}, SB1 bell)")
+                ptab += bytes([stage]) + pl.to_bytes(3, "little")
+        ptab.append(0xFF)
+        at, size = portal_table
+        if len(ptab) > size:
+            raise BuildError("portal sound: game_sfx's PORTAL table is too small")
+        o = off(at)
+        if any(b != 0xFF for b in rb.d[o:o + size]):
+            raise BuildError("portal sound: game_sfx's PORTAL table is not blank")
+        rb.d[o:o + len(ptab)] = ptab
     defs = {"SB1M_SB5SONG": f"${SB5_SONG:02X}", "SB1M_SB5SET": f"${SB5_SET:02X}", "SB1M_TABLE": f"${t:06X}",
             "SB1M_FLAG": "$7FFBFA"}       # docs/FREE_SPACE.md
     return defs, infos

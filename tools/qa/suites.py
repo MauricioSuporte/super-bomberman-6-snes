@@ -11,6 +11,8 @@ Facts measured in Mesen for these checks (SB5's ids unless said; docs/ROM_MAP.md
     clear = request (0, $21) (command 3), boss victory music = request (0, $0F)
   abilities $7E:4ED5+seat: 01 remote, 02 kick, 04 power glove (blue: lift / throw), 08 boxing glove (red:
     punch, Y), 10 pierce, 20 mine, 40 (slow fuse); fire range $17CA+seat; time $0E1E minutes / $0E1D seconds
+  World 1 portal: object type ($04FF+obj) 6, mapping $049F+obj 1 off / 2 on / 3 blank, cell $1152 bit 6, door cell
+    $7F:FB10/11, request (2, $33) when it appears; enemy HP $1662+actor (knights 2, 180 frames grace after a hit)
 """
 import os
 
@@ -1349,3 +1351,123 @@ def hud_out_eval(logs, boot, tag):
     res.ok("P3 joined with Start: its block drawn, lives 2", [r[0] for r in recs] == [1, 1, 1, 0] and lives == 2,
            f"{recs}, {lives}")
     return res
+
+
+# ---------------------------------------------------------------- portal
+# World 1's exit portal (features/portal.py, asm/world1.asm portal_task): SB1's, at the middle cell (7, 6) once
+# every enemy is dead and that cell's soft block is gone; appears (off 3 / blank 3 x 5, off 30), then open
+# (on 3 / off 3); SB5's portal sound (group 2 $33) when it appears; a player on it ends the stage.
+PORTAL_CELL = 0x67
+PORTAL_SFX_CMD = 0x62                    # features/portal_sfx.py CMD (SB1's bell echo; asm/game_sfx.asm sends it
+                                         # instead of SB5's $57 when the portal asks for group 2 $33)
+PORTAL_TYPE = 6
+PORTAL_NEXT = {0x0D: 0x11, 0x11: 0x18, 0x18: 0x10, 0x10: 0x17, 0x17: 0x67}
+PORTAL_FROM, PORTAL_TO = 120, 340        # the cell's soft block goes at PORTAL_FROM; per-frame reads until PORTAL_TO
+
+
+def portal_fx(stage):
+    return Fixture(f"s{stage:02X}_4p_r300", stage=stage, ready=300)
+
+
+def portal_scenarios(stage):
+    c = PORTAL_CELL
+    st = [[1, "cell", c, 0x30], [1, "poke", 0x145A + c, 0], [1, "poke", 0x1152 + c, 0], [5, "burn", 30]]
+    if stage == 0x17:                    # 1-5's knights: 2 HP and 180 frames of grace after a hit -> one burn, 1 HP
+        st += [[1, "poke", 0x1662 + x, 1] for x in range(5, 24)]
+    st += [
+          [100, "read", "t100", 0x04FF, 0x60], [PORTAL_FROM, "cell", c, 0]]
+    st += [[PORTAL_FROM - 2, "dsplog"]]
+    st += [[k, "read", f"m{k}", 0x049F, 0x60] for k in range(PORTAL_FROM, PORTAL_TO)]
+    st += [[PORTAL_TO - 1, "read", "t", 0x04FF, 0x60], [PORTAL_TO - 1, "read", "dyn", 0x1152 + c, 1],
+           [PORTAL_TO - 1, "read", "door", 0x1FB10, 2], [PORTAL_TO, "door", 0], [PORTAL_TO + 2, "pad", 0, "down", 1]]
+    st += [[k, "read", f"d{k}", 0x1152 + c, 1] for k in range(PORTAL_FROM, PORTAL_TO, 10)]
+    return [Scenario("portal", PORTAL_TO + 900, steps=st)]
+
+
+def _runs(seq):
+    out = []
+    for v in seq:
+        if out and out[-1][0] == v:
+            out[-1][1] += 1
+        else:
+            out.append([v, 1])
+    return out
+
+
+def _portal_sound(res, name, l, tag):
+    """What the S-DSP played: SB1's bell (directory entry portal_sfx.SRC = that stage's copy of SB1's sample $06),
+    the fifth (pitch $1000 / x1.5) four times, each pair quieter (SB1's echo)."""
+    from sb6.features import portal_sfx as P
+    regs, kon = {}, []
+    for k, cyc, r, v in l.dsp:
+        regs[r] = v
+        if r == 0x4C and v:
+            for n in range(8):
+                if v >> n & 1 and regs.get(n * 16 + 4) == P.SRC:
+                    b = n * 16
+                    kon.append((k, regs.get(b + 2, 0) | regs.get(b + 3, 0) << 8, regs.get(b, 0), regs.get(b + 5), regs.get(b + 6)))
+    lo, hi = P.SB1_PITCH, P.SB1_PITCH * 2 ** (7 / 12)
+    pitches = [p for _, p, _, _, _ in kon]
+    vols = [v for _, _, v, _, _ in kon]
+    ok = (len(kon) == 8 and all(abs(p - (lo if i % 2 == 0 else hi)) / p < 0.003 for i, p in enumerate(pitches))
+          and all(vols[i] == vols[i + 1] for i in range(0, 8, 2)) and all(vols[i] > vols[i + 2] for i in range(0, 6, 2))
+          and all((a1, a2) == P.ADSR[:2] for _, _, _, a1, a2 in kon))
+    res.ok(f"{name}: the S-DSP plays SB1's bell echo (8 key-ons of directory ${P.SRC:02X}: $1000 / a fifth up, "
+           "4 times quieter, ADSR DD 94)", ok, " ".join(f"{k}:{p:04X}/{v:02X}" for k, p, v, _, _ in kon[:10]))
+    try:
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "build", "qa",
+                            f"{tag}.log_portal")
+        aram, dsp = open(base + "_aram.bin", "rb").read(), open(base + "_dsp.bin", "rb").read()
+    except OSError as e:
+        res.ok(f"{name}: directory ${P.SRC:02X} is SB1's bell", False, str(e))
+        return
+    d = dsp[0x5D] << 8
+    s = aram[d + 4 * P.SRC] | aram[d + 4 * P.SRC + 1] << 8
+    img = open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                            "assets", "sound", "sb1_stage_w1.bin"), "rb").read()
+    bell = img[0x6BD8 - 0x800:0x6BD8 - 0x800 + 4005]          # SB1 sample $06 (same in every World 1 song)
+    res.ok(f"{name}: directory ${P.SRC:02X} is SB1's bell (sample $06, 4005 bytes) in this stage's ARAM",
+           aram[s:s + len(bell)] == bell, f"${s:04X}")
+
+
+def portal_eval(stage):
+    name = STAGES[stage]
+
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs.get("portal")
+        if not l:
+            res.ok(f"{name}: portal scenario ran", False, "no log")
+            return res
+        t100, t = l.value("t100"), l.value("t")
+        res.ok(f"{name}: no portal while the middle cell holds a soft block",
+               PORTAL_TYPE not in t100, f"types {t100.hex()}")
+        objs = [i for i, v in enumerate(t) if v == PORTAL_TYPE]
+        res.ok(f"{name}: one portal object", len(objs) == 1, f"type 6 objects {objs}")
+        res.ok(f"{name}: the door is the middle cell (7, 6)", l.value("door") == bytes([7, 6]), l.value("door").hex())
+        if len(objs) == 1:
+            o = objs[0]
+            seq = [l.value(f"m{k}")[o] for k in range(PORTAL_FROM, PORTAL_TO)]
+            runs = [r for r in _runs(seq) if r[0]]
+            want = [[1, 3], [3, 3]] * 5       # the frame it is made also sends its sound (SPC handshake): 3 or 4
+            res.ok(f"{name}: portal appears (off 3 / blank 3 x5, off 30)", runs[1:10] == want[1:]
+                   and runs[0][0] == 1 and runs[0][1] in (3, 4) and runs[10][0] == 1
+                   and 30 <= runs[10][1] <= 32,
+                   " ".join(f"{v}x{n}" for v, n in runs[:14]))
+            opened = runs[11:-1]
+            res.ok(f"{name}: then blinks on 3 / off 3", len(opened) >= 6 and all(
+                (v, n) in ((2, 3), (1, 3)) for v, n in opened) and opened[0][0] == 2,
+                " ".join(f"{v}x{n}" for v, n in runs[11:20]))
+        marks = " ".join(f"{l.value(f'd{k}')[0]:02X}" for k in range(PORTAL_FROM, PORTAL_TO, 10))
+        res.ok(f"{name}: the cell is a portal ($1152 bit 6)", bool(l.value("dyn")[0] & 0x40), marks)
+        snd = [k for k, g, i in l.reqs if (g, i) == (2, 0x33)]
+        res.ok(f"{name}: portal sound once (group 2 $33), after the block", len(snd) == 1 and snd[0] >= PORTAL_FROM,
+               f"at {snd}")
+        sent = [k for k, c in l.cmds if c == PORTAL_SFX_CMD and snd and snd[0] <= k <= snd[0] + 1]
+        res.ok(f"{name}: its sound reaches the SPC (command ${PORTAL_SFX_CMD:02X}; asm/game_sfx.asm mutes $33 "
+               "otherwise)", len(sent) == 1, f"commands {[(k, hex(c)) for k, c in l.cmds if k >= PORTAL_FROM][:6]}")
+        _portal_sound(res, name, l, tag)
+        res.ok(f"{name}: entering it leads to ${PORTAL_NEXT[stage]:02X}",
+               any(m == PORTAL_NEXT[stage] for _, m in l.modes), f"modes {l.modes}")
+        return res
+    return ev

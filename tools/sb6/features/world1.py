@@ -347,7 +347,7 @@ def _gate_table(rb, gate):
                      "then open)"), len(rows))
 
 
-def code(rb, arena, anim_start=0, clown=None):
+def code(rb, arena, anim_start=0, clown=None, portal_defs=None):
     """arena: features/sb1_stages.py's result for "sb1_5-1" (ext ids, blink and gate cells); anim_start: the
     animated fence's task start (asm/stage_anim.asm, 0 = none)."""
     from .. import asar
@@ -361,6 +361,7 @@ def code(rb, arena, anim_start=0, clown=None):
             "GATE": f"${gate:06X}", "GATEN": str(grows), "RIVALCHAR": str(RIVAL_CHAR), "INTROY": f"${INTRO_ROW * 16:02X}",
             "ANIMSTART": f"${anim_start:06X}", "CLOWNSTART": f"${clown['start']:06X}",
             "CLOWNHIT": f"${clown['hit']:06X}", "CLOWNHOLD": f"${clown['hold']:06X}", "CLOWN_TYPE": f"${sb1_enemies.KINDS['clownbody']['type']:02X}"}
+    defs.update(portal_defs or {"PORTALKIND": "0"})
     pool = ITEM_POOL
     if os.environ.get("SB6_ITEMTEST"):             # research: SB5 item ids 1-$10 at random, two a second
         pool = list(range(1, 0x11))
@@ -401,6 +402,10 @@ def code(rb, arena, anim_start=0, clown=None):
         return bytes([0x22, a & 0xFF, a >> 8 & 0xFF, a >> 16]) + bytes([0xEA] * (n - 4))
     rb.patch(0xC01B0E, bytes.fromhex("A9 E3 85 C8 C2 20 BF 96 1C C0 85 C6"), jsl("arc_entry", 12),
              "archive loader: set 4 ids $F0+ = World 1's entries (asm/world1.asm arc_entry)")
+    if "w1_kind" in syms:
+        rb.patch(0xC226AF, bytes.fromhex("18 A5 B5 69 E0 85 C9 A5 B6 69 CD 85 CA"), jsl("w1_kind", 4) + bytes([0x80, 0x07]),
+                 "object maker: World 1's portal kind (features/portal.py) while portal_task makes it "
+                 "(asm/world1.asm w1_kind)")
     rb.patch(0xC43CD5, bytes.fromhex("AA BD 4E BB 18 69 07"), jsl("rival_pal", 7),
              f"rival set-up: 1-6's rivals = character {RIVAL_CHAR} in their palette (asm/world1.asm rival_pal)")
     rb.patch(0xC43D28, bytes.fromhex("B1 BD 9D 7A 16"), jsl("rival_stats", 5),

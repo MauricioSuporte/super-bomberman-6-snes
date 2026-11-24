@@ -1,12 +1,16 @@
 ; World 1 (tools/sb6/features/world1.py): the SB1-style exit door.
 ;
 ; w1_op (FF 1A F6 n, through pick_op; M/X 8-bit, [$0D] = the F6, [$0A] = n,
-; the op skips it): one exit portal per stage, hidden in a soft block chosen
-; at random when the stage starts. SB5's portal queue ($7E:4DA3, 5 slots:
-; state $41/$42, x $4DA8, y $4DAD; task $C5:3B60 creates the portal once
-; the stage is clear and waits while its cell holds a soft block) does the
-; rest, so the door shows up when its block burns after the last enemy died
-; (at once if it already burnt).
+; the op skips it): one exit portal per stage. With PORTALKIND (features/
+; portal.py, 1-1 to 1-5) it is SB1's portal in the middle cell (7, 6) (the
+; cell under it if that is a wall): portal_task (below) waits for the clear,
+; that cell's soft block (and item) to be gone and a free OBJ palette slot
+; 3-7 (the dead enemies' ones), then makes it from our own kind (w1_kind)
+; with its sound (SB1's bell echo, features/portal_sfx.py: asked as SB5's
+; portal sound, group 2 $33, which asm/game_sfx.asm swaps). Without PORTALKIND: SB5's portal
+; queue ($7E:4DA3, 5 slots: state $41/$42, x $4DA8, y $4DAD; task $C5:3B60
+; creates the portal once the stage is clear and waits while its cell holds
+; a soft block) at a soft block chosen at random when the stage starts.
 ;   n = 3  (stage record, type 04: stage start) forget the door and start
 ;          a task (JSL $C020A1) that waits for the collision map (filled
 ;          some 50 frames after the type 04 scripts, which run one after
@@ -22,9 +26,13 @@
 ;   n = 6  (1-4, 1-5, 1-6, type 04) start the animated tiles' task (asm/stage_anim.asm)
 ;   n = 7  (1-6's duels, type 04) the rival walks in (intro_task, below)
 ;   n = 2  (type 0C) players on the door: like op $12 ($C2:0C67), the sum
-;          of seat + 1 of the live bombers on the cell -> $0373, JSL $C174D1
+;          of seat + 1 of the live bombers on the cell -> $0373, JSL $C174D1;
+;          the seat SB5 saw stepping on the portal ($1CC8 = seat | $80,
+;          $C4:2C77) counts even if it left the cell before this test runs
 ; State: $7F:FB10 door x (0 = not chosen), $7F:FB11 door y, $7F:FB12-$7F:FB13
-; scratch (docs/FREE_SPACE.md).
+; scratch, $7F:FB14 = 1 while portal_task makes the portal, $7F:FB15-$7F:FB17
+; the door root ($037C-$037E at the clear op: $C2:265C gives it to the portal
+; object, whose touch runs that root's 0C / 0B scripts) (docs/FREE_SPACE.md).
 
 asar 1.90
 hirom
@@ -34,6 +42,8 @@ org !ORG
 !DY    = $7FFB11
 !CNT   = $7FFB12
 !K     = $7FFB13
+!PKIND = $7FFB14               ; 1 while portal_task creates the portal: w1_kind reads our kind
+!PROOT = $7FFB15               ; $037C-$037E (the door root) when the clear op ran: the portal object keeps it
 
 w1_op:
     php
@@ -100,11 +110,20 @@ endif
 .queue:
     lda.l !DX
     bne +
-    jsr pick
-    lda.l !DX
-    bne +
-    jsr floor
-+   ldx #$00
+    jsr center
++
+if !PORTALKIND
+    lda $037C                   ; the door root (its 0B / 0C scripts): $C2:265C gives it to the portal
+    sta.l !PROOT
+    lda $037D
+    sta.l !PROOT+1
+    lda $037E
+    sta.l !PROOT+2
+    jsl $C020A1                 ; SB1's portal (features/portal.py): portal_task, every frame until made
+    dl portal_task
+    db $60                      ; (skipped: $C020A1 returns one byte past the dl)
+else
+    ldx #$00
 -   lda.l $7E4DA3,x
     bmi +
     inx
@@ -117,15 +136,131 @@ endif
     sta.l $7E4DA8,x
     lda.l !DY
     sta.l $7E4DAD,x
-++  plp
+++
+endif
+    plp
     rtl
+
+; World 1's portal: the middle of the field (x 7, y 6), the first free floor from there if it is a wall
+center:
+    lda #$07
+    sta.l !DX
+    lda #$06
+    sta.l !DY
+    lda.l $7E1052+$67
+    bpl +
+    jsr floor
++   rts
+
+if !PORTALKIND
+; Task (the stage is clear): once the portal's cell holds no soft block, no item / portal ($1152 & $C0)
+; and an OBJ palette slot 3-7 is free (the enemies' are released when they go), makes the portal as
+; SB5's processor $C5:3B60 does, with our kind (w1_kind), and ends. Its sound: asked as SB5's portal sound
+; (group 2 $33) with PKIND = 2: asm/game_sfx.asm plays SB1's bell echo instead (features/portal_sfx.py).
+portal_task:
+    php
+    sep #$30
+    lda.l !DY
+    asl a
+    asl a
+    asl a
+    asl a
+    ora.l !DX
+    tax
+    lda.l $7E1052,x
+    and #$E0
+    bne .wait
+    lda.l $7E1152,x
+    and #$C0
+    bne .wait
+    ldx #$03                    ; a free palette slot 3-7 (else SB5's failure path would move P3/P4)
+-   lda.l $7E2B10,x
+    beq +
+    inx
+    cpx #$08
+    bne -
+    bra .wait
++   jmp .make
+.wait:
+    plp
+    rtl
+.make:
+    lda.l !DX
+    sta $1D28
+    stz $1D29
+    lda.l !DY
+    sta $1D2A
+    stz $1D2B
+    lda.l !PROOT
+    sta $037C
+    lda.l !PROOT+1
+    sta $037D
+    lda.l !PROOT+2
+    sta $037E
+    lda #$01
+    sta.l !PKIND
+    lda #$41
+    jsl $C2265C
+    php                         ; keep A (the new object's slot) and the carry
+    pha
+    lda #$00
+    sta.l !PKIND
+    pla
+    plp
+    bcs .wait2
+    tax
+    lda $199A,x
+    tax
+    jsl $C01F78
+    lda $1D28
+    sta $055F,x
+    lda $1D29
+    sta $0560,x
+    lda $1D2A
+    sta $05BF,x
+    lda $1D2B
+    sta $05C0,x
+    lda #$02                    ; group 2 $33 (SB5's portal sound) with PKIND = 2: asm/game_sfx.asm, which
+    sta.l !PKIND                ; mutes that id (a dead enemy's score), plays the portal's SFX $62 instead
+    xba
+    lda #$33
+    jsl $C00CED
+    lda #$00
+    sta.l !PKIND
+    jsl $C021CE                 ; end this task
+.wait2:
+    plp
+    rtl
+
+; $C2:26AF (object maker $C2:267D, M 8-bit, DBR $80): the kind's definition = $80:CDE0 + 10 (kind - 1),
+; ours (bank $80, features/portal.py) while portal_task makes the portal
+w1_kind:
+    clc
+    lda $B5
+    adc #$E0
+    sta $C9
+    lda $B6
+    adc #$CD
+    sta $CA
+    lda.l !PKIND
+    beq +
+    lda.b #!PORTALKIND&$FF
+    sta $C9
+    lda.b #(!PORTALKIND>>8)&$FF
+    sta $CA
++   rtl
+endif
 
 door_task:
     php
     sep #$30
     lda.l $7E1052               ; corner cell: a wall once the map is in
     beq +
+if !PORTALKIND
+    jsr center
+else
     jsr pick
+endif
     jsl $C021CE                 ; end this task
 +   plp
     rtl
@@ -142,6 +277,7 @@ soft:
 pick:
     lda #$00
     sta.l !DX
+    sta.l !PKIND                ; (2 = the portal's sound: asm/game_sfx.asm lets that $33 through)
     sta.l !CNT
     ldx #$11                    ; field cells 17-206 (rows 1-11)
 -   jsr soft
@@ -209,7 +345,13 @@ floor:
 
 touch:
     stz $9F
-    ldx #$00
+    lda $1CC8                   ; the seat SB5 saw entering the portal ($C4:2C77: seat | $80): it counts
+    bpl +                       ; even if it moved off the cell before this test (a press right after)
+    and #$07
+    inc a
+    sta $9F
+    bra .done
++   ldx #$00
 .seat:
     lda.l $7E15A2,x
     bmi .next
@@ -241,6 +383,7 @@ touch:
     inx
     cpx #$04
     bcc .seat
+.done:
     lda $9F
     sta.l $7E0373
     jsl $C174D1
@@ -1336,6 +1479,9 @@ victory_load:
     rts
 
 print "SYM arc_entry ", hex(arc_entry)
+if !PORTALKIND
+print "SYM w1_kind ", hex(w1_kind)
+endif
 print "SYM rival_pal ", hex(rival_pal)
 print "SYM rival_stats ", hex(rival_stats)
 print "SYM intro_pads ", hex(intro_pads)

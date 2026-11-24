@@ -95,6 +95,8 @@ class Log:
         self.ports = []        # (k, port 1-3, value)
         self.gsfx = []         # (k, cmd)
         self.cmds = []         # (k, cmd) through $C0:0E7F
+        self.dsp = []          # (k, spc cycle, reg, value): S-DSP writes from a dsplog step on
+        self.dsp_start = None  # spc cycle of the dsplog step (its ARAM / DSP dumps)
         self.modes = []        # (k, mode)
         self.deaths = []       # (k, seat)
         self.fps = []          # (k, runs)
@@ -118,6 +120,10 @@ class Log:
                 self.ports.append((int(f[1]), int(t[1]), int(f[2], 16)))
             elif t == "C":
                 self.cmds.append((int(f[1]), int(f[2], 16)))
+            elif t == "SW":
+                self.dsp.append((int(f[1]), int(f[2]), int(f[3], 16), int(f[4], 16)))
+            elif t == "SD":
+                self.dsp_start = int(f[1])
             elif t == "G":
                 self.gsfx.append((int(f[1]), int(f[2], 16)))
             elif t == "M":
