@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, hud, items, louies, menu_bg, options, pause, picker, portal, magnet, sb1_enemies, sb1_music, sb1_stages, stage_items, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, hud, items, louie_abilities, louies, menu_bg, options, pause, picker, portal, magnet, sb1_enemies, sb1_music, sb1_stages, stage_items, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -214,6 +214,9 @@ def main():
     print("co-op: Normal Game for 1-4 players (multitap on port 2)")
     options.apply(rb, title.SET)
     print("options: title submenu (DISCORD -> QR code); SB5's Options, Sound Test and Password screens freed")
+    la = louie_abilities.apply(rb)   # after world1 / sb1_enemies: chains their main-loop JSLs
+    print("louie abilities: Red stuns enemies, Yellow kicks bomb trains, Black Louie hatches and dashes, "
+          f"Green / Black afterimages; code ${la['la_red'] & 0xFFFFFF:06X}-${la['end_c4']:06X}")
     world1.text(rb, base_rom, args.out)
     print("world 1: STAGE w-s in the stage intro, WORLD instead of ZONE on the world map label (preview build/world_text_preview.png)")
     for ch in info["chars"] if info else []:

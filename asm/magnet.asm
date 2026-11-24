@@ -28,6 +28,7 @@ mg_alloc:
     pha
     lda #$00
     sta.l !MAG,x
+    sta.l $7FE9C0,x             ; not in a Yellow Louie train (asm/louie_abilities.asm !TRAIN)
     pla
     rts
 

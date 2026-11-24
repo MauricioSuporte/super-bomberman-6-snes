@@ -231,7 +231,8 @@ local function pose_dump(list)
     local page = 255
     for i = 0, 15 do if obj ~= 0xFF and r(0x1D00 + i) == obj then page = i end end
     local o = obj == 0xFF and 0 or obj
-    t[#t + 1] = string.char(actor, obj, page, r(0x049F + o), r(0x079F + o), r(0x06DF + o))
+    t[#t + 1] = string.char(actor, obj, page, r(0x049F + o), r(0x079F + o), r(0x06DF + o),
+                            r(0x055F + o), r(0x0560 + o), r(0x05BF + o), r(0x05C0 + o))   -- (+ screen x, y)
   end
   local oam = {}
   for i = 0, 543 do oam[#oam + 1] = string.char(emu.read(i, emu.memType.snesSpriteRam)) end
@@ -258,7 +259,9 @@ end
 --   kill                       $1D50 = 0 + the clear check (stage_test.lua KILL)
 --   burn [n [actor]]           for n frames (20) a flame ($05) on the cell of every enemy actor (5-23, not mounts) or of
 --                              that actor only
---   louie_type n               the next egg hatches Louie type n (0-5)
+--   evict row                  enemies on map rows <= row moved to row 11 (same column)
+--   louie_type n               the next egg hatches Louie type n (0-6)
+--   beyond n                   the n cells past the last align's enemy cleared (not pillars)
 --   blast seat cell            the seat drops a bomb in line with `cell` (nearest free cell; soft blocks between cleared)
 --   door seat                  the seat stands on World 1's exit door
 --   burn_clown n               n frames of flames around 1-7's clown
@@ -287,6 +290,26 @@ function OPS.item(st)
   wr(0x145A + c, st[4]) wr(0x1152 + c, r(0x1152 + c) | 0x80)
 end
 function OPS.place(st) place(st[3], st[4], st[5]) end
+-- evict row: every enemy actor (5 to $198C, not a mount) on map rows <= row moves to the bottom row (row 11), same
+-- column (actor x/y, cell $16AA, its object; frozen by the clock first: the HUD tests' riders next to one lose
+-- their Louie)
+function OPS.evict(st)
+  local mo = r(0x0128)
+  for a = 5, r(0x198C) do
+    local mount = a >= mo and a < mo + 5
+    local obj = r(0x17FA + a)
+    if not mount and obj ~= 0xFF and r(0x16C2 + a) ~= 0 and (r(0x16AA + a) >> 4) <= st[3] then
+      local c = r(0x16AA + a)
+      local y = 11 * 16
+      local dy = y - r(0x1872 + a)
+      wr(0x1872 + a, y) wr(0x188A + a, 0)
+      wr(0x16AA + a, (11 << 4) | (c & 15))
+      wr(0x1152 + c, r(0x1152 + c) & ~0x10)
+      local py = (r(0x05BF + obj) | (r(0x05C0 + obj) << 8)) + dy
+      wr(0x05BF + obj, py) wr(0x05C0 + obj, py >> 8)
+    end
+  end
+end
 function OPS.read(st) W(string.format("V %d %s %s", k, st[3], hexs(st[4] >= 0x10000 and (0x7F0000 + (st[4] & 0xFFFF)) or st[4], st[5], st[4] >= 0x10000 and emu.memType.snesMemory or nil))) end
 -- spawn: the start state of tools/coop4_check.py spawn_safety ("V k spawn <text>", lines joined by "|")
 function OPS.spawn(st)
@@ -356,6 +379,35 @@ do
         end
       end
     end
+  end
+end
+-- vramlate: from its step on, every DMA into VRAM ($4301 = $18 / $19) started on a visible line (1-224, the
+-- screen on: $2100 bit 7 clear) is logged "DL k line pc": its writes are lost on the real console
+local vramlate_on = false
+function OPS.vramlate(st) vramlate_on = true end
+do
+  local want = false
+  for _, s in ipairs(PLAN.scenarios) do
+    for _, st in ipairs(s.steps or {}) do if st[2] == "vramlate" then want = true end end
+  end
+  if want then
+    local inidisp = 0x80
+    emu.addMemoryCallback(function(a, v) inidisp = v end, emu.callbackType.write, 0x2100, 0x2100)
+    emu.addMemoryCallback(function(a, v) inidisp = v end, emu.callbackType.write, 0x802100, 0x802100)
+    local function cb(a, v)
+      if not sc or not vramlate_on then return end
+      for ch = 0, 7 do
+        if v & (1 << ch) ~= 0 then
+          local b = emu.read(0x4301 + 16 * ch, emu.memType.snesDebug)
+          local line = emu.getState()["ppu.scanline"]
+          if (b == 0x18 or b == 0x19) and line >= 1 and line <= 224 and inidisp & 0x80 == 0 then
+            W(string.format("DL %d %d %06X", k, line, emu.getState()["cpu.k"] << 16 | emu.getState()["cpu.pc"]))
+          end
+        end
+      end
+    end
+    emu.addMemoryCallback(cb, emu.callbackType.write, 0x420B, 0x420B)
+    emu.addMemoryCallback(cb, emu.callbackType.write, 0x80420B, 0x80420B)
   end
 end
 function OPS.readcg(st) W(string.format("V %d %s %s", k, st[3], hexs(st[4] * 2, st[5] * 2, emu.memType.snesCgRam))) end
@@ -445,27 +497,63 @@ function OPS.align(st)
   local last = r(0x198C)
   local function alive(a) return r(0x17FA + a) < 0x80 and r(0x15A2 + a) < 0x80 end
   for a = 5, last do
-    if alive(a) then
+    if alive(a) and r(0x16C2 + a) ~= 0 and r(0x16AA + a) == cell_of(a) then   -- (an enemy on its cell: not an egg)
       local c = cell_of(a)
       local ex, ey = c & 15, c >> 4
       local px, py = ex - n * dx, ey - n * dy
       local ok = px >= 1 and px <= 13 and py >= 1 and py <= 11 and (px % 2 == 1 or py % 2 == 1)
+      if dy == 0 and py % 2 == 0 or dx == 0 and px % 2 == 0 then ok = false end   -- (a lane between pillars)
+      local fx, fy = ex + 3 * dx, ey + 3 * dy        -- (room past the enemy: a push, the beyond cells)
+      if fx < 1 or fx > 13 or fy < 1 or fy > 11 then ok = false end
       for b = 5, last do
         if ok and b ~= a and alive(b) then
           local cb = cell_of(b)
-          if (cb & 15) == px or (cb >> 4) == py then ok = false end
+          for i = -1, n + 4 do       -- (another enemy on the lane, from behind the seat to past the enemy)
+            if cb == (py + i * dy) * 16 + px + i * dx then ok = false end
+          end
         end
       end
       if ok then
         for i = 0, n - 1 do wr(0x1052 + (py + i * dy) * 16 + px + i * dx, 0) end
         place(seat, px, py)
-        last_align = {px, py, dx, dy}
+        last_align = {px, py, dx, dy, n}
         W(string.format("V %d align %02X%02X", k, py * 16 + px, ey * 16 + ex))
         return
       end
     end
   end
+  -- none on a free lane: the first live enemy (frozen by the clock in the tests that align) moves to (7, 5)
+  for a = 5, last do
+    if alive(a) and r(0x16C2 + a) ~= 0 then
+      local ex, ey = 7, 5
+      local c0 = r(0x16AA + a)
+      local ddx, ddy = ex * 16 - r(0x182A + a), ey * 16 - r(0x1872 + a)
+      wr(0x182A + a, ex * 16) wr(0x1842 + a, 0) wr(0x1872 + a, ey * 16) wr(0x188A + a, 0)
+      wr(0x16AA + a, ey * 16 + ex)
+      wr(0x1152 + c0, r(0x1152 + c0) & ~0x10) wr(0x1152 + ey * 16 + ex, r(0x1152 + ey * 16 + ex) | 0x10)
+      local obj = r(0x17FA + a)
+      local ox = (r(0x055F + obj) | (r(0x0560 + obj) << 8)) + ddx
+      local oy = (r(0x05BF + obj) | (r(0x05C0 + obj) << 8)) + ddy
+      wr(0x055F + obj, ox) wr(0x0560 + obj, ox >> 8) wr(0x05BF + obj, oy) wr(0x05C0 + obj, oy >> 8)
+      local px, py = ex - n * dx, ey - n * dy
+      for i = 0, n - 1 do wr(0x1052 + (py + i * dy) * 16 + px + i * dx, 0) end
+      place(seat, px, py)
+      last_align = {px, py, dx, dy, n}
+      W(string.format("V %d align %02X%02X", k, py * 16 + px, ey * 16 + ex))
+      return
+    end
+  end
   W(string.format("V %d align FF", k))
+end
+-- beyond n: the n cells past the enemy of the last align (inside the field, not a pillar) cleared
+function OPS.beyond(st)
+  if last_align then
+    local px, py, dx, dy, n = last_align[1], last_align[2], last_align[3], last_align[4], last_align[5]
+    for i = n + 1, n + st[3] do
+      local x, y = px + i * dx, py + i * dy
+      if x >= 1 and x <= 13 and y >= 1 and y <= 11 and (x % 2 == 1 or y % 2 == 1) then wr(0x1052 + y * 16 + x, 0) end
+    end
+  end
 end
 -- soft_mid: a soft block ($30) 2 cells from the seat of the last align, toward its enemy
 function OPS.soft_mid(st)
@@ -624,7 +712,7 @@ emu.addEventCallback(function()
   if burning > 0 then
     burning = burning - 1
     local mo = r(0x0128)
-    for x = 4, 23 do
+    for x = (burn_actor and 0 or 4), 23 do
       local mount = x >= mo and x < mo + 5
       local hit = burn_actor and x == burn_actor or (not burn_actor and x >= 5 and not mount and r(0x16C2 + x) ~= 0)
       if hit and r(0x17FA + x) ~= 0xFF then

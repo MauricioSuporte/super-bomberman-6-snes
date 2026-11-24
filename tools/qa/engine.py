@@ -1,7 +1,7 @@
 """Runs tools/mesen/qa.lua: one Mesen process per fixture, every scenario of it from one savestate.
 
 A fixture is the game state at a stage frame after the picker (players, characters, colors, stage); its
-savestate is cached in build/qa/states/<rom sha1>_<fixture>.mss, so only the first run after a build boots
+savestate is cached in build/qa/states/<rom sha1>_<fixture>_<parameters hash>.mss, so only the first run after a build boots
 the game (~8 s); the scenarios load it (a scenario of 400 frames takes ~1.5 s).
 """
 import hashlib
@@ -155,13 +155,19 @@ class Log:
         return [(k, c & 0x7F) for k, c in self.port0]
 
 
+def state_path(fixture):
+    """build/qa/states/<rom sha1>_<fixture>_<its parameters' hash>.mss (a changed fixture boots again)."""
+    fxkey = hashlib.sha1(repr(sorted(fixture.lua().items())).encode()).hexdigest()[:6]
+    return os.path.join(OUT, "states", f"{rom_sha1()}_{fixture.name}_{fxkey}.mss")
+
+
 def run(fixture, scenarios, tag=None, timeout=900):
     """Runs the scenarios of one fixture; returns ({scenario name: Log}, engine messages)."""
     os.makedirs(os.path.join(OUT, "states"), exist_ok=True)
     tag = tag or fixture.name
     plan = os.path.join(OUT, f"{tag}.plan.lua")
     outp = os.path.join(OUT, f"{tag}.log")
-    state = os.path.join(OUT, "states", f"{rom_sha1()}_{fixture.name}.mss")
+    state = state_path(fixture)
     with open(plan, "w") as h:
         h.write("return " + lua({"fixture": fixture.lua(), "scenarios": [s.lua() for s in scenarios]}) + "\n")
     if os.path.exists(outp):

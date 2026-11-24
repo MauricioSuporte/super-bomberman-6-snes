@@ -406,8 +406,12 @@ pause_nmi:
 ++  stz $2121
     stz $2122
     stz $2122
-+   lda #$01                        ; the frame's top row and sides
++   lda $4212                       ; (each part only inside the VBlank: on a long NMI the rest waits for
+    bpl .out                        ; the next one; these rows are sent every paused frame anyway)
+    lda #$01                        ; the frame's top row and sides
     jsr frame
+    lda $4212
+    bpl .out
     ldx #$00                        ; STAGE rows (pm_tick builds them in !lbuf)
 -   rep #$20
     lda #!LVRAM+!LC0
@@ -432,6 +436,8 @@ pause_nmi:
     inx
     cpx #$02
     bne -
+    lda $4212
+    bpl .out
     lda.l !scr                      ; every NMI, after SB5's queue: its PAUSE! / WORLD writes (fills
     jsr rows                        ; of whole rows) keep coming for a few frames
 .out:
@@ -442,10 +448,14 @@ pause_nmi:
     bne .out                        ; leaving the stage: the next scene loads its own
     lda.l !tiles
     beq .out
-    lda #$00                        ; blank rows, then the stage's tiles back
-    jsr frame
+    lda #$00                        ; blank rows, then the stage's tiles back (each part inside the VBlank,
+    jsr frame                       ; else all of it again at the next NMI: its writes would be lost)
+    lda $4212
+    bpl .out
     lda #$00
     jsr rows
+    lda $4212
+    bpl .out
     rep #$20
     lda #!GLYPHVRAM
     sta $2116

@@ -168,10 +168,11 @@ louie_egg_ok:
     clc
     rtl
 
-; $C4:5148 (hatching: LDA #5 / JSL $C01DEB, a random Louie 0-5): A = Louie.
+; $C4:5148 (hatching: LDA #5 / JSL $C01DEB, a random Louie 0-5; now 0-6: the Black Louie too,
+; asm/louie_abilities.asm): A = Louie.
 ; Keeps X, Y.
 louie_hatch:
-    lda #$05
+    lda #$06
     jsl $C01DEB
     php
     phb

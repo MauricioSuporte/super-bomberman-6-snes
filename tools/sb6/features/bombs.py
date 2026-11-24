@@ -13,9 +13,10 @@ SB6's sheet cells (by name in its .meta) or the owner's pictures in assets/bombs
 
 Freed for the magnet bomb's medium and small frames (REMAP): the flash of SB5's enemy death puff ($101, $110:
 animation 6 now starts at its third mapping) and its last frame ($102 / $103 / $112 / $113, mapping 23: nothing is
-drawn then), the shadow under a bomber mounting a Louie ($0EB / $0FB: animation $0A shows nothing) and $111 (no
-picture). The puff's small smoke (8 x 8 $100) moves to $0FB, $0EB is left blank; SB5 mappings no animation of the
-Normal Game shows (pieces over these tiles) keep only an 8 x 8 corner or a blank tile. SB5's mine picture ($12E)
+drawn then), the lower half of the shadow under a bomber mounting a Louie or a Pink Louie's jump ($0FB) and $111 (no
+picture). The puff's small smoke (8 x 8 $100) moves to $0FB; the shadow (animation $0A, mapping 39) is drawn with
+SB5's top left quarter ($0EB) only, flipped for the other three; SB5 mappings no animation of the Normal Game shows
+lose their pieces over the freed tiles (a 16 x 16 piece keeps its own 8 x 8 corner). SB5's mine picture ($12E)
 is the magnet bomb's large frame. Mappings 16 and 17 (the puff's flash) become its medium and small frames.
 
 Colors: OBJ palette 0 of a stage is set 0 palette id $58 ($81:881A, 16 colors). Its entries 1-4 (a navy ramp)
@@ -74,9 +75,9 @@ TILES8 = {
     0x0FE: ("SearchBombSliced.png", 32, 8), 0x0FF: ("SearchBombMounted.png", 32, 8),
 }
 # 8 x 8 tiles: new tile <- SB5's tile (None = blank), before the pictures are drawn
-MOVES = {0x0FB: 0x100, 0x0EB: None}
+MOVES = {0x0FB: 0x100, 0x0EB: 0x0EB}    # ($0EB: SB5's shadow quarter, kept)
 FREED = (0x101, 0x110, 0x111, 0x102, 0x103, 0x112, 0x113, 0x0EB, 0x0FB)   # no SB5 picture left there (REMAP)
-BLANK = 0x0EB
+SHADOW_TILE = 0x0EB
 # SB5's LZ stream of archive $23: named only by the archive entry and the stock OBJ sheet table's copy of it
 # (sheet $23; objsheets.ObjSheets copies that table before freeing it): both name SB6's (docs/FREE_SPACE.md)
 OLD_DATA = [("free_ca_bombs", 0xCAD400, 2494, 0xB0BBDC68, "was SB5's bomb sprites (set 0 archive $23, LZ)")]
@@ -263,7 +264,9 @@ MAGNET_FRAMES = 12
 MAGNET_SEQ = [16, 10, 16, 17]        # medium ($100), large (mapping 10 = $12E), medium, small ($102)
 DEATH_ANIM = 6                       # SB5's enemy death puff: mappings 16 17 (the flash) 18 (small smoke) 19-23
 DEATH_LAST = 23                      # its last frame (16 x 16 $102): mapping 0 (nothing) for its 7 frames
-SHADOW_ANIM = 0x0A                   # mapping 39: the shadow under a bomber jumping onto a Louie
+SHADOW_ANIM = 0x0A                   # mapping 39: the shadow under a bomber jumping onto a Louie / a Pink Louie's jump
+SHADOW_MAP = 39
+LOUIE_ANIM0 = 0x16                   # type 0 animations $16+ are the Red / Green Louies' (relative tiles: not ours)
 CONTROL_LOOP = 0xC5833D              # animation 2's 4th pair (mapping 15 = frame 2 mirrored)
 SEARCH_ANIM, SEARCH_MAPS, SEARCH_TIME = 5, (11, 12, 13, 14), 10
 SEARCH_TOP = (-13, -14, -15, -14)    # SB5's float: its mappings 11-14 drew the bomb 4-6 pixels above a normal one
@@ -299,7 +302,16 @@ def remap(rb):
     rb.patch(last, bytes([DEATH_LAST, 7]), bytes([0, 7]),
              "bombs: enemy death puff's last frame shows nothing (its tiles are the magnet bomb's)")
     a = 0xC50000 | _w(d, ANIMS + 2 * (SHADOW_ANIM - 1))
-    rb.patch(a, bytes([39, 0xFF]), bytes([0, 0xFF]), "bombs: no shadow under a bomber mounting a Louie (magnet bomb)")
+    if bytes(d[off(a):off(a) + 2]) != bytes([SHADOW_MAP, 0xFF]):
+        raise BuildError("bombs: unexpected shadow animation")
+    a = 0xC50000 | _w(d, MAPS + 2 * (SHADOW_MAP - 1))
+    old = bytes(d[off(a):off(a) + 29])
+    if old[0] != 4:
+        raise BuildError("bombs: unexpected shadow mapping")
+    new = bytes([4]) + b"".join(_piece(x, y, SHADOW_TILE, attr) for x, y, attr in
+                                ((0, 2, 0xE0), (0, -6, 0x60), (-8, 2, 0xA0), (-8, -6, 0x20)))
+    rb.patch(a, old, new, "bombs: the shadow (Louie mount, Pink Louie's jump) from its top left quarter only "
+                          "($0FB is the small smoke's)")
     rb.patch(CONTROL_LOOP, bytes.fromhex("0F 08 00 00"), bytes.fromhex("00 00 00 00"),
              "bombs: control bomb frames 1 2 3 (not mirrored)")
     for m, (tile, attr) in REUSED.items():
@@ -329,30 +341,54 @@ def remap(rb):
         ptr = MAPS + 2 * (m - 1)
         rb.patch(ptr, bytes(d[off(ptr):off(ptr) + 2]), struct.pack("<H", at & 0xFFFF),
                  f"bombs: mapping {m} = a search bomb frame")
-    # every other mapping drawing the freed tiles
+    # every other mapping drawing the freed tiles: only those of the animations whose objects draw the stock OBJ
+    # tiles (base $0E0: bombs, puffs, the shadow...). Type 0 animations from LOUIE_ANIM0 on are the Red / Green
+    # Louies' (base $1692 = $16 / ...), their mappings' tiles count from the Louie's own page: never touched
+    static = set()
+    for an in range(1, LOUIE_ANIM0):
+        a = 0xC50000 | _w(d, ANIMS + 2 * (an - 1))
+        for i in range(64):
+            mm, f = d[off(a + 2 * i)], d[off(a + 2 * i + 1)]
+            if not f:
+                break
+            static.add(mm)
+            if f == 0xFF:
+                break
+    louie = set()
+    for an in range(LOUIE_ANIM0, LOUIE_ANIM0 + 2 * 34):     # (Red $16-$37, Green $38-$59)
+        a = 0xC50000 | _w(d, ANIMS + 2 * (an - 1))
+        for i in range(64):
+            mm, f = d[off(a + 2 * i)], d[off(a + 2 * i + 1)]
+            if not f:
+                break
+            louie.add(mm)
+            if f == 0xFF:
+                break
+    if (static & louie) - {0}:
+        raise BuildError(f"bombs: mappings shared by stock-tile and Louie animations: {sorted((static & louie) - {0})}")
     changed = []
-    for m in range(1, 0xF8):
-        if m in REUSED or m in SEARCH_MAPS:
+    for m in sorted(static - {0}):
+        if m in REUSED or m in SEARCH_MAPS or m == SHADOW_MAP:
             continue
         a = 0xC50000 | _w(d, MAPS + 2 * (m - 1))
         n = d[off(a)]
+        old = bytes(d[off(a):off(a) + 1 + 7 * n])
+        keep, hit = [], False
         for i in range(n):
-            p = a + 1 + 7 * i
-            x, y, t, attr = struct.unpack("<hhHB", bytes(d[off(p):off(p) + 7]))
+            x, y, t, attr = struct.unpack("<hhHB", old[1 + 7 * i:8 + 7 * i])
             tile = (t + 0xE0) & 0x1FF
             big = attr & 1
             cover = {tile, tile + 1, tile + 16, tile + 17} if big else {tile}
             if not cover & (set(FREED) | {0x100}):
+                keep.append(old[1 + 7 * i:8 + 7 * i])
                 continue
+            hit = True
             if tile == 0x100:
-                new = 0x0FB                   # the small smoke's new place
-            elif tile in FREED:
-                new = BLANK
-            else:
-                new = tile                    # a 16 x 16 piece over freed tiles: its own corner only
-            if not big and new == tile:
-                continue
-            rb.patch(p, bytes(d[off(p):off(p) + 7]), _piece(x, y, new, attr & ~1),
-                     f"bombs: mapping {m} off the magnet bomb's tiles")
+                keep.append(_piece(x, y, 0x0FB, attr & ~1))   # the small smoke's new place
+            elif tile not in FREED:
+                keep.append(_piece(x, y, tile, attr & ~1))    # a 16 x 16 piece over freed tiles: its own corner
+        if hit:
+            new = bytes([len(keep)]) + b"".join(keep)
+            rb.patch(a, old, new + old[len(new):], f"bombs: mapping {m} off the magnet bomb's / shadow's tiles")
             changed.append(m)
     return dict(anim=s, mappings=sorted(set(changed)))

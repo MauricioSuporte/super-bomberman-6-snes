@@ -33,12 +33,20 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            bomb type, power-ups) and the lives, the clock stopped (no time up), >= 50 fps; 1-1: items picked up change
            the cells, P3/P4 out of the stage: empty blocks until they join; the heads of the characters / colors chosen
            (2 sets), the HUD during and after the pause menu; every stage again with 4 other characters / colors
-           (all 7 characters over World 1) and every seat given items
+           (all 7 characters over World 1) and every seat given items; every stage, on foot and on Louies: the
+           seats walk into the top row (two under the lives tab) and pass under the HUD (no sprite pixel in it)
   portal   World 1's exit portal (1-1 to 1-5): none while the middle cell holds a soft block, then SB1's portal
            there once every enemy is dead: appears (off / blank 3 frames x5, off 30), blinks on 3 / off 3, SB5's
            portal sound once, the cell becomes a portal, a player on it leads to the next stage
   items    1-1 to 1-5 hide their items (features/stage_items.py); the magnet bomb (item $0F): pulled toward a frozen
            enemy 4 cells away in each direction (not through a soft block), the item gives ability $20 and its picture
+  louies   every Louie's Y (features/louie_abilities.py): Red stuns an enemy ahead 180 frames (its routine ours, then
+           SB5's again; one punch sound) and still stuns a player; Green dashes, Pink jumps, type 4 throws the bomb ahead,
+           type 5 drops one; Yellow: a row of bombs rolls together, takes a resting bomb along, stops at a soft block and
+           kicks it on, SB5's soft block kick stops at a bomb and kicks it; Black: hatches out of an egg (colors, cry,
+           ridden), dashes 3 cells (sound), invincible meanwhile (a flame: Louie kept; without the dash: lost), pushes an
+           enemy 2 cells and stops on it; Green / Black dashes leave afterimages (every frame shown, 6 / 12 frames
+           behind, below OAM 104, gone after)
   (every scenario: SB5's static graphics queue never writes an OBJ page a bomber / Louie / egg owns)
   perf     tools/coop4_check.py (fps >= 50, Louie colors, P3/P4 colors, safe starts; ~1 min)
   flames   tools/flame_check.py (explosions look like 1-1's on every stage; ~1 min)
@@ -88,15 +96,22 @@ def _jobs():
     out["fx"] += [(S.stage_fx(st), S.pierce_scenarios(st), S.pierce_eval(st), f"s{st:02X}_4p_pierce") for st in S.STAGES]
     out["hud"] = [(S.stage_fx(st), S.hud_scenarios(st), S.hud_eval(st), f"s{st:02X}_4p_hud") for st in S.STAGES]
     out["hud"].append((S.out_fx(0x0D), S.hud_out_scenarios(), S.hud_out_eval, "s0D_4p_hud_out"))
+    out["hud"].append((S.stage_fx(0x0D), S.hud_dead_scenarios(), S.hud_dead_eval, "s0D_4p_hud_dead"))
     out["hud"] += [(S.hud_var_fx(st), S.hud_var_scenarios(st), S.hud_var_eval(st), f"s{st:02X}_4p_hudvar") for st in S.STAGES]
     for fx in (S.FX_A, S.FX_B):
         out["hud"].append((fx, S.hud_pause_scenarios(), S.hud_pause_eval, f"{fx.name}_hud_pause"))
+    for st in S.STAGES:             # sprites pass under the HUD, on foot and on Louies
+        for m in (False, True):
+            fx = S.top_fx(st, m)
+            out["hud"].append((fx, S.hud_top_scenarios(st), S.hud_top_eval(st, m), f"{fx.name}_hud_top"))
     out["chameleons"] = [(fx, S.cham_scenarios(), S.cham_eval(fx)) for fx in S.CHAM_FX]
     out["portal"] = [(S.portal_fx(st), S.portal_scenarios(st), S.portal_eval(st), f"s{st:02X}_portal")
                      for st in S.PORTAL_NEXT]
     out["items"] = [(S.stage_fx(st), S.items_scenarios(), S.items_eval(st), f"s{st:02X}_4p_items")
                     for st in S.PORTAL_NEXT]
     out["items"].append((S.FX_A, S.magnet_scenarios(), S.magnet_eval(S.FX_A), f"{S.FX_A.name}_magnet"))
+    out["louies"] = [(S.LA_FX, S.louie_scenarios_a(), S.louie_eval("a")), (S.LB_FX, S.louie_scenarios_b(), S.louie_eval("b")),
+                     (S.FX_A, S.louie_egg_scenarios(), S.louie_egg_eval(), f"{S.FX_A.name}_louie_egg")]
     norm = {}
     for name, js in out.items():
         norm[name] = [(j[0], j[1], j[2], j[3] if len(j) > 3 else f"{j[0].name}_{name}") for j in js]
@@ -151,7 +166,7 @@ def main():
             os.remove(os.path.join(sdir, f))
     fixtures = {j[0].name: j[0] for _, j in todo}
     need = [fx for fx in fixtures.values()
-            if not os.path.exists(os.path.join(engine.OUT, "states", f"{sha}_{fx.name}.mss"))]
+            if not os.path.exists(engine.state_path(fx))]
     if need:
         print(f"booting {len(need)} fixture(s): {', '.join(f.name for f in need)}", flush=True)
         with ThreadPoolExecutor(JOBS) as ex:

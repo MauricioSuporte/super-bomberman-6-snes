@@ -15,9 +15,13 @@ ASM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
 FIRE, BOMB, SKATE, CONTROL, BOMB_PASS, VEST, CLOCK, ONE_UP, KICK, PIERCE, MAGNET, SEARCH, BOXING, HEART, EGG = \
     0x01, 0x02, 0x03, 0x04, 0x05, 0x07, 0x08, 0x09, 0x0B, 0x0D, 0x0F, 0x10, 0x11, 0x14, 0x15
 BASIC = [BOMB, FIRE, SKATE]
+# Louie test: this stage hides one egg per Louie and they hatch red, green, pink, yellow, 4, 5, black in the order
+# taken (asm/louie_abilities.asm la_hatch); None = off (random Louies, no extra eggs)
+LOUIE_TEST = None                       # (0x0D: 1-1)
+LOUIE_EGGS = 7
 # stage ($102F) -> items, one each (in this order while soft blocks are left)
 ITEMS = {
-    0x0D: BASIC + [CLOCK, VEST],                # 1-1
+    0x0D: BASIC + [CLOCK, VEST] + [EGG] * (LOUIE_EGGS if LOUIE_TEST == 0x0D else 0),     # 1-1
     0x11: BASIC + [EGG, KICK, MAGNET],          # 1-2
     0x18: BASIC + [BOXING, PIERCE],             # 1-3
     0x10: BASIC + [EGG, SEARCH],                # 1-4

@@ -377,7 +377,12 @@ c5_service:
     jsr c5_ownpage                ; c5_urgent already set this frame's OAM for the page on screen: keep
     bcc .got                        ;   to it, even if a page was freed since
 .alloc:
-    jsr c5_alloc
+    lda $1D12                       ; (as c5_urgent: only then)
+    bne +
+    jsr c5_inplace                  ; no free page: the strip would go into the page on screen, while
+    bcc +                           ;   this vblank's OAM still shows the old pose: prepare it (tile base,
+    jmp c5_defer                    ;   animation) for the next frame's OAM and send it at the next NMI
++   jsr c5_alloc
     bcs .fail
 .got:
     jsr c5_record
@@ -538,7 +543,19 @@ c5_urgent:
     cmp $1CD6,x                     ; entry X really queued for Y (c5_dedupe comes here with a page in X)
     bne .out
     lda.l !URG
+    beq +
+    txa                             ; one is prepared: only that entry again (SB5 replaced its request:
+    cmp.l !URG+2                    ;   tile base and animation of the new one)
     bne .out
++   jsr c5_inplace
+    bcc .out
+    jmp c5_prep
+.out:
+    rts
+
+; Entry X / object Y (M/X 8-bit, keeps X, Y): C set = no free page ($FF / $7F), so the strip goes into
+; Y's own page, on screen (c5_alloc .own); !URG+1 = that page * 2.
+c5_inplace:
     phx
     ldx #$0F
 -   lda $1D00,x
@@ -555,13 +572,25 @@ c5_urgent:
     bpl -
 .no:
     plx
-.out:
+    clc
     rts
 .yes:
     txa
     asl a
     sta.l !URG+1                    ; page * 2 (= $1D11 & $1F)
     plx
+    sec
+    rts
+
+; NMI (c5_service): entry X's in-place strip, not prepared by c5_urgent (a second one asked in the same
+; frame, or asked again): not sent now; prepared for the next frame and served first by the next NMI.
+c5_defer:
+    jsr c5_prep
+    jmp $6AF2
+
+; Entry X's strip will be the next one sent ($1CFE, !URG), into page !URG+1 / 2: its tile base ($073F)
+; and animation are set now, so the OAM built before that NMI shows the new pose. Keeps X, Y.
+c5_prep:
     stx $1CFE
     txa
     sta.l !URG+2                    ; the entry

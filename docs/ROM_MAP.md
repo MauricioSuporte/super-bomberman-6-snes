@@ -629,6 +629,12 @@ script accumulator (`61` = add).
 * The VRAM queue can run past the VBlank (e.g. the unpause's fills): the
   NMI then turns the screen on before the hooks after `$C0:04E0` run, and
   their VRAM writes are lost; `asm/pause.asm` waits for `$0355` = `$0357`.
+  A hook's own DMAs can also start inside the VBlank and end past it:
+  `pause_nmi` tests `$4212` bit 7 before each part (the pause's frame /
+  STAGE / text rows, and at the resume the blank rows and the stage's BG3
+  tiles back, which went in at lines 2-9 before). The HUD's redraw after a
+  pause / the stage load is queued in 4 parts, one per check (`full_part`).
+  QA: `vramlate` steps log every DMA into VRAM on a visible line ("DL").
   VRAM reads (`$2139`/`$213A`, VMAIN `$80`): the first word after setting
   the address comes twice, so one dummy word read first.
 * Hack (`tools/sb6/features/pause.py`, `asm/pause.asm`): in the Normal
@@ -820,9 +826,15 @@ script accumulator (`61` = add).
   17 rewritten), search bomb 4 frames of 8 x 8 pieces (mappings 11-14 in
   `free_c5_sheets`, 13-15 px up: SB5's float); the enemy death puff
   (animation 6) starts at its small smoke (8 x 8, moved to `$0FB`) and its
-  last frame (mapping 23, `$102`) shows nothing, the Louie mount shadow
-  (animation `$0A`, mapping 39) is gone: `$101`/`$110`/`$111`/`$102`/`$103`/
-  `$112`/`$113`/`$0EB` were theirs (`bombs.remap`).
+  last frame (mapping 23, `$102`) shows nothing; `$101`/`$110`/`$111`/`$102`/
+  `$103`/`$112`/`$113` were theirs. The shadow (animation `$0A`, mapping 39:
+  mounting a Louie and the Pink Louie's jump, `$1782` bit 1) lost its lower
+  half `$0FB` and is drawn from its top left quarter `$0EB` 4 times, flipped
+  (`bombs.remap`). Type 0 animations `$16-$37` / `$38-$59` are the Red /
+  Green Louies' (object type 0 = `$80:C401[0/1]`, base `$1692`): their
+  mappings (67+) count tiles from the Louie's page, not from `$0E0`, so the
+  remap only touches mappings of animations 1-`$15` (it once cut pieces of
+  the Red Louie's walk: QA `l_red_walk` and the mapping comparison).
 * SB1's MIDIs (`assets/SB1 midi`, khinsider): melodic 8-interval n-grams
   of each voice of `assets/sound/sb1_w<n>_song.txt` against each MIDI
   track: W1 `level-1-3-`, W2 `level-2`, W3 `level-3`, W4 `level-4`, W5
@@ -1606,6 +1618,16 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   sign-extended, as `$C5:6B36`) and animation before the OAM is built
   (in a frame the strip requests run before the OAM builder), and
   `c5_service` keeps it in that page even if one was freed since.
+  Only one strip per frame can be prepared that way: when several riders
+  change animation in the same frame (4 riders turning together) the
+  others were sent in place by a later NMI whose OAM still showed their
+  old pose (a Louie with another pose's tiles for 1 frame, 22 frames in
+  8 runs of 4 riders walking). `c5_defer` (NMI, `c5_service`): an in-place
+  strip that `c5_urgent` did not prepare is not sent; it is prepared
+  (`c5_prep`: `$1CFE`, `!URG`, tile base, animation) and sent first by the
+  next NMI, with the OAM built for it. `c5_urgent` prepares the same entry
+  again when SB5 replaces its request. Checked by `qa_check.py louies`
+  (`l_mount_walk`: every mount frame, `poses.mount_glitches`).
   A kept strip whose animation is the one shown and kept going (`$AE` bit 7)
   calls nothing: `$C0:11DD` resolves the mapping again, and for a streamed
   character queues its pose again; with 4 bombers walking every frame 1-3
@@ -1799,7 +1821,8 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   `$C4:50A6` (egg actor removed) -> task `$C4:5148`: `JSL $C01DEB` with
   A = 5 (random 0-5, inclusive) = Louie character, cry `$28 + n`,
   `$C4:4F25` creates the mount (A = character, X = rider). Not picked up
-  while riding (`$C5:4111`).
+  while riding (`$C5:4111`). SB6 draws 0-6 (`louie_hatch` in `asm/louies.asm`): the
+  Black Louie (type 6, palette id `$56`, SB5's bosses' Louie) hatches too.
 * `$C4:4F25` first moves whatever sits in the rider's mount actor (an egg)
   to another free actor (`$C4:50DB`). A rider that is hit loses the mount
   (`$C4:51AB` -> `$C4:4FC3`: 48 frames, palette `$2E` when the cell burns).
@@ -1826,6 +1849,45 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
 
 The full list with sizes is generated in `build/sb6.map`.
 
+## Louie abilities (`tools/sb6/features/louie_abilities.py`, `asm/louie_abilities.asm`)
+
+* Y on a Louie: `$C4:54F6` (each seat, `$1782 & $7F` = 0, Y new in `$36,X`) sets `$1D39` = the Louie, the
+  ability animation, then `JSR ($551B,X)` by the Louie's type `$16C2` (`$8D` = the rider, DB `$80`): type 0
+  red `$5530` (punch: a player on the cell ahead gets `$15BA` |= facing, sound group 2 `$38`; the cell ahead is
+  `$16AA + $C1FB[$1632]`, `$C4:5582` finds the player, carry clear), 1 green `$56DB` (dash: `$1782` |= 1,
+  task `$C4:5722`, sound `$24`), 2 pink `$566C` (jump: `$1782` |= 2, sound `$23`), 3 yellow `$577D` (the soft
+  block ahead `$1052` = `$30` -> task `$C4:57B8`: `$0C5F` cell, `$0C87` direction * 2; at its stop `$C4:5973`
+  tests the next cell for `$30` and goes on), 4 `$55A7` (the bomb ahead thrown, `$C5:2500`, sound `$25`), 5
+  `$55EB` (a bomb under the rider, `$C4:300C`; later ones get longer fuses, `$1752`), 6-9 `$552F` (RTS).
+* Enemy routines: the actor loop `$C4:2223` calls each actor's routine `[$155A/$1572/$158A]` (`JML [$A5]`, X
+  actor, Y object). `$C4:22CC` (A low, B high, `$B0` bank, `$8D` actor) keeps the current one on a 32-entry
+  list and installs another; `$C4:2319` gives it back. SB5's clock installs `$C5:4319` on every enemy: it runs
+  `$C3:4C13` (contact and flames, animation stopped) while `$0E20` / `$0E21` are not 0 (`$0E21` frozen, `$0E20`
+  blinking near the end, 1 = walking speed back).
+* Rolling bombs (`$C5:2167`): while `$0F38` (pixels left) >= 9, `$C5:2084` gives the cell ahead (`$8A`) and
+  `$C5:221B` tests it (`$1052 & $68`, `$1152 & $18`: taken = carry), then the bomb's cell `$0E7C` = `$8A`. Y = the
+  bomb's object there (`STY $20`), used after the test. Kick `$C5:2293` (A = direction 1-4, `$8A` = the kicker's
+  cell; the bomb on the next cell, the one after it free): `$0E90` = `$10` | direction, `$0F38` = `$10`, `$0F4C` = 2,
+  `$0EE0` bit 0 cleared, sound group 2 `$07`; carry clear = kicked.
+* Walking: `$C4:317D` `JSR $3231` = pixels this frame, `STA $1CC2` at `$C4:3180`.
+* SB6 hooks: `$C4:5560` `la_red` (enemies on the punched cell frozen 180 frames: `la_frozen` through `$C4:22CC`,
+  SB5's clock routine with `$0E20`/`$0E21` borrowed, not in Battle / 1-6 / 1-7), `$C4:5527` (table entry 6) `la_black`,
+  `$C4:3180` `la_speed`, `$C4:5797` `la_yahead`, `$C4:5973` `la_bnext`, `$C5:2182` `la_roll_t`, `$C0:0B54` `la_pads`
+  (then the old target, world1's `intro_pads`), `$C0:0B5D` `la_oam` (then the clown's `clown_oam`).
+* Afterimages: the OAM builder (`$C0:1459`, called through `$C0:0B5D`) leaves `$57` = free entries and `$58` = the
+  next entry's offset (shadow `$08BF`, high bits `$0ABF`); the NMI copies `$57` to `$03D5` and the next build hides
+  the entries used before. `la_oam` adds copies of the rider's / Louie's entries (their palettes `$06DF+obj`, within
+  64 x 64 pixels of the rider's object) moved by the position 6 or 12 frames ago, below entry 104 (1-7's clown uses
+  104-127), and lowers `$57`.
+* Black Louie's dash: `$170A` (vest timer) >= 2 and `$15A2` bit 2 (no flame test) while it lasts, so the rider
+  blinks as with the vest. `$15A2` bit 2 is also SB5's start shield: the QA test clears it first.
+* Black Louie (character 6, object type `$0F`, sheets `$21`/`$22`): 34 animations, mappings 1-99 all used; `$1F-$22`
+  (`$1E` + the facing base `$1692`, as the Red Louie's punch at `$C4:5538`) are a shoulder charge, 6 poses
+  (`$21` rows 4/6/4/8), used only by SB5's boss. SB6's dash plays them (`la_black` -> `louie_anim`, `$C4:547F`) and
+  sets the walk (base + 0) again when it ends; while `!DASH` / `!IMP` last, `la_lanim` (at `$C4:5427`, SB5's mount
+  animation setter) drops every other animation request, so Y alone also shows the charge. After a push the dash
+  holds `IMP_T` = 15 frames on the charge's last pose (pair 7, `$07A0` = `$FF`, `shoulder_hold`) where it hit. Pose sheet: `tools/louie_sheet.py 6` -> `assets/louies/louie6_sb5.png`.
+
 ## Bomberman sprites (`tools/sb6/features/bomberman_sprites.py`)
 
 * Archive table `$85:E22D + (n-1)*8`: VRAM word, size, src24, flags (`$85`
@@ -1844,6 +1906,10 @@ The full list with sizes is generated in `build/sb6.map`.
 * Stage IRQ `$C0:F08D` (`$C0:F12A` also sets BG1; D = `$2100`): line 0 TM `$16`, BG2SC `$3A` (map `$3800`,
   32 x 64), BG3 VOFS `$FFFC`, BG2 VOFS `$0100` (lower screen `$3C00`), H scroll 0; line `$15` (21) puts the
   field's settings back. BG3 has priority (`$2105` = `$09`). Screen line 0 is never shown: the HUD is lines 1-20.
+  SB6: `hud_irq` writes TM `$07` (OBJ off) on the HUD lines, so the bombers and their Louies pass under the HUD
+  (SB5's line 21 puts TM `$030F` back); the lives tab (lines 22-30) hides OBJ through window 2 too (`hud_l21`:
+  TMW/TSW `$13`, WOBJSEL `$0308` | 8, WOBJLOG `$030E` & `$FC`; the line-31 IRQ puts `$0308`/`$030E` back).
+  Checked by `qa_check.py hud` (`hud_top`: every stage, on foot and on Louies).
 * HUD task `$C5:054A` (every stage; returns at once when `$1D1A` bit 3): demo path `$0552-$05B4`; set 3
   archives `$4C` (BG3 HUD tiles `$5000`) and `$4D` (font), then `$49` (Battle) / `$4A` (Normal) = BG2 tiles
   `$D0-$F9` at VRAM `$0D00` (`$C5:05C6-$05DA`), palette set 3 id 1, `JSL $C42491` (arrangement), lives
@@ -1874,7 +1940,9 @@ The full list with sizes is generated in `build/sb6.map`.
   The blue is opaque (BG palette 0 entry 4 / palette 1 entry 12) and the pause menu rewrites BG3 rows, so
   `hud_irq` asks for every row again while `$1D1D` is set. A seat out of the stage blinks SB6's PUSH START (Unity's
   `HUD/Push_start.png`, BG3 palette 0: dark $18C6, grey $35AD, white; `$0069` bit 6 in its record so the change
-  redraws it), centered in the blue between the seat's dividers / borders (`hud.TEXT_X`, checked by the build). CGRAM 15 (SB5's pink, BG3 palette 3, unused by the Normal
+  redraws it), or GAME OVER when no life is left (`$1D23` = 0: record byte 1 = 2, BG3 block state 3,
+  `assets/hud/GameOver.png` in PUSH START's letters, blinking the same way; a life again brings PUSH START back),
+  centered in the blue between the seat's dividers / borders (`hud.TEXT_X`, checked by the build). CGRAM 15 (SB5's pink, BG3 palette 3, unused by the Normal
   Game) is a purple in Normal Game stages (`hud.PURPLE`, put in the CGRAM copy by `hud_load` / `hud_tick`): SB6's purple
   skins had no near color; of CGRAM 8-15 it costs the icons least (3 pixels). Heads fill columns 0-14 of their 16 (a wider portrait cut evenly; `hud.HEAD_GAP`: 1 pixel of
   blue before the grid in every seat, checked by the build); head colors are the Lab
@@ -1910,6 +1978,16 @@ The full list with sizes is generated in `build/sb6.map`.
   its own going off there 6 frames later burnt it in the QA run (as any item in a flame).
 
 ## Known 4-player failures
+
+Louie bumping into another Louie (1-1, 4 riders): the frame before the bump's star shows the walking Louie
+with a piece missing / moved (seen once, `$C4` walk -> animation `$1B`; no strip upload that frame, the OAM
+built by SB5 itself). Not a page problem (`c5_*`); not fixed.
+
+Objects without a page at the stage start (1-1, 4 riders on Louies kept from the stage before; seen in QA's
+`s0D_4p_la` state 300 frames into the stage): while the stage loads OBJ pages 13-15 are `$7E`, so P4 and two
+Louies get no page (`c5_alloc` finds none: `$C5:6B04` with Y = `$7F`); pages 13-15 are `$FF` ~120 frames later,
+but those objects keep `$073F` = 0 and draw P1's tiles until their next animation change (walking). Not fixed
+(QA's Louie fixtures start at frame 200, before it shows).
 
 Torn bomber poses (fixed): with 4 players some frames showed a bomber with tiles of another pose (walking
 streamed characters 17-34 of 84 frames, Bomberman 2-3; lift / throw starts; ~40 frames when 1-1's exit portal

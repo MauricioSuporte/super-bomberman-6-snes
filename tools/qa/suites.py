@@ -13,6 +13,11 @@ Facts measured in Mesen for these checks (SB5's ids unless said; docs/ROM_MAP.md
     punch, Y), 10 pierce, 20 magnet bomb (SB5's mine), 40 search bomb; fire range $17CA+seat; time $0E1E minutes / $0E1D seconds
   World 1 portal: object type ($04FF+obj) 6, mapping $049F+obj 1 off / 2 on / 3 blank, cell $1152 bit 6, door cell
     $7F:FB10/11, request (2, $33) when it appears; enemy HP $1662+actor (knights 2, 180 frames grace after a hit)
+  Louie abilities: Y on a Louie -> $C4:54F6 by type $16C2 (0 red punch: $15BA, request (2, $38); 1 green dash: $1782
+    bit 0; 2 pink jump: $1782 bit 1, (2, $23); 3 yellow; 4 bomb throw: $0E90 bit 5; 5 a bomb under the rider; 6 black,
+    SB6: (2, $35)); enemy routine pointer $155A/$1572/$158A+actor; SB6 state $7F:E800 (!PUSH +$18, !TRAIN +$1C0);
+    $15A2 bit 2 = no flame test (also SB5's start shield), $170A vest timer; these fixtures' main loop runs from
+    scenario frame ~52 (steps at T0 + k)
 """
 import os
 
@@ -1156,11 +1161,39 @@ def hud_pause_scenarios():
     return [Scenario("h_pause", 475, steps=st)]
 
 
+def hud_dead_scenarios():
+    """1-1 with no life left: P2 dies (its own bomb, the start shield off), then P1 pauses and resumes; no DMA into
+    VRAM on a visible line meanwhile (vramlate: lost on the console), the HUD drawn again whole (P2's GAME OVER)."""
+    st = [[1, "vramlate"], [5, "poke", 0x1D23, 0], [200, "pad", 1, "a", 3]]
+    st += [[k, "poke", 0x15A3, 1] for k in range(190, 260, 2)] + [[k, "poke", 0x170B, 0] for k in range(190, 260, 2)]
+    st += [[450, "pad", 0, "start", 3], [526, "pad", 0, "start", 3]] + _hud_shot(620, "dead") + _hud_shot(684, "dead2")
+    return [Scenario("h_dead", 690, steps=st, invincible=False)]
+
+
+def hud_dead_eval(logs, boot, tag):
+    res = Result()
+    l = logs.get("h_dead")
+    if not res.ok("1-1 P2 dead, paused: HUD scenario ran", l, ""):
+        return res
+    late = [x for x in l.lines if x.startswith("DL ")]
+    res.ok("P2 dead, pause and resume: no DMA into VRAM on a visible line (its writes would be lost)", not late,
+           f"{late[:4]}")
+    recs, lives = _hud_screen(res, "1-1 P2 dead, after a pause", tag, "h_dead", "dead", l)
+    recs2, _ = _hud_screen(res, "1-1 P2 dead, after a pause, 64 frames later", tag, "h_dead", "dead2", l)
+    res.ok("P2 dead with no life left: its block blinks GAME OVER after the pause, the others in the game",
+           [r[0] for r in recs] == [1, 0, 1, 1] and sorted((recs[1][1], recs2[1][1])) == [0, 2] and lives == 0,
+           f"{recs[1]}, {recs2[1]}, lives {lives}")
+    return res
+
+
 def hud_out_scenarios():
     st = [[1, "invincible", 1], [5, "poke", 0x1D23, 3]] + _hud_shot(HUD_SHOT, "out")
     st += _hud_shot(HUD_SHOT + 64, "out2")             # PUSH START's other blink phase
     st += [[380, "pad", 2, "start", 3]] + _hud_shot(470, "join")
-    return [Scenario("h_out", 475, steps=st)]
+    st += [[480, "poke", 0x1D23, 0]] + _hud_shot(540, "over")     # no life left: P4 (out) shows GAME OVER,
+    st += _hud_shot(604, "over2")                                  # blinking as PUSH START
+    st += [[620, "poke", 0x1D23, 1]] + _hud_shot(668, "life") + _hud_shot(732, "life2")   # a life: PUSH START
+    return [Scenario("h_out", 740, steps=st)]
 
 
 _HUD = {}
@@ -1186,7 +1219,7 @@ def _hud_recs(d, l, name):
     for s in range(4):
         act = d.wram[0x17FA + s] < 0x80 and not d.wram[0x15A2 + s] & 0x80
         recs.append(hud.record(act, d.wram[0x17CA + s], d.wram[0x15D2 + s] | d.wram[0x15EA + s] << 8, bombs[s], ab[s],
-                               d.wram[0x167A + s], d.wram[0x1662 + s]))
+                               d.wram[0x167A + s], d.wram[0x1662 + s], d.wram[0x0069], d.wram[0x1D23]))
     return recs, min(d.wram[0x1D23], 9)
 
 
@@ -1216,24 +1249,22 @@ def _hud_screen(res, label, tag, sc, name, l):
     for m in range(1 << len(out)):
         rr = [list(r) for r in recs]
         for i, s in enumerate(out):
-            rr[s][1] = m >> i & 1
+            rr[s][1] = (m >> i & 1) * (2 if lives == 0 else 1)     # (shown: GAME OVER with no life left)
         w, o = hud.render(t, cg[16:32], [tuple(r) for r in rr], lives, p0=cg[:16], picks=picks, backdrop=backdrop)
         diff = int(((shot[1:1 + len(w)] != w).any(2) & o).sum())
         if best is None or diff < best[0]:
             best = (diff, w, o, [tuple(r) for r in rr])
     _, want, own, recs = best
     n = len(want)                                              # (screenshot row y + 1 = HUD line y)
-    own = own.copy()
-    for k in range(128):                                       # the game's sprites are drawn over the HUD (SB5 too)
-        x, y, _, _ = d.oam[4 * k:4 * k + 4]
-        hb = d.oam[512 + k // 4] >> (2 * (k % 4)) & 3
-        x, sz = x - 256 if hb & 1 else x, 16 if hb >> 1 else 8
-        if y < 0xE0:
-            own[max(y - 1, 0):max(y + sz - 1, 0), max(x, 0):max(x + sz, 0)] = False
+    own = own.copy()                                           # (sprites pass under the HUD: none excluded)
     # HUD line 20's start: on busy frames (1-2, 1-6, the pause menu) the line-21 IRQ's scroll writes land after
-    # screen line 21 starts, whose first pixels (up to 16 seen) then show HUD line 21's dark green
+    # screen line 21 starts, whose first pixels (up to 16 seen) then show HUD line 21's dark green, or (1-7) the
+    # line drawn with the scroll before the write: the first pixels of line 20 up to its first right one (<= 16)
     same = (shot[1 + 20, :32] == want[21, :32]).all(1)
     k = int(np.argmin(same)) if not same.all() else 32
+    right = (shot[1 + 20, :17] == want[20, :17]).all(1)
+    if not right[:k + 1].any() and right.any():
+        k = max(k, int(np.argmax(right)))
     own[20, :k] = False
     bad = (shot[1:1 + n] != want).any(2) & own
     rows = sorted({int(y) for y in np.nonzero(bad)[0]})
@@ -1352,7 +1383,96 @@ def hud_out_eval(logs, boot, tag):
     recs, lives = _hud_screen(res, "1-1 P3 joined", tag, "h_out", "join", l)
     res.ok("P3 joined with Start: its block drawn, lives 2", [r[0] for r in recs] == [1, 1, 1, 0] and lives == 2,
            f"{recs}, {lives}")
+    recs, lives = _hud_screen(res, "1-1 no life left", tag, "h_out", "over", l)
+    recs2, _ = _hud_screen(res, "1-1 no life left, 64 frames later", tag, "h_out", "over2", l)
+    ph = sorted((recs[3][1], recs2[3][1]))
+    res.ok("no life left: P4 (out of the stage) blinks GAME OVER instead of PUSH START (shown in one shot, hidden "
+           "in the other)", lives == 0 and recs[3][0] == recs2[3][0] == 0 and ph == [0, 2]
+           and [r[0] for r in recs[:3]] == [1, 1, 1], f"{recs[3]}, {recs2[3]}, lives {lives}")
+    recs, lives = _hud_screen(res, "1-1 a life again", tag, "h_out", "life", l)
+    recs2, _ = _hud_screen(res, "1-1 a life again, 64 frames later", tag, "h_out", "life2", l)
+    ph = sorted((recs[3][1], recs2[3][1]))
+    res.ok("a life again (0 -> 1): P4 blinks PUSH START again, no GAME OVER", lives == 1 and ph == [0, 1],
+           f"{recs[3]}, {recs2[3]}, lives {lives}")
     return res
+
+
+# Sprites pass under the HUD (asm/hud.asm: OBJ out of TM on the HUD lines, window 2 behind the lives heart):
+# every seat walks up into the field's top row (P1 / P2 under the lives tab), on foot and on a Louie; the screenshot's
+# HUD lines (1-31, the tab included) must equal hud.render() with no pixel of a sprite, while those sprites reach
+# into the HUD lines (OAM) and are seen below them.
+TOP_X = (7, 8, 3, 11)                   # each seat's column (cells 7 / 8 are under the lives tab, x 116-139)
+TOP_SHOTS = (250, 290, 330)
+HUD_LINES = 22                          # screen lines 0-21 = HUD lines 1-22 (the panel); the tab goes on to 30
+TAB_X, TAB_LAST = (116, 139), 29        # the lives tab: x, last screen line
+
+
+def top_fx(stage, mounted):
+    return mount_fx(stage) if mounted else stage_fx(stage)
+
+
+def hud_top_scenarios(stage):
+    st = [[1, "invincible", 1], [2, "item", 0, 0x08, 1], [4, "pad", 0, "right", 16]]    # the clock: enemies frozen
+    for s, x in enumerate(TOP_X):
+        st += [[24, "cell", cell(x, y), 0] for y in (1, 2)] + [[25, "place", s, x, 1]]
+        st += [[k, "poke", 0x170A + s, 0] for k in (6, 150, 200)]      # no start shield blink in the shots
+        st += [[200, "pad", s, "up", 140]]
+    st.append([22, "evict", 3])                 # (frozen enemies of the top rows: a rider next to one loses its Louie)
+    for k in TOP_SHOTS:
+        st += _hud_shot(k, f"top{k}") + [[k, "read", f"top{k}_xy", 0x182A, 24], [k, "read", f"top{k}_y", 0x1872, 24]]
+    return [Scenario("h_top", TOP_SHOTS[-1] + 5, steps=st)]
+
+
+def _sprites(d):
+    """[(x, y, size)] of the visible OAM entries (screen line y = OAM y + 1)."""
+    out = []
+    for k in range(128):
+        x, y = d.oam[4 * k], d.oam[4 * k + 1]
+        hb = d.oam[512 + k // 4] >> (2 * (k % 4)) & 3
+        x, sz = x - 256 if hb & 1 else x, 16 if hb >> 1 else 8
+        if y < 0xE0 and -sz < x < 256:
+            out.append((x, y + 1, sz))
+    return out
+
+
+def hud_top_eval(stage, mounted):
+    def ev(logs, boot, tag):
+        res = Result()
+        name = f"{STAGES[stage]} {'on Louies' if mounted else 'on foot'}"
+        l = logs.get("h_top")
+        if not res.ok(f"{name}: top row scenario ran", l, ""):
+            return res
+        from .dump import Dump
+        from .engine import OUT
+        reach, tab, below = set(), set(), set()
+        for k in TOP_SHOTS:
+            label = f"{name}, seats at the top row (frame {k})"
+            _hud_screen(res, label, tag, "h_top", f"top{k}", l)
+            d = Dump(os.path.join(OUT, f"{tag}.log_h_top_top{k}.dump"))
+            spr = _sprites(d)
+            for s in range(4):
+                obj = d.wram[0x17FA + s]
+                if obj >= 0x80 or d.wram[0x15A2 + s] & 0x80:
+                    continue
+                sx = d.w(0x055F + obj) & 0x1FF
+                mine = [(x, y, z) for x, y, z in spr if sx - 8 <= x <= sx + 16]
+                if any(y < HUD_LINES for x, y, z in mine):
+                    reach.add(s)
+                if any(y + z > HUD_LINES + 8 for x, y, z in mine):
+                    below.add(s)
+                if any(y <= TAB_LAST and x < TAB_X[1] and x + z > TAB_X[0] for x, y, z in mine):
+                    tab.add(s)
+            ride = [d.wram[0x1782 + s] >> 7 for s in range(4)]
+            if mounted:
+                res.ok(f"{label}: every seat rides its Louie", ride == [1] * 4, f"{ride}")
+        if mounted:         # (on foot a bomber's head reaches the lives tab only)
+            res.ok(f"{name}: every rider's sprites reach into the HUD's panel lines (so the HUD checks above saw "
+                   f"them pass under)", reach == {0, 1, 2, 3}, f"seats {sorted(s + 1 for s in reach)}")
+        res.ok(f"{name}: P1 / P2's sprites reach under the lives tab", tab == {0, 1}, f"seats {sorted(s + 1 for s in tab)}")
+        res.ok(f"{name}: the seats are still drawn below the HUD", below == {0, 1, 2, 3},
+               f"seats {sorted(s + 1 for s in below)}")
+        return res
+    return ev
 
 
 # ---------------------------------------------------------------- portal
@@ -1589,8 +1709,10 @@ def magnet_eval(fx):
             step = dx + 16 * dy
             want = [(p1 + i * step) & 0xFF for i in range(MAG_DIST)]
             path = _path(l)
+            stay = [k for k, live in _bombs(l) for i, owner, c, mo, obj in live if owner == 0 and c == want[-1] and not mo & 0x10]
+            # (then it waits a second and may look again: another enemy may pull it on)
             res.ok(f"magnet {DIRS[d]}: the bomb goes to the frozen enemy {MAG_DIST} cells away ({en:02X}), stops next to it",
-                   path == want, " ".join(f"{c:02X}" for c in path) + f" (want {' '.join(f'{c:02X}' for c in want)})")
+                   path[:len(want)] == want and len(stay) * 2 >= 40, " ".join(f"{c:02X}" for c in path) + f" (want {' '.join(f'{c:02X}' for c in want)})")
             res.ok(f"magnet {DIRS[d]}: kick sound", len(_cmds(l, SFX["kick"])) >= 1, f"{len(_cmds(l, SFX['kick']))}")
         l = logs.get("m_blocked")
         if l:
@@ -1659,3 +1781,504 @@ def magnet_eval(fx):
                 res.ok("enemy death puff: its small smoke from tile $0FB", smoke)
         return res
     return ev
+
+
+# ---- Louie abilities (features/louie_abilities.py, asm/louie_abilities.asm; SB5's $C4:551B by type)
+LA_FX = Fixture("s0D_4p_la", stage=0x0D, ready=200, mounts=(0, 1, 3, 6))      # P1 red, P2 green, P3 yellow, P4 black
+LB_FX = Fixture("s0D_4p_lb", stage=0x0D, ready=200, mounts=(2, 4, 5, -1))     # P1 pink, P2 type 4, P3 type 5
+RED, GREEN, PINK, YELLOW, BLUE4, PURPLE5, BLACK = 0, 1, 2, 3, 4, 5, 6
+RED_T, DASH_T, PUSH_PX = 180, 30, 32          # asm/louie_abilities.asm RED_T, DASH_T, 2 cells
+SND_PUNCH, SND_BLACK, SND_PINK = (2, 0x38), (2, 0x35), (2, 0x23)   # sound requests (group, id): SB5's Red punch,
+#                                                                     the Black dash, SB5's pink jump
+GSLOT, GHOST_T = 104, 12
+ROW = 5                                       # a free row (odd): the tests clear it
+T0 = 60                                       # (these fixtures' main loop runs from scenario frame ~52: steps at T0 + k)
+
+
+def _at(sc):
+    """The scenarios' frames from T0 on (the evaluations read them back as k - T0: _back)."""
+    for x in sc:
+        x.steps = [[st[0] + T0] + st[1:] for st in x.steps]
+        x.len += T0
+    return sc
+
+
+def _back(logs):
+    for l in logs.values():
+        if getattr(l, "_t0", False):
+            continue
+        l._t0 = True
+        l.values = {n: [(k - T0, v) for k, v in lst] for n, lst in l.values.items()}
+        l.reqs = [(k - T0, g, i) for k, g, i in l.reqs]
+        l.cmds = [(k - T0, c) for k, c in l.cmds]
+        l.anims = {a: [(k - T0, v) for k, v in lst] for a, lst in l.anims.items()}
+    return logs
+
+
+def _row(y=ROW, k=1):
+    return [[k, "cell", cell(x, y), 0] for x in range(1, 14)]
+
+
+def _acts(k0, k1, every=1):
+    return [[k, "read", "act", 0x182A, 0x78] for k in range(k0, k1, every)]
+
+
+def _xy(b, a):
+    return b[a] | b[0x18 + a] << 8, b[0x48 + a] | b[0x60 + a] << 8
+
+
+def _track(l, a):
+    return [(k, _xy(b, a)) for k, b in l.values.get("act", [])]
+
+
+def _reqs(l, want, k0=0, k1=1 << 30):
+    return [k for k, g, i in l.reqs if (g, i) == want and k0 <= k < k1]
+
+
+def louie_scenarios_a():
+    """LA_FX: P1 red, P2 green, P3 yellow, P4 black (stage 1-1, riding from the start)."""
+    sc = []
+    # Red: an enemy (frozen by the clock to line up) right of P1; Y stuns it RED_T frames; then the clock ends
+    # (the fixture is saved while the stage still fades in: the seats move from frame ~21 on, the clock taken then)
+    st = [[2, "item", 0, 0x08, 1], [4, "pad", 0, "right", 34], [40, "align", 0, R, 1], [41, "poke", 0x1632, 1],
+          [42, "read", "cells", 0x16AA, 24], [42, "read", "h0", 0x155A, 0x48], [44, "pad", 0, "y", 2],
+          [52, "poke", 0x0E20, 0], [52, "poke", 0x0E21, 0], [60, "read", "h1", 0x155A, 0x48],
+          [300, "read", "h2", 0x155A, 0x48]] + _acts(44, 330, 2)
+    sc.append(Scenario("l_red_enemy", 330, steps=st))
+    # Red: SB5's punch on a player (P2 next to P1) stuns it; a miss makes no sound
+    st = _row() + [[3, "place", 0, 3, ROW], [3, "place", 1, 4, ROW], [6, "poke", 0x1632, 1], [6, "poke", 0x170A + 1, 0],
+                   [20, "pad", 0, "y", 2]]
+    st += [[k, "read", "stun", 0x15BA, 5] for k in range(20, 50)]
+    st += [[60, "place", 1, 9, ROW], [90, "pad", 0, "y", 2]]
+    sc.append(Scenario("l_red_player", 130, steps=st, invincible=False))
+    # Green (P2) and Black (P4) dash right along the row (enemies burnt first): distance, sound, afterimages
+    for seat, name in ((1, "green"), (3, "black")):
+        st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", seat, 1, ROW], [42, "poke", 0x1632 + seat, 1],
+                                               [60, "pad", seat, "y", 2], [60, "read", "obj", 0x17FA, 24]]
+        st += [[k, "poke", 0x170A + s, 0] for k in (44, 50, 56) for s in range(4)]       # (no shield blink)
+        st += _acts(56, 150) + [[k, "readoam", "oam"] for k in range(50, 150)]
+        st += [[k, "read", "ride", 0x1782 + seat, 1] for k in range(56, 150)]
+        sc.append(Scenario(f"l_{name}_dash", 150, steps=st, watch=(MOUNT0 + seat,)))
+    # Black: a flame on the rider while it dashes (not invincible otherwise): it keeps its Louie; without a dash: lost
+    for dash in (True, False):
+        st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", 3, 1, ROW], [42, "poke", 0x1632 + 3, 1],
+                                               [44, "poke", 0x170A + 3, 0], [44, "poke", 0x15A2 + 3, 0x01]]   # (no shield)
+        st += [[k, "read", "skip", 0x15A2 + 3, 1] for k in range(56, 80)]
+        if dash:
+            st.append([60, "pad", 3, "y", 2])
+        st += [[66, "burn", 12, 3], [120, "read", "ride", 0x1782, 5], [120, "read", "dead", 0x15A2, 5]]
+        sc.append(Scenario(f"l_black_{'shield' if dash else 'plain'}", 130, steps=st, invincible=False))
+    # Black: an enemy 3 cells ahead (clock) is pushed 2 cells, the dash stops on it
+    st = [[2, "item", 3, 0x08, -1], [4, "pad", 3, "left", 34], [40, "align", 3, R, 3], [41, "beyond", 3],
+          [41, "poke", 0x1632 + 3, 1], [42, "read", "cells", 0x16AA, 24], [44, "pad", 3, "y", 2]] + _acts(42, 140)
+    st += [[k, "read", "push", 0x1FE818, 24] for k in range(42, 140)]          # asm/louie_abilities.asm !PUSH
+    st += [[k, "read", "imp", 0x1FE857 + 3, 1] for k in range(42, 140)]     # !IMP
+    st += [[k, "read", "mobj", 0x17FA + MOUNT0 + 3, 1] for k in range(42, 140)]
+    st += [[k, "read", "maps", 0x049F, 0x60] for k in range(42, 140)]
+    sc.append(Scenario("l_black_push", 140, steps=st, watch=(MOUNT0 + 3,)))
+    # Yellow (P3): three bombs in a row ahead roll away together
+    k = 40
+    bombs = [[2, "poke", 0x4EBD + 2, 6], [1, "burn", 20]] + _row(k=k)
+    for x in (5, 4, 3):
+        bombs += [[k + 1, "place", 2, x, ROW], [k + 2, "pad", 2, "a", 2]]
+        k += 6
+    st = bombs + [[k + 1, "place", 2, 2, ROW], [k + 2, "poke", 0x1632 + 2, 1], [k + 6, "pad", 2, "y", 2]]
+    st += _bomb_reads(k + 4, k + 90) + [[k + 90, "read", "map", 0x1052, 256]]
+    sc.append(Scenario("l_yellow_train", k + 92, steps=st))
+    # Yellow: a bomb rolls into a resting bomb 4 cells on (both go on); a bomb rolls into a soft block (kicked on)
+    st = [[2, "poke", 0x4EBD + 2, 6], [1, "burn", 20]] + _row(k=40) + [
+        [41, "place", 2, 7, ROW], [42, "pad", 2, "a", 2], [47, "place", 2, 3, ROW], [48, "pad", 2, "a", 2],
+        [53, "place", 2, 2, ROW], [54, "poke", 0x1632 + 2, 1], [58, "pad", 2, "y", 2]]
+    st += _bomb_reads(56, 140)
+    sc.append(Scenario("l_yellow_pickup", 140, steps=st))
+    st = [[2, "poke", 0x4EBD + 2, 6], [1, "burn", 20]] + _row(k=40) + [
+        [41, "place", 2, 3, ROW], [42, "pad", 2, "a", 2], [47, "place", 2, 2, ROW], [48, "poke", 0x1632 + 2, 1],
+        [48, "cell", cell(7, ROW), 0x30], [52, "pad", 2, "y", 2]]
+    st += _bomb_reads(50, 180) + [[k, "read", "map", 0x1052, 256] for k in (50, 179)]
+    sc.append(Scenario("l_yellow_soft", 180, steps=st))
+    # Yellow: SB5's soft block kick, then the block stops at a bomb, which rolls on
+    st = [[2, "poke", 0x4EBD + 2, 6], [1, "burn", 20]] + _row(k=40) + [
+        [41, "place", 2, 9, ROW], [42, "pad", 2, "a", 2], [47, "place", 2, 2, ROW], [48, "poke", 0x1632 + 2, 1],
+        [48, "cell", cell(3, ROW), 0x30], [52, "pad", 2, "y", 2]]
+    st += _bomb_reads(50, 150) + [[k, "read", "map", 0x1052, 256] for k in (50, 149)]
+    sc.append(Scenario("l_yellow_block", 150, steps=st))
+    sc.append(_mount_walk())
+    sc.append(_red_walk())
+    return _at(sc)
+
+
+def _red_walk():
+    """P1 on the Red Louie (its mappings are type 0's, as the bombs') walks down, right, up, left: every pose drawn
+    the same each time it shows."""
+    st = [[1, "burn", 20], [2, "place", 0, 3, 3]] + [[k, "poke", 0x170A, 0] for k in range(2, 200, 8)]
+    for i, d in enumerate(("down", "right", "up", "left")):
+        st.append([10 + 44 * i, "pad", 0, d, 40])
+    return Scenario("l_red_walk", 190, steps=st, pose=(MOUNT0,))
+
+
+def _mount_walk():
+    """Every seat on its Louie, 4 cells apart in row 5, walks right, turns left, turns right: with 4 bombers + 4 Louies
+    every OBJ page is taken and the strips go into the pages on screen (asm/coop.asm c5_urgent / c5_defer)."""
+    st = _row(5, 1) + [[k, "poke", 0x170A + s, 0] for k in range(2, 100, 8) for s in range(4)]
+    for s, x in enumerate((1, 5, 9, 13)):          # (4 cells apart: a Louie bumping into another is not this test)
+        st += [[2, "place", s, x, 5], [10, "pad", s, "right", 24], [40, "pad", s, "left", 24],
+               [70, "pad", s, "right", 24]]
+    return Scenario("l_mount_walk", 100, steps=st, pose=tuple(range(MOUNT0, MOUNT0 + 4)))
+
+
+def louie_scenarios_b():
+    """LB_FX: P1 pink, P2 type 4, P3 type 5; and the Black Louie out of an egg (P4, on foot)."""
+    sc = []
+    st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", 0, 3, ROW], [42, "poke", 0x1632, 1], [41, "cell", cell(4, ROW), 0x30],
+                                           [60, "pad", 0, "y", 2]] + _acts(56, 120)
+    st += [[k, "read", "ride", 0x1782, 1] for k in range(56, 100)] + [[k, "readoam", "oam"] for k in range(64, 76, 2)]
+    sc.append(Scenario("l_pink_jump", 120, steps=st))
+    # (SB5's other abilities, as they were: their sounds)
+    st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", 1, 4, ROW], [42, "pad", 1, "a", 2], [47, "place", 1, 3, ROW],
+                                           [48, "poke", 0x1632 + 1, 1], [54, "pad", 1, "y", 2]] + _bomb_reads(50, 110)
+    sc.append(Scenario("l_type4_bomb", 110, steps=st))
+    st = [[2, "poke", 0x4EBD + 2, 6], [1, "burn", 20]] + _row(k=40) + [[41, "place", 2, 2, ROW], [42, "poke", 0x1632 + 2, 1],
+                                                                         [54, "pad", 2, "y", 2]]
+    st += _bomb_reads(50, 100)
+    sc.append(Scenario("l_type5_line", 100, steps=st))
+    sc.append(_mount_walk())
+    return _at(sc)
+
+
+def louie_egg_scenarios():
+    """FX_A (1-1), nobody on a Louie: P4 hatches the Black Louie (an egg's draw 0-6 forced to 6)."""
+    st = [[2, "louie_type", BLACK], [2, "item", 3, 0x15, -1], [3, "pad", 3, "left", 20],
+          [150, "read", "mchr", 0x16C2 + MOUNT0, 5], [150, "read", "ride", 0x1782, 5], [150, "read", "mobj", 0x17FA + MOUNT0, 5],
+          [150, "read", "slots", 0x06DF, 0x30], [170, "pad", 3, "up", 20]]
+    sc = [Scenario("l_black_egg", 200, steps=st, pose=(3,))]
+    # 1-1 (features/stage_items.py LOUIE_TEST): eggs hatch red, green, ... black in the order taken
+    # (two at once: a third Louie color would become one of these two, asm/louies.asm)
+    st = [[2, "item", 0, 0x15, 1], [3, "pad", 0, "right", 20], [42, "item", 1, 0x15, -1], [43, "pad", 1, "left", 20],
+          [150, "read", "mchr", 0x16C2 + MOUNT0, 5],
+          [150, "read", "ride", 0x1782, 5]]
+    from sb6.features import stage_items
+    if stage_items.LOUIE_TEST == 0x0D:            # (only while the test eggs are in)
+        sc.append(Scenario("l_egg_order", 160, steps=st))
+    return sc
+
+
+def _ghost_pairs(o, axis_sign):
+    """Afterimage copies in an OAM dump: (entry i, later entry j with i's tile / attributes, x displacement)."""
+    ents = []
+    for i in range(128):
+        x, y, t, a = o[4 * i:4 * i + 4]
+        hi = o[512 + i // 4] >> (2 * (i % 4))
+        if y < 0xE0:
+            ents.append((i, x | (hi & 1) << 8, y, t, a))
+    out = []
+    for p, (i, xi, yi, ti, ai) in enumerate(ents):
+        for j, xj, yj, tj, aj in ents[p + 1:]:
+            dx = ((xj - xi + 256) % 512) - 256
+            if (tj, aj) == (ti, ai) and abs(yj - yi) <= 1 and 6 <= -axis_sign * dx <= 64:
+                out.append((i, j, dx))
+    return out
+
+
+def louie_eval(part):
+    def ev(logs, boot, tag):
+        res = Result()
+        _back(logs)
+        if part == "a":
+            _eval_red(res, logs)
+            _eval_dash(res, logs)
+            _eval_yellow(res, logs)
+        else:
+            _eval_b(res, logs)
+        _eval_mount_walk(res, logs, tag)
+        return res
+    return ev
+
+
+def _eval_mount_walk(res, logs, tag):
+    from . import poses as P
+    from .engine import pose_file
+    try:
+        seen, bad = P.mount_glitches(pose_file(tag, "l_mount_walk"), range(MOUNT0, MOUNT0 + 4), 14, 98, base=T0)
+    except FileNotFoundError:
+        res.ok("4 riders walking, turning: every frame a Louie pose", False, "no pose dump")
+        return
+    res.ok("4 riders walking, turning (every OBJ page taken): no Louie frame torn (a picture shown 1 frame only)",
+           seen > 100 and not bad, f"{seen} frames, torn {bad[:8]}")
+    from .engine import ROM, ROOT
+    from sb6.romlib import off
+    new, old = open(ROM, "rb").read(), open(os.path.join(ROOT, "Super Bomberman 5 (USA).sfc"), "rb").read()
+    diff = []
+    w = lambda d, a: d[off(a)] | d[off(a) + 1] << 8
+    for an in range(0x16, 0x5A):            # the Red / Green Louies' type 0 animations and their mappings
+        a0 = 0xC50000 | w(old, 0xC581EE + 2 * (an - 1))
+        for i in range(64):
+            mp, fr = old[off(a0 + 2 * i)], old[off(a0 + 2 * i + 1)]
+            if not fr:
+                break
+            if mp:
+                ma, mb = 0xC50000 | w(old, 0xC58000 + 2 * (mp - 1)), 0xC50000 | w(new, 0xC58000 + 2 * (mp - 1))
+                n = old[off(ma)]
+                if old[off(ma):off(ma) + 1 + 7 * n] != new[off(mb):off(mb) + 1 + 7 * n]:
+                    diff.append(mp)
+            if fr == 0xFF:
+                break
+    res.ok("Red / Green Louie mappings (type 0 animations $16-$59) as SB5's (the bombs' remap leaves them)",
+           not diff, f"{sorted(set(diff))[:12]}")
+    if "l_red_walk" in logs:
+        try:
+            seen, bad = P.mount_mismatch(pose_file(tag, "l_red_walk"), MOUNT0, 12, 188, base=T0)
+        except FileNotFoundError:
+            seen, bad = 0, ["no pose dump"]
+        res.ok("Red Louie walking 4 ways: each pose always drawn the same (no piece lost: its mappings are not the "
+               "bombs')", seen > 80 and not bad, f"{seen} frames, {bad[:6]}")
+
+
+def louie_egg_eval():
+    def ev(logs, boot, tag):
+        res = Result()
+        _eval_egg(res, logs)
+        return res
+    return ev
+
+
+def _moved(tr, k0, k1):
+    return len({p for k, p in tr if k0 <= k < k1}) > 1
+
+
+def _enemy(l):
+    al, cells = l.value("align"), l.value("cells")
+    if not (al and len(al) > 1 and cells):
+        return None, al
+    en = [a for a in range(5, 24) if cells[a] == al[1]]
+    return (en[0] if en else None), al
+
+
+def _eval_red(res, logs):
+    l = logs.get("l_red_enemy")
+    if l:
+        a, al = _enemy(l)
+        if a is None:
+            res.ok("Red Louie: an enemy lined up next to P1", False, al.hex() if al else "no log")
+        else:
+            cells = l.value("cells")
+            tr = _track(l, a)
+            h0, h1, h2 = l.value("h0"), l.value("h1"), l.value("h2")
+            hp = lambda h: h[a] | h[0x18 + a] << 8 | h[0x30 + a] << 16
+            res.ok("Red Louie: the enemy's routine is ours while stunned, SB5's again after",
+                   hp(h1) >> 16 == 0xC4 and 0x5A40 <= hp(h1) & 0xFFFF < 0x7F00 and hp(h2) != hp(h1),
+                   f"before {hp(h0):06X} stunned {hp(h1):06X} after {hp(h2):06X}")
+            res.ok(f"Red Louie: the stunned enemy stays still ~{RED_T} frames (the clock over at 52)",
+                   not _moved(tr, 54, 44 + RED_T - 10), f"{sorted({p for k, p in tr if 54 <= k < 214})[:4]}")
+            res.ok("Red Louie: it walks again after the stun", _moved(tr, 44 + RED_T + 10, 330),
+                   f"{sorted({p for k, p in tr if k >= 234})[:4]}")
+            others = [b for b in range(5, 24) if b != a and cells[b] and _moved(_track(l, b), 60, 200)]
+            res.ok("Red Louie: the other enemies walk (only the punched one is stunned)", bool(others), f"{others}")
+            n = _reqs(l, SND_PUNCH, 44, 60)
+            res.ok("Red Louie: one punch sound for the enemy hit", len(n) == 1, f"{n}")
+    l = logs.get("l_red_player")
+    if l:
+        stun = [k for k, v in l.values.get("stun", []) if v[1]]
+        res.ok("Red Louie: SB5's punch still stuns a player ahead ($15BA)", bool(stun), f"{stun[:3]}")
+        res.ok("Red Louie: punch sound on the player, none on a miss",
+               len(_reqs(l, SND_PUNCH, 20, 50)) == 1 and not _reqs(l, SND_PUNCH, 88, 130), f"{_reqs(l, SND_PUNCH)}")
+
+
+def _eval_dash(res, logs):
+    for seat, name in ((1, "green"), (3, "black")):
+        l = logs.get(f"l_{name}_dash")
+        if not l:
+            continue
+        tr = dict(_track(l, seat))
+        x0 = tr.get(58, (0, 0))[0]
+        xe = tr.get(110, (0, 0))[0]
+        xe = tr.get(130, (0, 0))[0]
+        if name == "black":
+            d = [tr[k][0] - tr[k - 1][0] for k in range(62, 62 + DASH_T) if k in tr and k - 1 in tr]
+            res.ok(f"Black Louie: dashes ~3 cells right ({DASH_T} frames, at most 2 pixels a frame)",
+                   40 <= xe - x0 <= 56 and max(d, default=9) <= 2, f"{x0} -> {xe}, steps {d}")
+            res.ok("Black Louie: dash sound", len(_reqs(l, SND_BLACK, 58, 70)) == 1, f"{_reqs(l, SND_BLACK)}")
+            end = 61 + DASH_T
+            # SB5's unused shoulder charge ($1F-$22 = $1E + facing; right = $1F), then walking / standing again
+            an = l.anims.get(MOUNT0 + seat, [])
+            during = [a for k, a in an if 62 <= k < end]
+            after = [a for k, a in an if k >= end]
+            res.ok("Black Louie (Y alone): the whole dash on the shoulder charge ($1F, facing right), then not any more",
+                   bool(during) and all(a == 0x1F for a in during) and bool(after) and not 0x1F <= after[-1] <= 0x22,
+                   f"during {[hex(a) for a in during]}, after {[hex(a) for a in after]}")
+        else:
+            ride = [k for k, v in l.values.get("ride", []) if v[0] & 1]
+            res.ok("Green Louie: SB5's dash ($1782 bit 0), moves right", bool(ride) and xe - x0 >= 32,
+                   f"dash frames {ride[:1]}..{ride[-1:]}, {x0} -> {xe}")
+            end = ride[-1] if ride else 110
+        pre, during, lags, high = [], [], set(), []
+        for k, o in l.values.get("oam", []):
+            g = _ghost_pairs(o, 1)
+            shown = sum(1 for i in range(128) if o[4 * i + 1] < 0xE0) > 8         # (the rider not blinked out)
+            (pre if k < 60 else during).append((k, len(g), shown))
+            if 75 <= k < end:
+                lags |= {dx for i, j, dx in g}
+                high += [j for i, j, dx in g if j >= GSLOT]
+        seen = [k for k, n, sh in during if 75 <= k < end and sh]
+        on = [k for k, n, sh in during if 75 <= k < end and sh and n >= 2]
+        res.ok(f"{name} dash: afterimages (copies of the rider / Louie behind it) on >= 90% of the frames it shows",
+               bool(seen) and len(on) * 10 >= len(seen) * 9 and all(n == 0 for k, n, sh in pre),
+               f"{len(on)}/{len(seen)} frames; before the dash {[n for k, n, sh in pre if n]}")
+        res.ok(f"{name} dash: afterimages at two distances (6 / 12 frames, a flicker), below OAM {GSLOT}",
+               len({abs(v) // 4 for v in lags}) >= 2 and not high, f"{sorted(lags)} {high[:3]}")
+        gone = [k for k, n, sh in during if k >= end + 14 and n]
+        res.ok(f"{name} dash: afterimages gone {GHOST_T} frames after it", not gone, f"dash end {end}: {gone}")
+    for dash in (True, False):
+        l = logs.get(f"l_black_{'shield' if dash else 'plain'}")
+        if not l:
+            continue
+        ride, dead = l.value("ride"), l.value("dead")
+        kept = bool(ride and ride[3] & 0x80 and dead and not dead[3] & 0x80)
+        pre = [v[0] for k, v in l.values.get("skip", []) if k < 60]
+        res.ok(f"Black Louie {'shield' if dash else 'plain'}: no SB5 shield on the rider before ($15A2 bit 2)",
+               bool(pre) and not any(v & 4 for v in pre), f"{pre[:3]}")
+        if dash:
+            res.ok("Black Louie: invincible while dashing (a flame on it: still riding, alive)", kept,
+                   f"ride {ride.hex() if ride else ''} dead {dead.hex() if dead else ''}")
+        else:
+            res.ok("Black Louie: (control) the same flame without a dash costs the Louie", not kept,
+                   f"ride {ride.hex() if ride else ''}")
+    l = logs.get("l_black_push")
+    if l:
+        a, al = _enemy(l)
+        if a is None:
+            res.ok("Black Louie push: an enemy lined up 3 cells ahead", False, al.hex() if al else "no log")
+        else:
+            tr, me = dict(_track(l, a)), dict(_track(l, 3))
+            on = [k for k, v in l.values.get("push", []) if v[a]]
+            if not on:
+                res.ok("Black Louie: the dash pushes the enemy ahead", False, "no push")
+            else:
+                k0, k1 = on[0] - 1, on[-1] + 1
+                ex0, ex1 = tr[k0][0], tr[k1][0]
+                res.ok(f"Black Louie: the enemy ahead is pushed {PUSH_PX} pixels (frames {k0}-{k1})", ex1 - ex0 == PUSH_PX,
+                       f"{ex0} -> {ex1}")
+                res.ok("Black Louie: the dash stops at the enemy (no pass through)", me[k1][0] < ex1 and me[139][0] == me[k1][0],
+                       f"P4 {me[42][0]} -> {me[k1][0]} -> {me[139][0]}, enemy {ex1}")
+        # the impact: 15 frames (0.25 s) on the shoulder charge's last pose (mapping of its pair 7: right = 79;
+        # !IMP is read after that frame's count: 14 nonzero reads)
+        imp = [k for k, v in l.values.get("imp", []) if v[0]]
+        mobj = dict(l.values.get("mobj", []))
+        maps = dict(l.values.get("maps", []))
+        held = [maps[k][mobj[k][0]] for k in imp if k in maps and k in mobj]
+        an = [a for k, a in l.anims.get(MOUNT0 + 3, []) if 44 <= k < (imp[0] if imp else 140)]
+        res.ok("Black Louie: the whole dash on the shoulder charge, then its last pose held 15 frames where it hit",
+               14 <= len(imp) <= 15 and set(held) == {79} and an and all(a == 0x1F for a in an),
+               f"hold frames {len(imp)}, mappings {sorted(set(held))}, animations {[hex(a) for a in an]}")
+
+
+def _bomb_cells(l, seat=None):
+    """[(k, sorted cells of the live bombs)]"""
+    return [(k, sorted(c for i, owner, c, mo, obj in live if seat is None or owner == seat)) for k, live in _bombs(l)]
+
+
+def _eval_yellow(res, logs):
+    l = logs.get("l_yellow_train")
+    if l:
+        seq = _bomb_cells(l, 2)
+        first = seq[0][1] if seq else []
+        last = seq[-1][1] if seq else []
+        want0 = [cell(x, ROW) for x in (3, 4, 5)]
+        want1 = [cell(x, ROW) for x in (11, 12, 13)]
+        together = all(len(c) == 3 and c[2] - c[0] == 2 for k, c in seq)
+        res.ok("Yellow Louie: a row of 3 bombs rolls away together to the wall", first == want0 and last == want1 and together,
+               f"{[hex(c) for c in first]} -> {[hex(c) for c in last]}")
+        m = l.value("map")
+        res.ok("Yellow Louie: the bombs' cells are marked at the end ($1052 bit 6)",
+               bool(m) and bool(last) and all(m[c] & 0x40 for c in last), " ".join(f"{m[c]:02X}" for c in last) if m else "")
+        n = len(_cmds(l, SFX["kick"]))
+        res.ok("Yellow Louie: a kick sound", n >= 1, f"{n}")
+    l = logs.get("l_yellow_pickup")
+    if l:
+        seq = _bomb_cells(l, 2)
+        last = seq[-1][1] if seq else []
+        res.ok("Yellow Louie: the rolling bomb takes the bomb it meets along",
+               last == [cell(12, ROW), cell(13, ROW)], f"{[hex(c) for c in last]}")
+    l = logs.get("l_yellow_soft")
+    if l:
+        seq = _bomb_cells(l, 2)
+        last = seq[-1][1] if seq else []
+        m1 = dict(l.values.get("map", [])).get(179)
+        res.ok("Yellow Louie: the bomb stops at a soft block, which slides on to the wall",
+               last == [cell(6, ROW)] and bool(m1) and m1[cell(7, ROW)] != 0x30 and m1[cell(13, ROW)] == 0x30,
+               f"bomb {[hex(c) for c in last]}, map 7: {m1[cell(7, ROW)]:02X} 13: {m1[cell(13, ROW)]:02X}" if m1 else "")
+    l = logs.get("l_yellow_block")
+    if l:
+        seq = _bomb_cells(l, 2)
+        last = seq[-1][1] if seq else []
+        m1 = dict(l.values.get("map", [])).get(149)
+        res.ok("Yellow Louie: SB5's soft block kick; the block stops at a bomb, which rolls on to the wall",
+               last == [cell(13, ROW)] and bool(m1) and m1[cell(3, ROW)] != 0x30 and m1[cell(8, ROW)] == 0x30,
+               f"bomb {[hex(c) for c in last]}, map 3: {m1[cell(3, ROW)]:02X} 8: {m1[cell(8, ROW)]:02X}" if m1 else "")
+
+
+def _eval_b(res, logs):
+    l = logs.get("l_pink_jump")
+    if l:
+        tr = dict(_track(l, 0))
+        jump = [k for k, v in l.values.get("ride", []) if v[0] & 2]
+        res.ok("Pink Louie: SB5's jump ($1782 bit 1) and its sound", bool(jump) and len(_reqs(l, SND_PINK, 58, 70)) == 1,
+               f"{jump[:1]}..{jump[-1:]} sound {_reqs(l, SND_PINK)}")
+        # its shadow on the ground (type 0 animation $0A, mapping 39: SB5's quarter $0EB drawn 4 times, flipped;
+        # features/bombs.py), the 16 x 16 ellipse while the rider is up
+        bad = []
+        for k, o in l.values.get("oam", []):
+            ps = [(o[4 * i], o[4 * i + 1], o[4 * i + 3] & 0xC0) for i in range(128)
+                  if o[4 * i + 2] == 0xEB and not o[4 * i + 3] & 1 and o[4 * i + 1] < 0xE0]
+            xs, ys = {x for x, _, _ in ps}, {y for _, y, _ in ps}
+            if not (len(ps) == 4 and {f for _, _, f in ps} == {0, 0x40, 0x80, 0xC0} and len(xs) == len(ys) == 2
+                    and max(xs) - min(xs) == 8 and max(ys) - min(ys) == 8):
+                bad.append((k, ps))
+        res.ok("Pink Louie: a shadow on the ground under the jump (4 pieces of tile $0EB, flipped)",
+               l.values.get("oam") and not bad, f"{bad[:2]}")
+    l = logs.get("l_type4_bomb")
+    if l:
+        fly = [(k, c, mo) for k, live in _bombs(l) for i, owner, c, mo, obj in live if mo & 0x30]
+        res.ok("type 4 Louie: the bomb ahead is sent off (moving / flying)", bool(fly), f"{fly[:3]}")
+    l = logs.get("l_type5_line")
+    if l:
+        got = sorted({c for k, c in _bomb_cells(l, 2) if k >= 54 for c in c})
+        res.ok("type 5 Louie: SB5's Y drops a bomb under the rider ($C4:300C)", got == [cell(2, ROW)],
+               f"{[hex(c) for c in got]}")
+    hatch = _hatch_range()
+    res.ok("eggs: louie_hatch draws 0-6 (the Black Louie too)", hatch == 6, f"{hatch}")
+
+
+def _eval_egg(res, logs):
+    l = logs.get("l_egg_order")
+    if l:
+        mchr, ride = l.value("mchr"), l.value("ride")
+        got = [mchr[s] if ride and ride[s] & 0x80 else None for s in range(2)] if mchr else []
+        res.ok("1-1 egg test: the eggs hatch Louies 0, 1, ... in the order taken (one of each, la_hatch)",
+               got == [0, 1], f"{got}")
+    l = logs.get("l_black_egg")
+    if l:
+        mchr, ride, mobj, slots = (l.value(n) for n in ("mchr", "ride", "mobj", "slots"))
+        ok = bool(mchr and ride and mobj and mchr[3] == BLACK and ride[3] & 0x80 and mobj[3] < 0x80)
+        res.ok("Black Louie: hatches out of an egg (type 6), P4 rides it", ok,
+               f"types {mchr.hex() if mchr else ''} ride {ride.hex() if ride else ''}")
+        res.ok("Black Louie: its own colors (a Louie palette slot)", ok and slots[mobj[3]] != 0xFF,
+               f"slot {slots[mobj[3]] if ok else ''}")
+        res.ok("Black Louie: its cry", len(_cmds(l, LOUIE_CRY + BLACK)) >= 1, f"{[hex(c) for k, c in l.cmds]}")
+        ups = [a for k, a in l.anims.get(3, []) if k >= 170]
+        res.ok("Black Louie: P4 rides it (a riding animation walking up)", any(RIDE_ALL[0] <= a <= RIDE_ALL[1] for a in ups)
+               or any(a >= 0x05 for a in ups), f"{[hex(a) for a in ups]}")
+
+
+def _hatch_range():
+    p = os.path.join(_root(), "build", "Super Bomberman 6.sfc")
+    if not os.path.exists(p):
+        return None
+    d = open(p, "rb").read()
+    o = lambda a: ((a >> 16) & 0x3F) << 16 | (a & 0xFFFF)
+    j = d[o(0xC45148):o(0xC45148) + 4]
+    t = j[1] | j[2] << 8 | j[3] << 16
+    b = d[o(t):o(t) + 4]
+    if b[0] == 0x22:                       # (louie_abilities' la_hatch: SB5's random draw in its .random path)
+        t = b[1] | b[2] << 8 | b[3] << 16
+    i = d.find(bytes.fromhex("22 EB 1D C0"), o(t), o(t) + 64)
+    return d[i - 1] if i >= 2 and d[i - 2] == 0xA9 else None

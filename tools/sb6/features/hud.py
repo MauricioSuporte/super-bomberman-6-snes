@@ -29,8 +29,10 @@ Here:
 * Below the HUD lines SB5's stage IRQ shows the field (BG3 scroll 0: screen line s = BG3 line s + 1): BG3 rows
   2-4 of the field map hold the panel's last lines (HUD lines 20-22) and the lives tab (lines 21-30, x 116-139):
   its frame in BG3 palette 1, the heart in palette 6 (CGRAM 25-27 = items palette entries 9-11, kept for it:
-  dark red, red, white) over the backdrop (the HUD's blue): window 2 hides BG1 / BG2 in x 120-135 on screen
+  dark red, red, white) over the backdrop (the HUD's blue): window 2 hides BG1 / BG2 / OBJ in x 120-135 on screen
   lines 22-30 (asm/hud.asm hud_l21, a stage IRQ at line 31 puts the windows back).
+* Sprites pass under the HUD (SB6): the line-0 IRQ leaves OBJ out of TM until SB5's line-21 IRQ puts `$030F` back,
+  window 2 hides them behind the lives heart, the tab's frame and the panel's last lines are BG3 with priority.
 * SB5's stage IRQ ($C0:F08D line 0) shows the HUD rows (BG2 VOFS 484, BG3 446, BG1 196 / HOFS -4, TM + BG1)
   while `!on` = $A5; SB5's own HUD rows (BG2 rows 0-2, BG3 rows 63, 0-1) are still written by SB5, unseen.
   Battle (IRQ $C0:F12A) keeps SB5's HUD.
@@ -101,6 +103,7 @@ TEXT_X = (23, 85, 147, 210)             # centered between the seat's dividers /
                                         # 129-188, 191-252: text_x())
 PUSH_OF = {(49, 48, 49): 1, (107, 105, 107): 2, (255, 255, 255): 3}   # -> BG3 palette 0 ($18C6, $35AD, white)
 BLINK = 64                              # frames per blink phase ($0069 bit 6)
+STATES = 4                              # BG3 block per seat: in the game, PUSH START, blank, GAME OVER
 TAB_X, TAB_W, TAB_Y = 116, 24, 21       # lives tab: x 116-139, HUD lines 21 (top) - 30 (bottom line)
 TAB_BOTTOM = 30
 HEART_X = 123                           # Unity's 9 x 9 Lifes heart without row 2: lines 22-29
@@ -336,17 +339,18 @@ def head_record(tpls, cols, p1, shift=0):
     return rec, out[shift]
 
 
-def text_pixels():
-    """(entries 19 x 23): SB6's PUSH START (assets/hud/PushStart.png = Unity's HUD/Push_start.png) in BG3
-    palette 0 (dark, grey, white), 0 = see-through."""
-    img = _load("PushStart")
+def text_pixels(name="PushStart"):
+    """(entries 19 x 23): SB6's PUSH START (assets/hud/PushStart.png = Unity's HUD/Push_start.png) or GAME OVER
+    (GameOver.png, the same letters' style: a seat out of the stage when no life is left) in BG3 palette 0
+    (dark, grey, white), 0 = see-through."""
+    img = _load(name)
     pic = np.zeros(img.shape[:2], np.int32)
     for y in range(img.shape[0]):
         for x in range(img.shape[1]):
             if img[y, x, 3] >= 128:
                 k = tuple(int(v) for v in img[y, x, :3])
                 if k not in PUSH_OF:
-                    raise BuildError(f"hud: PushStart.png color {k}")
+                    raise BuildError(f"hud: {name}.png color {k}")
                 pic[y, x] = PUSH_OF[k]
     return pic
 
@@ -372,7 +376,7 @@ def text_x(seat):
 
 def bg3_picture(states):
     """(palettes, entries) 23 x 256 of BG3's HUD lines; states per seat: 0 in the game (grid), 1 PUSH START,
-    2 out, blank (blink)."""
+    2 out, blank (blink), 3 GAME OVER (out, no life left)."""
     base = _load("HudBase")
     ent = np.zeros((HUD_LINES, 256), np.int32)
     pal = np.full((HUD_LINES, 256), BG3_PAL, np.int32)
@@ -383,7 +387,7 @@ def bg3_picture(states):
     for x in DIVIDERS:
         ent[2:20, x] = 3
         ent[2:20, x + 1] = 1
-    text = text_pixels()
+    texts = {1: text_pixels(), 3: text_pixels("GameOver")}
     for seat, st in enumerate(states):
         sx = SEAT_X[seat]
         if st == 0:
@@ -397,7 +401,8 @@ def bg3_picture(states):
             ent[19, x0 - 1:x0 + w + 2] = 3              # a second bottom line and a shadow at the bottom right
             ent[18, x0 + w + 1] = 1
             ent[19, x0 + w + 2] = 1
-        elif st == 1:
+        elif st in texts:
+            text = texts[st]
             y0, x0 = TEXT_Y, TEXT_X[seat]
             m = text != 0
             ent[y0:y0 + len(text), x0:x0 + text.shape[1]][m] = text[m]
@@ -572,7 +577,7 @@ def build(base_rom, p1):
     blocks = []
     for s, (c0, n) in enumerate(BG3_COLS):
         var = []
-        for st in range(3):
+        for st in range(STATES):
             states = [2] * 4
             states[s] = st
             var.append(rows_of(*hud_pic(states), BG3_ROWS, range(c0, c0 + n), f"seat {s + 1}"))
@@ -622,10 +627,12 @@ def seat_words(t, seat, rec, head_bits=0):
     return [h[0], h[1], d[0], d[1], iw[p0], iw[p1], iw[p2]], [h[2], h[3], d[2], iw[bt], iw[p3], iw[p4], iw[p5]]
 
 
-def record(act, fire, speed_word, bombs, ab, f167a, hearts, frame=0):
-    """A seat's record from SB5's RAM, as build_rec computes it (frame = $0069: an out seat's blink phase)."""
+def record(act, fire, speed_word, bombs, ab, f167a, hearts, frame=0, lives=1):
+    """A seat's record from SB5's RAM, as build_rec computes it (frame = $0069: an out seat's blink phase;
+    lives = $1D23: none left = GAME OVER, 2, blinking as PUSH START)."""
     if not act:
-        return (0, frame >> 6 & 1) + (0,) * (REC - 2)
+        on = frame >> 6 & 1
+        return (0, 2 if on and lives == 0 else on) + (0,) * (REC - 2)
     clamp = lambda v: min(v, 9)
     speed = 1 if speed_word < 0xE0 else clamp((speed_word - 0xC0) >> 5)
     bt = I_REMOTE if ab & 0x01 else I_PIERCE if ab & 0x10 else I_SEARCH if ab & 0x40 else I_MAGNET if ab & 0x20 \
@@ -636,7 +643,7 @@ def record(act, fire, speed_word, bombs, ab, f167a, hearts, frame=0):
 
 
 def seat_state(rec):
-    return 0 if rec[0] else 1 if rec[1] else 2
+    return 0 if rec[0] else 3 if rec[1] == 2 else 1 if rec[1] else 2
 
 
 def seat_head(t, seat, picks=None):
@@ -736,10 +743,10 @@ def apply(rb, base_rom, preview=None):
     words = []
     for s in range(4):
         words += t["head_words"][s] + t["dyn_words"][s]
-    block = [w for s in range(4) for st in range(3) for r in t["bg3_block"][s][st] for w in r]
+    block = [w for s in range(4) for st in range(STATES) for r in t["bg3_block"][s][st] for w in r]
     blkoff, a = [], 0
     for s in range(4):
-        for st in range(3):
+        for st in range(STATES):
             blkoff.append(a)
             a += BG3_ROWS * BG3_COLS[s][1]
     hrec_at = heads + len(t["head_tpl"])
@@ -807,10 +814,10 @@ def apply(rb, base_rom, preview=None):
     irq30 = stub + 16
     code = bytes.fromhex("C2 20 A9") + bytes([irq30 & 0xFF, irq30 >> 8 & 0xFF]) + bytes.fromhex(
         "8D 6D 00 E2 20 A9 1F 8D 09 42 60")
-    # line 31: window settings (W12SEL, TMW, TSW, WBGLOG) back from their shadows, next IRQ = line 0 ($C0:F08D);
+    # line 31: window settings (W12SEL, TMW, TSW, WBGLOG, WOBJSEL, WOBJLOG) back from their shadows, next IRQ = line 0 ($C0:F08D);
     # no H-blank wait (HUD line 30's x 118-137 is the tab's bottom line, opaque BG3 over the whole window: a
     # change mid-line shows nothing, and the wait cost 1-3 a frame now and then)
-    code += bytes.fromhex("20 AC F1 AD 06 03 85 23 AD 11 03 85 2E AD 12 03 85 2F AD 0D 03 85 2A 9C 09 42 C2 20 A9 8D F0 8D 6D 00 E2 20 60")
+    code += bytes.fromhex("20 AC F1 AD 06 03 85 23 AD 11 03 85 2E AD 12 03 85 2F AD 0D 03 85 2A AD 08 03 85 25 AD 0E 03 85 2B 9C 09 42 C2 20 A9 8D F0 8D 6D 00 E2 20 60")
     if rb.alloc("c0_hi", code, "HUD: stage IRQ line 23 -> line 31 (window 2 closed), then line 0") != stub:
         raise BuildError("hud: c0 stub moved")
     rb.patch(0xC0F07F, bytes.fromhex("C2 20 A9 8D F0 8D 6D 00 E2 20 9C 09 42 60"),

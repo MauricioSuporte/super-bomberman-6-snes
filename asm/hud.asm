@@ -52,7 +52,8 @@ org !ORG
 !p0     = !V+$61        ; 4 bit planes of a row
 !hd     = !V+$66        ; word: buffer offset
 !cd     = !V+$68        ; row_words: code
-!bst    = !V+$6A        ; per seat: BG3 block state drawn (0 in, 1 PUSH START, 2 blank; $FF = draw it)
+!bst    = !V+$6A        ; per seat: BG3 block state drawn (0 in, 1 PUSH START, 2 blank, 3 GAME OVER; $FF = draw it)
+!fph    = !V+$6E        ; parts of the rows left to queue (full_part), one per check
 !REC    = 11
 !BUF    = $7FEC00       ; heads, 128 bytes per seat
 !PK     = $7FFF00       ; asm/picker.asm: +1 choices valid, +2 choice (1-7) per seat, +8 color per seat
@@ -94,6 +95,7 @@ hud_load:
     lda #$01
     sta.l !full
     lda #$00
+    sta.l !fph
     sta.l !turn
     lda #$A5
     sta.l !on
@@ -104,24 +106,32 @@ hud_load:
     plp
     rtl
 
-; every row of the HUD (BG2 / BG3 HUD rows, the field's BG3 rows 2-4), every seat and the lives drawn again;
-; M/X 16, DB $7E
-full_rows:
-    lda.w #!BG2MV
-    ldx.w #!BG2M&$FFFF
-    ldy.w #256
-    jsr qcopy
-    lda.w #!BG1MV
-    ldx.w #!BG1M&$FFFF
-    ldy.w #256
-    jsr qcopy
-    lda.w #!BG3MV
-    ldx.w #!BG3M&$FFFF
-    ldy.w #!BG3MN
-    jsr qcopy
+; every row of the HUD (BG2 / BG3 HUD rows, the field's BG3 rows 2-4), every seat and the lives drawn again,
+; one part per check (!fph 4 -> 1: field rows, BG2, BG1, BG3 + every seat): SB5's VRAM queue may run past the
+; VBlank when too much is queued in one frame (the unpause's fills, bomber poses) and its last writes are lost
+; (a stretch of the panel's bottom border once); X = part 1-4; M/X 16, DB $7E
+full_part:
+    cpx.w #4
+    bne +
     lda.w #!FLDMV
     ldx.w #!FLDM&$FFFF
     ldy.w #192
+    jmp qcopy
++   cpx.w #3
+    bne +
+    lda.w #!BG2MV
+    ldx.w #!BG2M&$FFFF
+    ldy.w #256
+    jmp qcopy
++   cpx.w #2
+    bne +
+    lda.w #!BG1MV
+    ldx.w #!BG1M&$FFFF
+    ldy.w #256
+    jmp qcopy
++   lda.w #!BG3MV
+    ldx.w #!BG3M&$FFFF
+    ldy.w #!BG3MN
     jsr qcopy
     sep #$30
     lda #$FF
@@ -169,11 +179,37 @@ hud_tick:
     dec a
     sta.l !full
     bne .done
+    lda #$04
+    sta.l !fph
+    lda.w $0300                 ; screen off (the stage load): every part now, the queue has no VBlank limit
+    bpl .done
     rep #$30
-    jsr full_rows
+-   lda.l !fph
+    and.w #$00FF
+    beq +
+    tax
+    jsr full_part
     sep #$30
+    lda.l !fph
+    dec a
+    sta.l !fph
+    rep #$30
+    bra -
++   sep #$30
     bra .done
 .check:
+    lda.l !fph
+    beq .seat
+    rep #$30
+    and.w #$00FF
+    tax
+    jsr full_part
+    sep #$30
+    lda.l !fph
+    dec a
+    sta.l !fph
+    bra .done
+.seat:
     jsr purple
     sep #$30
     jsr lives
@@ -264,12 +300,18 @@ build_rec:
     lda.w $15A2,x
     bpl .in
 .out:
-    lda.w $0069                 ; out: PUSH START's blink phase (64 frames)
+    lda.w $0069                 ; out: PUSH START's blink phase (64 frames): 0 blank, 1 shown
     asl a
     asl a
     lda #$00
     rol a
-    sta.l !rec+1
+    beq +
+    lda.w $1D23                 ; shown with no life left: GAME OVER (2), blinking the same way
+    beq ++
+    lda #$01
+    bra +
+++  lda #$02
++   sta.l !rec+1
     rts
 .in:
     lda #$01
@@ -422,20 +464,26 @@ draw_seat:
     jsr row_words
     lda.l !seat                 ; BG3 block of (seat, state): BG3ROWS rows from blockw
     and.w #$00FF
-    sta.l !t2
     asl a
-    adc.l !t2                   ; seat * 3 + state (0 in, 1 PUSH START, 2 blank)
+    asl a                       ; seat * 4 + state (0 in, 1 PUSH START, 2 blank, 3 GAME OVER)
     sta.l !t2
     lda.l !rec
     and.w #$00FF
-    bne +
+    bne .st_in
     lda.l !rec+1
     and.w #$00FF
+    cmp.w #2
+    bne .st_out
+    lda.w #3
+    bra .st_got
+.st_out:
     eor.w #$0001
     inc a
-    bra ++
-+   lda.w #0
-++  pha                         ; the block only when the seat's state changed (not with its numbers)
+    bra .st_got
+.st_in:
+    lda.w #0
+.st_got:
+    pha                         ; the block only when the seat's state changed (not with its numbers)
     lda.l !seat
     and.w #$00FF
     tax
@@ -968,8 +1016,8 @@ hud_irq:
     sta $0E
     lda.b #!VOFS1>>8
     sta $0E
-    lda #$17                    ; TM: SB5's $16 + BG1
-    sta $2C
+    lda #$07                    ; TM: SB5's $16 + BG1 - OBJ: the sprites pass under the HUD (SB5's line 21 puts
+    sta $2C                     ; $030F back)
     rtl
 .stock:
     lda #$FC                    ; SB5: BG3 -4, BG2 256
@@ -983,7 +1031,8 @@ hud_irq:
 
 ; stage IRQ, line 21 ($C0:F0F1, after SB5's writes, D = $2100, DB $00, M/X 8): BG1 back to the field (BG1SC
 ; $0368, scroll $0331 / $0337: the NMI's copies; BG1's HUD rows are see-through from HUD line 20, so a late write
-; shows nothing) and window 2 on x WINL-WINR for BG1 / BG2 (the backdrop behind the lives heart) until the
+; shows nothing) and window 2 on x WINL-WINR for BG1 / BG2 / OBJ (the backdrop behind the lives heart; sprites pass
+; under the tab) until the
 ; line-31 IRQ (hud.py apply); then SB5's next IRQ line ($17)
 hud_l21:
     lda.l !on
@@ -1007,14 +1056,20 @@ hud_l21:
     ora #$88
     sta $23
     lda.w $0311
-    ora #$03
+    ora #$13
     sta $2E
     lda.w $0312                 ; the subscreen too (the pause adds half of it on the backdrop)
-    ora #$03
+    ora #$13
     sta $2F
     lda.w $030D                 ; BG1 / BG2 windows combined with OR (SB5 leaves BG2's AND: with the pause's
     and #$F0                    ; window 1 on, window 2 alone would hide nothing); outside window 2 the same
     sta $2A
+    lda.w $0308                 ; OBJ in window 2 too: the sprites pass under the lives tab (its frame is BG3
+    ora #$08                    ; with priority, above them anyway); OR with a window 1 of the stage
+    sta $25
+    lda.w $030E
+    and #$FC
+    sta $2B
 .out:
     lda #$17
     sta.w $4209
@@ -1052,7 +1107,7 @@ blkoff:  dw !BLKOFF                         ; per seat and state
 hchr:    dw !HCHR                           ; per character: its skin records, skins
 seatw:   dw !SEATW                          ; per seat: head TL, TR, BL, BR, fire, speed, bombs
 iconw:   dw !ICONW
-blockw:  dw !BLOCKW                         ; per seat and state (in, PUSH START, blank): BG3ROWS rows of BG3 words
+blockw:  dw !BLOCKW                         ; per seat and state (in, PUSH START, blank, GAME OVER): BG3ROWS rows of BG3 words
 
 print "SYM hud_begin ", hex(hud_begin)
 print "SYM hud_load ", hex(hud_load)
