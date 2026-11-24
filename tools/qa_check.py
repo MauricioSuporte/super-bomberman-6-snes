@@ -37,6 +37,8 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
   portal   World 1's exit portal (1-1 to 1-5): none while the middle cell holds a soft block, then SB1's portal
            there once every enemy is dead: appears (off / blank 3 frames x5, off 30), blinks on 3 / off 3, SB5's
            portal sound once, the cell becomes a portal, a player on it leads to the next stage
+  items    1-1 to 1-5 hide their items (features/stage_items.py); the magnet bomb (item $0F): pulled toward a frozen
+           enemy 4 cells away in each direction (not through a soft block), the item gives ability $20 and its picture
   (every scenario: SB5's static graphics queue never writes an OBJ page a bomber / Louie / egg owns)
   perf     tools/coop4_check.py (fps >= 50, Louie colors, P3/P4 colors, safe starts; ~1 min)
   flames   tools/flame_check.py (explosions look like 1-1's on every stage; ~1 min)
@@ -92,6 +94,9 @@ def _jobs():
     out["chameleons"] = [(fx, S.cham_scenarios(), S.cham_eval(fx)) for fx in S.CHAM_FX]
     out["portal"] = [(S.portal_fx(st), S.portal_scenarios(st), S.portal_eval(st), f"s{st:02X}_portal")
                      for st in S.PORTAL_NEXT]
+    out["items"] = [(S.stage_fx(st), S.items_scenarios(), S.items_eval(st), f"s{st:02X}_4p_items")
+                    for st in S.PORTAL_NEXT]
+    out["items"].append((S.FX_A, S.magnet_scenarios(), S.magnet_eval(S.FX_A), f"{S.FX_A.name}_magnet"))
     norm = {}
     for name, js in out.items():
         norm[name] = [(j[0], j[1], j[2], j[3] if len(j) > 3 else f"{j[0].name}_{name}") for j in js]

@@ -37,8 +37,8 @@ ICONS = {
     0x05: "BombPassIcon", 0x06: "DestructiblePassIcon", 0x07: "InvincibleSuitIcon", 0x08: "ClockIcon",
     0x09: "OneUpIcon", 0x0A: (8, 0),                    # geta (speed down)
     0x0B: "BombKickIcon", 0x0C: "PowerGloveIcon", 0x0D: "PierceBombIcon", 0x0E: "FullFireIcon",
-    0x0F: (9, 1),                                       # mine
-    0x10: "SearchBombIcon",                             # SB5's slow fuse bomb = SB6's search bomb
+    0x0F: "MagnetBombIcon",                             # SB5's mine = SB6's magnet bomb (features/magnet.py)
+    0x10: "SearchBombIcon",                             # SB5's bomb that chases a rival = SB6's search bomb
     0x11: "BombPunchIcon", 0x12: "SkullIcon", 0x13: "SkullIcon", 0x14: "HeartIcon",
 }
 BORDERS = [f"ItemBorder{i}" for i in range(1, 7)]

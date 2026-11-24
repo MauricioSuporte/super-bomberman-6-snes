@@ -114,9 +114,9 @@ T_TOP = 0xD1                            # the panel's top lines (HUD lines 0-1)
 T_HEAD = 0xD2                           # + 4 seat + (TL, TR, BL, BR)
 T_DYN = 0xE2                            # + 3 seat + (fire, speed, bombs)
 T_ICON = 0xEE                           # + icon - 1
-ICONS = ["DefaultBomb", "RemoteBomb", "SpikyBomb", "MineBomb", "SearchBomb", "Kick", "BombPass", "BoxingGlove",
+ICONS = ["DefaultBomb", "RemoteBomb", "SpikyBomb", "MagnetBomb", "SearchBomb", "Kick", "BombPass", "BoxingGlove",
          "PowerGlove", "ExtraLife", "SoftBlockPass", "GoldFire"]
-I_NORMAL, I_REMOTE, I_PIERCE, I_MINE, I_SEARCH, I_KICK, I_BPASS, I_PUNCH, I_GLOVE, I_HEART, I_WPASS, I_FULL = \
+I_NORMAL, I_REMOTE, I_PIERCE, I_MAGNET, I_SEARCH, I_KICK, I_BPASS, I_PUNCH, I_GLOVE, I_HEART, I_WPASS, I_FULL = \
     range(1, 13)
 DYN = ["MaxExplosionRange", "MaxSpeed", "MaxBombs"]
 
@@ -628,7 +628,7 @@ def record(act, fire, speed_word, bombs, ab, f167a, hearts, frame=0):
         return (0, frame >> 6 & 1) + (0,) * (REC - 2)
     clamp = lambda v: min(v, 9)
     speed = 1 if speed_word < 0xE0 else clamp((speed_word - 0xC0) >> 5)
-    bt = I_REMOTE if ab & 0x01 else I_PIERCE if ab & 0x10 else I_SEARCH if ab & 0x40 else I_MINE if ab & 0x20 \
+    bt = I_REMOTE if ab & 0x01 else I_PIERCE if ab & 0x10 else I_SEARCH if ab & 0x40 else I_MAGNET if ab & 0x20 \
         else I_NORMAL
     kick = I_KICK if ab & 0x02 else I_BPASS if not f167a & 0x40 else 0
     return (1, clamp(fire), speed, clamp(bombs), bt, I_HEART if hearts else 0, 0 if f167a & 0x20 else I_WPASS,
@@ -770,7 +770,7 @@ def apply(rb, base_rom, preview=None):
             "BG3MN": str(64 * BG3_ROWS), "BG3ROWS": str(BG3_ROWS), "VOFS2": f"${VOFS2:04X}", "VOFS3": f"${VOFS3:04X}", "VOFS1": f"${VOFS1:04X}",
             "HOFS1": f"${HOFS1:04X}", "WINL": str(WIN[0]), "WINR": str(WIN[1]),
             "PURPLE": f"${PURPLE:04X}", "PURPLEA": f"${0x7E2910 + 2 * PURPLE_ENTRY:06X}",
-            "I_NORMAL": str(I_NORMAL), "I_REMOTE": str(I_REMOTE), "I_PIERCE": str(I_PIERCE), "I_MINE": str(I_MINE),
+            "I_NORMAL": str(I_NORMAL), "I_REMOTE": str(I_REMOTE), "I_PIERCE": str(I_PIERCE), "I_MAGNET": str(I_MAGNET),
             "I_SEARCH": str(I_SEARCH), "I_KICK": str(I_KICK), "I_BPASS": str(I_BPASS), "I_PUNCH": str(I_PUNCH),
             "I_GLOVE": str(I_GLOVE), "I_HEART": str(I_HEART), "I_WPASS": str(I_WPASS), "I_FULL": str(I_FULL)}
     runs, syms = asar.assemble_into(rb.d, ASM, defs)

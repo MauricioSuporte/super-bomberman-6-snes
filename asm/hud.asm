@@ -307,7 +307,7 @@ build_rec:
     bcc +
     lda #9
 +   sta.l !rec+3
-    lda.w $4ED5,x               ; abilities: bomb type remote > pierce > slow fuse (search) > mine
+    lda.w $4ED5,x               ; abilities: bomb type remote > pierce > search > magnet (SB5's mine bit)
     sta.l !t0
     ldy #!I_REMOTE
     bit #$01
@@ -318,7 +318,7 @@ build_rec:
     ldy #!I_SEARCH
     bit #$40
     bne .bt
-    ldy #!I_MINE
+    ldy #!I_MAGNET
     bit #$20
     bne .bt
     ldy #!I_NORMAL

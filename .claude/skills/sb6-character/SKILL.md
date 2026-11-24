@@ -34,7 +34,9 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
    A color that is not in the palette is snapped (<= distance 200) or is an
    error. If the owner re-saves with old colors, remap only those pixels.
 3. `python tools/bomber_sheet.py check` - must print `char<n>: ok ...`;
-   it lists the animations that go "streamed pose by pose".
+   it lists the animations that go "streamed pose by pose" and any played
+   cell left blank (`celulas vazias ... 33-2`: the bomber vanishes there; the
+   QA pose check skips frames with nothing drawn, so only this catches it).
 4. `python tools/bomber_sheet.py labels` if sequences changed (rewrites the
    label column of every sheet).
 5. `python tools/build.py` - prints `char<n>: Bomberman's layout, N animations

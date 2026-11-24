@@ -1,4 +1,4 @@
 # Sequencias do char5 diferentes das do bomber_anims.txt (mesmo formato).
 #   animacao : quadros por pose : sequencia
 
-20 : 8 : 1 2 3 4                      # vitoria (loop de 1 a 4)
+20 : 8 : 1 2 3 4 5                    # vitoria (loop de 1 a 5; a 5 repete a 4)

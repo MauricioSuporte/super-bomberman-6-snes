@@ -783,7 +783,7 @@ script accumulator (`61` = add).
   `$5E`, index `$5D`, VRAM `$0800`; palette 1 = `$81:9094`, also set 6
   id 1), item ids: 1 fire, 2 bomb, 3 skate, 4 remote, 5 bomb pass, 6 wall
   pass, 7 vest, 8 clock, 9 1-up, `$0A` geta, `$0B` kick, `$0C` power
-  glove, `$0D` pierce, `$0E` full fire, `$0F` mine, `$10` slow fuse,
+  glove, `$0D` pierce, `$0E` full fire, `$0F` mine, `$10` search bomb,
   `$11` boxing glove, `$12`/`$13` skull, `$14` heart, `$15` egg (a
   sprite). SB6 icons (`features/items.py`): `$10` = SB6's search bomb,
   `$0E` Full Fire without the ring (no pixel in entry 2). The items' border is palette 1 entry 2, animated by the
@@ -805,14 +805,24 @@ script accumulator (`61` = add).
   objects in animation `$15`; 3 bodies + 4 shadows in columns 6-15.
 * Bombs: 16 x 16 OBJ pieces of type 0 (animation 1 normal: mappings 1 2 3 2,
   12 frames: tiles `$10C`/`$10E`/`$120`; pierce `$128`/`$12A`/`$12C`; remote
-  `$122`/`$124`/`$126`, 8 frames; ability `$40` (slow fuse) `$EC` 30 /
-  `$EE` 10 frames; mine `$12E`) from set 0 archive `$23` (index `$22`, LZ,
+  `$122`/`$124`/`$126`, 8 frames; ability `$40` (search bomb: chases the
+  nearest rival within 3 cells, `$C5:16D2` / `$C5:2614` / `$C5:1710`, target
+  `$0F7A`) `$EC` 30 / `$EE` 10 frames; mine `$12E`) from set 0 archive `$23` (index `$22`, LZ,
   `$CA:D400`, 96 tiles from OBJ `$0E0`, column pairs: archive tile
   `32r + 2c + line`; also stock OBJ sheet `$23`), OBJ palette 0 = set 0
   palette id `$58` (`$81:881A`): entries 1-4 used by the bombs only (OBJ
   flames 5-8 and 15, smoke 10-15, mine 1-3, 7, 14, 15; 9 only by SB5's remote
-  and slow fuse bombs). SB6's pictures, blues in 1-4, a gray in 9 and a neutral
-  outline in 14: `features/bombs.py`.
+  and search bombs). SB6's pictures, blues in 1-4, a gray in 9 and a neutral
+  outline in 14: `features/bombs.py`. Type 0 animation scripts: pairs
+  [mapping, frames], 0 frames = restart, mapping 0 = nothing drawn, `$FF` =
+  hold. Now: control bomb 1 2 3, magnet bomb `$100` / `$12E` / `$100` /
+  `$102` (medium large medium small; script in `free_c5_sheets`, mappings 16
+  17 rewritten), search bomb 4 frames of 8 x 8 pieces (mappings 11-14 in
+  `free_c5_sheets`, 13-15 px up: SB5's float); the enemy death puff
+  (animation 6) starts at its small smoke (8 x 8, moved to `$0FB`) and its
+  last frame (mapping 23, `$102`) shows nothing, the Louie mount shadow
+  (animation `$0A`, mapping 39) is gone: `$101`/`$110`/`$111`/`$102`/`$103`/
+  `$112`/`$113`/`$0EB` were theirs (`bombs.remap`).
 * SB1's MIDIs (`assets/SB1 midi`, khinsider): melodic 8-interval n-grams
   of each voice of `assets/sound/sb1_w<n>_song.txt` against each MIDI
   track: W1 `level-1-3-`, W2 `level-2`, W3 `level-3`, W4 `level-4`, W5
@@ -1738,6 +1748,42 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
   item) hides one item in a random soft block. Ids:
   `$0C` power glove, `$11` boxing glove, `$15` egg. Test items:
   `TEST_ITEMS` in tools/sb6/features/louies.py.
+* Item spreading (`$C5:3F85`, called from the stage start `$C5:3CDA` unless
+  `$1D1A & $38`; DB = `$84`): the stage's list = the (`$102F` - `$0C`)th of
+  `$C4:E5C7`, items while `$0E1F` (soft blocks to scatter, saved / restored)
+  lasts; runs over the stage's first frames (the QA fixtures' frames 1-2).
+  World 1 (`features/stage_items.py`, `asm/stage_items.asm`): `$C5:3FEF`
+  jumps to its own lists (one of each item, any player count); Battle and
+  the other stages keep SB5's. Item effects: 7 vest = `$170A` 960 frames of
+  invincibility, 8 clock = every enemy actor (5-`$17`) frozen, `$0E20` =
+  `$3C0` frames.
+* Bomb slots (20, `$C5:1A68` / `$C5:1B28` allocate): `$0E2C` object, `$0E40`
+  fuse (0 = free), `$0E68` owner, `$0E7C` cell, `$0E90` motion (low 3 bits
+  direction 1-4; `$10` rolling, `$20` airborne, `$40` carried, `$80` landed
+  hop), `$0ECC` type (1 remote, `$10` pierce, `$20` mine, `$40` search bomb),
+  `$0F10` arc step, `$0F24` hop frames, `$0F38` pixels left in the cell
+  (rolling). Update `$C5:1FC0` (DB = `$80`): rolling `$C5:2167` tests the
+  cell ahead at `$C5:2182` (`$C5:221B`, carry = taken: stop); `$C5:21F5`
+  reverses the direction and tests that way. Airborne `$C5:1FED`, landing
+  `$C5:2243` (`$80`, 4 hop frames); `$C5:210D` on the landing cell: taken
+  -> hop, then `$C5:2015` bounce sound + airborne + `$C5:2135` (one-cell arc
+  `$0F10` = `$38`); free -> `$C5:212B` stays. Animation by the owner's
+  abilities `$C5:1C1C` (type 0 animations 1 normal, 2 remote, 3 pierce, 4
+  mine (first bomb only in SB5), 5 search bomb; table `$C5:81EE`, mappings
+  `$85:8000`). Mine: `$C4:3072` (first bomb), set up `$C4:3093`.
+* Magnet bomb (`features/magnet.py`, `asm/magnet.asm`): ability `$20` /
+  item `$0F` (SB5's mine) = SB6's magnet bomb; no mine is made any more
+  (`$C4:3072` jumps over the call, SB5's mine setup `$C4:3093-$C4:30C2` is
+  freed), every bomb of its owner shows animation 4 (OBJ `$12E` / `$100` /
+  `$102`, `assets/bombs/MagnetBomb.png`), a byte per slot at `$7F:FB2C`. At
+  rest (`$C5:1FEA`, the bomb update's no-motion path) it looks along its row
+  and column (enemies = actors 5 to `$198C` alive, cell `$16AA`; the view
+  stops at `$1052 & $E8` or a bomber) and the nearest enemy 2-12 cells away
+  gets it kicked that way (SB5's kick fields, `$C5:22E6`: `$0E90` |= `$10` +
+  way, `$0F38` = `$10`, `$0F4C` = 2, `$0EE0` bit 0 clear, sound 2/`$07`); it
+  rolls until stopped (next to the enemy), waits 60 frames, looks every 4.
+  SB5's clock freezes each enemy through `$C4:22CC` with task `$C5:4319`
+  (`$0E20` alone does not). Checked by `qa_check.py items` (qa.lua `align`).
 * Power Glove lift: `$C5:2395` (bomb under the bomber, `$0E90` |= `$40`,
   carried) sets the bomb's height `$0680,Y` from `$C5:2403`: seats < 5 not on
   a Louie read `$C5:242C[$16C2]` (one byte per character 0-9, stock
@@ -1808,7 +1854,7 @@ The full list with sizes is generated in `build/sb6.map`.
   The stage sets 3:00 a few frames after the stage start (QA fixtures' frame ~200).
 * Seat stats: `$17CA` fire (Full Fire = 8), `$7E:4EBD` bombs, `$15D2`/`$15EA` speed (start `$E0`, +`$20` per
   skate, `$80-$200`), `$7E:4ED5` abilities (01 remote, 02 kick, 04 power glove, 08 boxing glove, 10 pierce,
-  20 mine, 40 slow fuse), `$167A` (`$E0`; bit 6 clear = bomb pass, the kick sets it; bit 5 clear = soft block
+  20 mine, 40 search bomb), `$167A` (`$E0`; bit 6 clear = bomb pass, the kick sets it; bit 5 clear = soft block
   pass), `$1662` hearts, `$1D23` shared lives. Item handlers: table `$C5:4195` (item + 1).
 * SB6 HUD: BG2 / BG3 V scroll 484 / 450 (rows 28-31 of BG2's lower screen, rows 56-59 of BG3: HUD line y = BG3
   row 56 line y + 4, so PUSH START's last lines and the panel's bottom border, other BG3 palettes, are in different
@@ -1857,7 +1903,7 @@ The full list with sizes is generated in `build/sb6.map`.
   (stream) then `$50`, Louie cry `$48` + kind (id `$28` + n), Louie hit `$42`, time up `$58` + `$55`,
   stage clear = request (0, `$21`) (command 3).
 * Abilities `$7E:4ED5+seat`: `01` remote (B), `02` kick (item `$0B`), `04` power glove (item `$0C`),
-  `08` boxing glove (item `$11`), `10` pierce (item `$0D`), `20` mine (item `$0F`), `40` item `$10`
+  `08` boxing glove (item `$11`), `10` pierce (item `$0D`), `20` mine (item `$0F`; SB6's magnet bomb now), `40` item `$10`
   (later fuse). Items `05` / `06` clear `$167A` bits 6 / 5. Fire range `$17CA+seat`.
 * Time: `$0E1E` minutes, `$0E1D` seconds, `$0E1C` frames.
 * 1-6's Golden drops the kick at its cell 60 frames after its death (`$C4:3E10` -> `$C5:4557`); a bomb of

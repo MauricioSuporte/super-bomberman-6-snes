@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, hud, items, louies, menu_bg, options, pause, picker, portal, sb1_enemies, sb1_music, sb1_stages, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, hud, items, louies, menu_bg, options, pause, picker, portal, magnet, sb1_enemies, sb1_music, sb1_stages, stage_items, title, title_music, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -158,6 +158,8 @@ def main():
         info = bombers.apply(rb, base_rom, sheets, os.path.join(bdir, "bomber.png"), chars_dir=bdir, menu_bg=mbg,
                              enemies=en_defs)
     sheets.finish()                  # also frees the stock OBJ sheet table (free_c5_sheets)
+    brm = bombs.remap(rb)            # magnet bomb animation (free_c5_sheets), mappings off its freed tiles
+    print(f"bombs: magnet bomb animation at ${brm['anim']:06X}; mappings moved off its tiles: {brm['mappings']}")
     bombers.free_stock_sheets(rb, base_rom)  # SB5's character sheets 1-20 (every character uses SB6 sheets)
     sb1_music.late_alloc(rb)                     # 1-7's boss song: first thing in free_c7_sheets
     sb1_enemies.clown_alloc(rb, clown["bg"])  # 1-7's clown pictures (first in free_c8_sheets)
@@ -173,6 +175,11 @@ def main():
     print(f"explosions: SB6 flame tiles ({fx['lz']} bytes LZ), fire colors (set 6 palette 2); "
           f"items: {it['tiles'] // 128} SB6 icons ({it['lz']} bytes LZ) in "
           f"{it['colors']} colors + the blinking border, mean error {it['error']:.1f} (Lab; build/items_preview.png)")
+    mag = magnet.apply(rb)
+    sit = stage_items.apply(rb)
+    print("magnet bomb: item $0F (SB5's mine, freed) -> SB6's magnet bomb (kicked toward an enemy in its row / "
+          f"column); code ${mag['mg_alloc']:06X}-${mag['end_c5']:06X}")
+    print("stage items: " + "; ".join(f"{s} " + ", ".join(v) for s, v in sit.items()))
 
     # after the stock sheets are freed: the title's alternate pose steps also use free_c8_sheets
     tinfo = title.apply(rb, os.path.join(ROOT, "assets", "title"), args.out, starts, cfg["version_text"], boot,

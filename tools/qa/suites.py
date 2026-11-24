@@ -10,7 +10,7 @@ Facts measured in Mesen for these checks (SB5's ids unless said; docs/ROM_MAP.md
     time up $58 + $55, cornered $5E, enemy death $5F, player death $60, 1-6 mecha death (crowd) $61; stage
     clear = request (0, $21) (command 3), boss victory music = request (0, $0F)
   abilities $7E:4ED5+seat: 01 remote, 02 kick, 04 power glove (blue: lift / throw), 08 boxing glove (red:
-    punch, Y), 10 pierce, 20 mine, 40 (slow fuse); fire range $17CA+seat; time $0E1E minutes / $0E1D seconds
+    punch, Y), 10 pierce, 20 magnet bomb (SB5's mine), 40 search bomb; fire range $17CA+seat; time $0E1E minutes / $0E1D seconds
   World 1 portal: object type ($04FF+obj) 6, mapping $049F+obj 1 off / 2 on / 3 blank, cell $1152 bit 6, door cell
     $7F:FB10/11, request (2, $33) when it appears; enemy HP $1662+actor (knights 2, 180 frames grace after a hit)
 """
@@ -837,7 +837,7 @@ def fx_eval(fx):
     base = open(os.path.join(ROOT, "Super Bomberman 5 (USA).sfc"), "rb").read()
     egg = eggs.tiles(base)
     egg_cols = [(r >> 3) | (g >> 3) << 5 | (b >> 3) << 10 for r, g, b in eggs._palette(base)]
-    bomb_pics, _ = bombs.pictures(base)
+    bomb_pics, bomb_small, _ = bombs.pictures(base)
     bomb_pal = bombs.palette(base)
 
     def words_of(d, sc):
@@ -869,7 +869,7 @@ def fx_eval(fx):
         res.ok("items: Full Fire has no blinking border (no pixel in the border's entry)", not no_ring,
                f"items {no_ring}")
         sb = tiles[128 * (0x10 - 1):128 * 0x10]
-        res.ok("items: the slow fuse bomb ($10) shows SB6's search bomb icon",
+        res.ok("items: the search bomb item ($10) shows SB6's search bomb icon",
                items.ICONS[0x10] == "SearchBombIcon" and d0.vram[a + 128 * 15:a + 128 * 16].tobytes() == sb)
         # ---- the border's blink: SB6's colors in its order
         seq = [int.from_bytes(v, "little") for k, v in sorted(l.values.get("ring", []))]
@@ -900,6 +900,8 @@ def fx_eval(fx):
         bad = [f"${t:03X}" for t, p in bomb_pics.items()
                if any(vr[(OBJ_BASE + 16 * (t + 16 * dy + dx)) * 2:(OBJ_BASE + 16 * (t + 16 * dy + dx)) * 2 + 32]
                       != encode_4bpp(p[8 * dy:8 * dy + 8, 8 * dx:8 * dx + 8]) for dy in (0, 1) for dx in (0, 1))]
+        bad += [f"${t:03X}" for t, p in bomb_small.items()
+                if vr[(OBJ_BASE + 16 * t) * 2:(OBJ_BASE + 16 * t) * 2 + 32] != encode_4bpp(p)]
         res.ok("bombs: SB6's bomb pictures in VRAM (normal, pierce, remote, search)", not bad, f"wrong {bad}")
         got = [int(v) for v in d0.cg[128:144]]
         res.ok("bombs: OBJ palette 0 = palette $58 with SB6's blues", got == bomb_pal,
@@ -1469,5 +1471,191 @@ def portal_eval(stage):
         _portal_sound(res, name, l, tag)
         res.ok(f"{name}: entering it leads to ${PORTAL_NEXT[stage]:02X}",
                any(m == PORTAL_NEXT[stage] for _, m in l.modes), f"modes {l.modes}")
+        return res
+    return ev
+
+
+# ---------------------------------------------------------------- stage items, magnet bomb
+# features/stage_items.py: World 1's soft blocks hide exactly ITEMS[stage] (item map $145A; SB5 spreads them over
+# the fixture's first frames: read at frame 60, before anyone burns a block). features/magnet.py: item $0F (SB5's
+# mine) = ability $20 = SB6's magnet bomb (bomb slot arrays: $0E2C object, $0E40 fuse (0 = free), $0E68 owner, $0E7C
+# cell, $0E90 motion; the object's animation $079F+obj = type 0 animation 4). Enemies: actors 5 and up (cell $16AA),
+# frozen by the clock's timer $0E20 (word).
+B_MAGNET = 0x20
+MAGNET_ANIM = 4
+MAG_DIST = 4                    # the enemy, 4 cells away: the bomb stops 3 cells away, next to it
+
+
+def items_scenarios():
+    return [Scenario("i_map", 64, steps=[[60, "read", "map", 0x145A, 256]])]
+
+
+def items_eval(stage):
+    from sb6.features import stage_items as SI
+    name = STAGES[stage]
+
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs.get("i_map")
+        m = l.value("map") if l else None
+        if not m:
+            res.ok(f"{name}: item map read", False, "no log")
+            return res
+        got = sorted(v for v in m if v)
+        want = sorted(SI.ITEMS[stage])
+        res.ok(f"{name}: soft blocks hide {', '.join(SI.NAMES.get(i, f'${i:02X}') for i in SI.ITEMS[stage])}", got == want,
+               " ".join(f"{v:02X}" for v in got))
+        return res
+    return ev
+
+
+def _bomb_reads(k0, k1, every=2):
+    return [[k, "read", "bombs", 0x0E2C, 0x78] for k in range(k0, k1, every)]
+
+
+def _bombs(l):
+    """[(k, [(slot, owner, cell, motion, obj)] of the live bombs)] from the "bombs" reads ($0E2C + 6 arrays)."""
+    out = []
+    for k, b in l.values.get("bombs", []):
+        live = [(i, b[0x3C + i], b[0x50 + i], b[0x64 + i], b[i]) for i in range(20) if b[0x14 + i]]
+        out.append((k, live))
+    return out
+
+
+def _magnet_pull(name, d, soft=False):
+    """P1 takes the clock (every enemy frozen), then stands MAG_DIST cells from a frozen enemy that lies in direction
+    d (qa.lua `align`: the line cleared, no other enemy in P1's row / column; soft: a soft block in its middle) and
+    drops a magnet bomb."""
+    st = [[1, "poke", 0x4ED5, B_MAGNET], [2, "item", 0, 0x08, 1], [4, "pad", 0, "right", 16],
+          [40, "align", 0, d, MAG_DIST], [42, "read", "at", 0x16AA, 1]]
+    if soft:
+        st.append([41, "soft_mid", 0])
+    st += [[50, "pad", 0, "a", 3]] + _bomb_reads(52, 170)
+    return Scenario(name, 170, steps=st)
+
+
+def _path(l, seat=0):
+    path = []
+    for k, live in _bombs(l):
+        for i, owner, c, mo, obj in live:
+            if owner == seat and (not path or path[-1] != c):
+                path.append(c)
+    return path
+
+
+def magnet_scenarios():
+    sc = [_magnet_pull(f"m_pull_{DIRS[d]}", d) for d in range(4)]
+    sc.append(_magnet_pull("m_blocked", 0, soft=True))
+    # the item: P1 walks onto item $0F, then drops a bomb (no enemy left to pull it)
+    st = arenas() + [[1, "burn", 20], [4, "item", 0, 0x0F, 1], [6, "pad", 0, "right", 16], [40, "read", "ab", 0x4ED5, 4],
+                     [96, "pad", 0, "a", 3], [104, "read", "bombs", 0x0E2C, 0x78], [104, "read", "anims", 0x079F, 0x60]]
+    st += [[k, "readoam", "oam"] for k in range(104, 170)]
+    sc.append(Scenario("m_item", 170, steps=st))
+    # the control bomb's frames, the search bomb's, the enemy death puff (none of the magnet bomb's tiles)
+    st = arenas() + [[1, "poke", 0x4ED5, B_REMOTE], [6, "pad", 0, "a", 3]] + [[k, "readoam", "oam"] for k in range(10, 60)]
+    sc.append(Scenario("m_control", 60, steps=st))
+    st = arenas() + [[1, "burn", 20], [1, "poke", 0x4ED5, 0x40], [96, "pad", 0, "a", 3]]   # (no enemy left to chase)
+    st += [[k, "readoam", "oam"] for k in range(100, 160)]
+    sc.append(Scenario("m_search", 160, steps=st))
+    sc.append(Scenario("m_puff", 60, steps=[[5, "burn", 30]] + [[k, "readoam", "oam"] for k in range(5, 60)]))
+    return sc
+
+
+def _oam_flip(o):
+    """[(tile, palette, big, h flip)] of the visible OAM entries."""
+    out = []
+    for i in range(128):
+        x, y, t, a = o[4 * i:4 * i + 4]
+        hi = o[512 + i // 4] >> (2 * (i % 4))
+        if y < 0xE0:
+            out.append((t | (a & 1) << 8, (a >> 1) & 7, hi >> 1 & 1, a >> 6 & 1))
+    return out
+
+
+def magnet_eval(fx):
+    def ev(logs, boot, tag):
+        res = Result()
+        for d in range(4):
+            name = f"m_pull_{DIRS[d]}"
+            l = logs.get(name)
+            if not l:
+                continue
+            dx, dy = STEP[d]
+            al = l.value("align")
+            if not al or len(al) < 2:
+                res.ok(f"magnet {DIRS[d]}: an enemy to line up with", False, al.hex() if al else "no log")
+                continue
+            p1, en = al[0], al[1]
+            step = dx + 16 * dy
+            want = [(p1 + i * step) & 0xFF for i in range(MAG_DIST)]
+            path = _path(l)
+            res.ok(f"magnet {DIRS[d]}: the bomb goes to the frozen enemy {MAG_DIST} cells away ({en:02X}), stops next to it",
+                   path == want, " ".join(f"{c:02X}" for c in path) + f" (want {' '.join(f'{c:02X}' for c in want)})")
+            res.ok(f"magnet {DIRS[d]}: kick sound", len(_cmds(l, SFX["kick"])) >= 1, f"{len(_cmds(l, SFX['kick']))}")
+        l = logs.get("m_blocked")
+        if l:
+            al = l.value("align")
+            path = _path(l)
+            res.ok("magnet: a soft block between the bomb and the enemy: the bomb stays",
+                   bool(al) and len(al) >= 2 and path == [al[0]], " ".join(f"{c:02X}" for c in path))
+        l = logs.get("m_item")
+        if l:
+            ab = l.value("ab")
+            res.ok("magnet item: P1 gets ability $20", bool(ab and ab[0] & B_MAGNET), ab.hex() if ab else "")
+            mine = [(i, obj) for k, live in _bombs(l) for i, owner, c, mo, obj in live if owner == 0]
+            anims = l.value("anims")
+            res.ok("magnet item: P1's bomb shows animation 4 (the magnet bomb)",
+                   bool(mine) and anims and all(anims[obj] == MAGNET_ANIM for i, obj in mine),
+                   f"{[(i, hex(obj), hex(anims[obj]) if anims else '') for i, obj in mine]}")
+            seq = []
+            for k, o in l.values.get("oam", []):
+                f = [t for t, pal, big, fl in _oam_flip(o) if pal == 0 and big and t in (0x12E, 0x100, 0x102)]
+                if f and (not seq or seq[-1] != f[0]):
+                    seq.append(f[0])
+            want = [0x100, 0x12E, 0x100, 0x102]
+            res.ok("magnet bomb: frames medium large medium small", any(seq[i:i + 4] == want for i in range(4)),
+                   " ".join(f"{t:03X}" for t in seq))
+        l = logs.get("m_control")
+        if l:
+            seq, flip = [], False
+            for k, o in l.values.get("oam", []):
+                f = [(t, fl) for t, pal, big, fl in _oam_flip(o) if pal == 0 and big and t in (0x122, 0x124, 0x126)]
+                flip |= any(fl for t, fl in f)
+                if f and (not seq or seq[-1] != f[0][0]):
+                    seq.append(f[0][0])
+            ok = len(seq) >= 5 and all(seq[i + 1] == (0x122, 0x124, 0x126)[((0x122, 0x124, 0x126).index(seq[i]) + 1) % 3]
+                                       for i in range(len(seq) - 1))
+            res.ok("control bomb: frames 1 2 3 1 2 3, never mirrored", ok and not flip,
+                   " ".join(f"{t:03X}" for t in seq) + (" (mirrored)" if flip else ""))
+        l = logs.get("m_search")
+        if l:
+            seq = []
+            for k, o in l.values.get("oam", []):
+                e = [(t, big) for t, pal, big, fl in _oam_flip(o) if pal == 0]
+                f = (1 if (0x0EC, 1) in e else 2 if (0x0EE, 0) in e else 3 if (0x0EF, 0) in e and (0x0FF, 0) in e
+                     else 4 if (0x0FE, 0) in e and (0x0FF, 0) in e else 0)
+                if f and (not seq or seq[-1] != f):
+                    seq.append(f)
+            ok = len(seq) >= 5 and all(seq[i + 1] == seq[i] % 4 + 1 for i in range(len(seq) - 1))
+            res.ok("search bomb: frames 1 2 3 4 (8 x 8 pieces)", ok, " ".join(map(str, seq)))
+            ys = sorted({y for k, o in l.values.get("oam", []) for x, y, t, pal, big in _oam(o) if pal == 0 and t == 0x0EC})
+            res.ok("search bomb: floats (its top 2 pixels up and down)", len(ys) == 3 and ys[-1] - ys[0] == 2,
+                   " ".join(map(str, ys)))
+        for name in ("m_puff", "m_control", "m_item", "m_search"):
+            l = logs.get(name)
+            if not l:
+                continue
+            bad, smoke = set(), False
+            for k, o in l.values.get("oam", []):
+                for t, pal, big, fl in _oam_flip(o):
+                    if pal == 0 and not big and t in (0x100, 0x101, 0x110, 0x111, 0x102, 0x103, 0x112, 0x113, 0x0EB):
+                        bad.add(t)
+                    if pal == 0 and big and (t in (0x0EA, 0x0EB) or name != "m_item" and t in (0x100, 0x102, 0x12E)):
+                        bad.add(t)
+                    smoke |= pal == 0 and not big and t == 0x0FB
+            res.ok(f"{name}: no sprite on the magnet bomb's tiles but its own (the death puff, the Louie shadow)",
+                   not bad, " ".join(f"{t:03X}" for t in sorted(bad)))
+            if name == "m_puff":
+                res.ok("enemy death puff: its small smoke from tile $0FB", smoke)
         return res
     return ev

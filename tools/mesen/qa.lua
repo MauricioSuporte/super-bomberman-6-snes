@@ -435,6 +435,45 @@ end
 -- the item's metatile on the field layer), one per pass of the task runner (queue)
 local shows = {}
 function OPS.show_item(st) shows[#shows + 1] = {st[3], st[4]} end
+-- align seat way n: the seat stands n cells from a live enemy, the enemy that way (0 right, 1 down, 2 left, 3 up),
+-- the cells between cleared ($1052); no other enemy in the seat's row or column. "V k align <seat cell><enemy cell>"
+-- (FF: no enemy fits). For the magnet bomb's tests (enemies frozen by the clock first).
+local last_align
+function OPS.align(st)
+  local seat, d, n = st[3], st[4], st[5]
+  local dx, dy = ({1, 0, -1, 0})[d + 1], ({0, 1, 0, -1})[d + 1]
+  local last = r(0x198C)
+  local function alive(a) return r(0x17FA + a) < 0x80 and r(0x15A2 + a) < 0x80 end
+  for a = 5, last do
+    if alive(a) then
+      local c = cell_of(a)
+      local ex, ey = c & 15, c >> 4
+      local px, py = ex - n * dx, ey - n * dy
+      local ok = px >= 1 and px <= 13 and py >= 1 and py <= 11 and (px % 2 == 1 or py % 2 == 1)
+      for b = 5, last do
+        if ok and b ~= a and alive(b) then
+          local cb = cell_of(b)
+          if (cb & 15) == px or (cb >> 4) == py then ok = false end
+        end
+      end
+      if ok then
+        for i = 0, n - 1 do wr(0x1052 + (py + i * dy) * 16 + px + i * dx, 0) end
+        place(seat, px, py)
+        last_align = {px, py, dx, dy}
+        W(string.format("V %d align %02X%02X", k, py * 16 + px, ey * 16 + ex))
+        return
+      end
+    end
+  end
+  W(string.format("V %d align FF", k))
+end
+-- soft_mid: a soft block ($30) 2 cells from the seat of the last align, toward its enemy
+function OPS.soft_mid(st)
+  if last_align then
+    local px, py, dx, dy = last_align[1], last_align[2], last_align[3], last_align[4]
+    wr(0x1052 + (py + 2 * dy) * 16 + px + 2 * dx, 0x30)
+  end
+end
 local function kcb()
   if not killing and #shows > 0 then
     local c, it = shows[1][1], shows[1][2]

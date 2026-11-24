@@ -128,6 +128,12 @@ def check_chars(rom, ref):
             strips, _, mappings, streamed = bomber.convert(brc, cells, edited, stream=True)
         except ValueError as e:
             raise ValueError(f"char{c}: {e}")
+        empty = sorted({(a, i + 1) for a, maps in brc.poses() for i, m in enumerate(maps)
+                        if m in mappings and not mappings[m]})
+        if empty:
+            # a played cell left blank: the bomber vanishes in that pose (char5's throws right / down did)
+            print(f"char{c}: celulas vazias em animacoes tocadas (o bomber some nesses quadros): "
+                  + " ".join(f"{a:02X}-{i}" for a, i in empty))
         shared = pals == ref["palettes"]
         pieces = [len(p) for p in mappings.values()] or [0]
         print(f"char{c}: ok, {len(edited)} animations redrawn ({len(strips)} KB of tiles, {max(pieces)} sprites in the "

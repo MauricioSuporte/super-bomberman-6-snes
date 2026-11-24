@@ -11,7 +11,7 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$C1:FA00-$C1:FFFF` | 1.5 KB | `bank81`: palette tables and colors (must be in bank `$81`). Only free space in that bank. |
 | `$E3:DD60-$E3:FFFF` | 8.7 KB | `e3_tables`: graphics archive tables (must be in bank `$E3`). |
 | `$D0:6300-$D0:7FFF` | 7.4 KB | `d0`: stage theme tables (metatiles, collisions; must be in bank `$D0`). After theme `$2B`'s metatile table (ends `$D0:62EE`). |
-| `$C0:4D70-$C0:5EFF`, `$C1:77F0-$C1:7EFF`, `$C2:4210-$C2:7EFF`, `$C3:7E90-$C3:7FEF`, `$C4:5A40-$C4:7EFF`, `$C5:6FA0-$C5:7EFF` | | `c0`..`c5`: co-op code that must sit in the bank of the routine it hooks (`JSR`/`JMP` targets, seat-loop stubs). |
+| `$C0:4D70-$C0:5EFF`, `$C1:77F0-$C1:7EFF`, `$C2:4210-$C2:7EFF`, `$C3:7E90-$C3:7FEF`, `$C4:5A40-$C4:7EFF`, `$C5:6FA0-$C5:7EFF` | | `c0`..`c5`: co-op code that must sit in the bank of the routine it hooks (`JSR`/`JMP` targets, seat-loop stubs); `c5` also the magnet bomb (`asm/magnet.asm`) and World 1's item lists (`asm/stage_items.asm`). |
 | `$C0:FED0-$C0:FFAF` | 224 B | `c0_hi`: `$FF` padding before the header; code reached by the IRQ entry (`JMP ($006D)` runs in bank `$80`, so above `$8000`): the SB6 HUD's line-23 -> line-31 IRQ stub (46 B). |
 | `$E4:0000-$E4:FFFF` | 64 KB | `bulk`: hack code (65816), scripts, arrangements, title tiles. |
 | `$E5:0000-$EB:176A` | 390 KB | streamed BRR (title music), 404 chunks of 162 bytes per bank. |
@@ -30,6 +30,7 @@ build if any byte is not `$FF` in the base ROM. Allocations are listed in
 | `$E2:1371-$E2:1B10` | 1952 B | `free_e2`: was SB5's ZONE1/ZONE2 island arrangements (set 4 `$0F`/`$10`). Unused. |
 | `$C1:985E-$C1:99A5` | 328 B | `free_81`: was SB5's ZONE1/ZONE2 palettes (set 3 `$10`/`$11`, also set 6 `$3E`/`$3F`); bank `$81`, so it can hold palettes. Unused. |
 | `$C5:E22D-$C5:EB44` | 2328 B | `free_c5_sheets`: was the stock OBJ sheet table (`$85:E22D`, 291 entries); its only reader `$C5:6B8C` reads the copy in the OBJ banks (`tools/sb6/objsheets.py` frees it in `finish()`, so it is declared after the bomber features have allocated). Also addressable as `$85:E22D`, i.e. fit for data that must sit in a `$80-$BF` bank (sprite mappings). Unused. |
+| `$C4:3093-$C4:30C2` | 48 B | `free_c4_mine`: was SB5's mine setup (a bomb of ability `$20`); its only caller, the `JSR` at `$C4:3076`, is jumped over (`features/magnet.py`). Bank `$C4` code. Unused. |
 | `$D5:9993-$D5:A544` | 2994 B | `free_d5`: was the Hudson boot logo's tiles (set 3 archive `$46`, LZ; same entry as set 0 `$A5`, set 6 `$49`, set 8 `$81`, stock OBJ sheet 165), freed by `boot_logo.free_old`. Unused. |
 | `$DC:501D-$DC:6D0B` | 7407 B | `free_dc_zone1`: were SB5's ZONE1 stage music samples `$25`-`$26` (song 5's own; no other song lists them), freed by `sb1_music.free_old`: every World 1 stage with that music uploads its SB1 list instead of song 5; only SB5's ZONE1 stages outside the chain (`$0E`, `$0F`, `$12`-`$16`) would still upload them (checked in Mesen: 0 reads on 1-1..1-7, the title and the demo). Set `$2C` (the sequence) is kept: the stage scripts still send it and the lists copy its jingles. Unused. |
 | `$D9:E464-$D9:EC39` | 2006 B | `free_d9`: was SB5's death voice (sound set `$48` upload list + end mark + jump word), freed by `game_sfx.free_old` once set `$48` points at R. Unused. |
@@ -116,6 +117,7 @@ sequenced driver).
 | `$7F:FB20-$7F:FB28` | World 1's 1-6 (`asm/world1.asm`): each seat's start x (`$FB20+seat`) and y (`$FB24+seat`), kept at the first rival's intro (spawn_reset puts them back before the Golden Bomber); `$FB28` frames / 256 since the Golden Bomber died (with `$FBFC`). |
 | `$7F:FBD0-$7F:FBD3` | World 1's 1-6 stands blink (`asm/world1.asm` stand_task): phase, frames left, cycle, brightness. Set by `FF 1A F6 04`. |
 | `$7F:FBD4-$7F:FBD6` | World 1's 1-6 rival intro (`asm/world1.asm` intro_task, intro_pads): phase (0 hold, 1 walking, 2 done), frames left once moving, the stage. Set by `FF 1A F6 07`. |
+| `$7F:FB2C-$7F:FB3F` | Magnet bomb (`asm/magnet.asm`): a byte per bomb slot (0 normal, `$80` + frames before it looks for enemies again); cleared by both bomb allocators. |
 | `$7F:FBC0-$7F:FBCF` | Animated stage tiles (`asm/stage_anim.asm`): frame counter (`$FBC0+n`) and picture (`$FBC8+n`) of the stage's animation n (up to 8; 1-6's crowd has 3). |
 | `$7F:FBDA-$7F:FBE7` | Animated stage tiles (`asm/stage_anim.asm`, 1-4's bumpers, 1-5's lights, 1-6's crowd, 1-7's electric fence): scratch (source, VRAM address, bytes left, entry size), the stage's first table row, `$FBE3` flame tile bytes sent (word), `$FBE5`/`$FBE6` row / animation being run, `$FBE7` frames before the flame tiles are sent (1-6's duels only: there SB5 writes tiles `$010-$01F` itself ~25 frames after the stage script; 0 elsewhere). |
 | `$7F:FBFC` | World 1's 1-6: frames since the rival's object went away (next_rival), then since the stage end after the Golden (exit_task). |
