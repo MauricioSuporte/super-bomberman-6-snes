@@ -201,6 +201,7 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None, cache_dir=Non
         raise BuildError("title cursor poses cross a bank")
     region = next(r for r in (rb.regions[n] for n in ANIM_REGIONS) if r.free() >= 0x800)
     defines = {"ORG": f"${region.cursor:06X}", "SET": str(SET), "CURY": f"${0xA0 - TEXT_SHIFT:02X}",
+               "PLAYERS_ARR": str(PLAYERS_ARR),
                "JOBS": f"${tab['jobs']:06X}", "INITA": f"${tab['init_a']:06X}", "INITB": f"${tab['init_b']:06X}",
                "PLAY": f"${tab['play']:06X}", "DROP": f"${tab['drop']:06X}", "LOGOCG": f"${tab['logocg']:06X}",
                "LOGOPTR": f"${tab['logoptr']:06X}", "ALT": f"${tab['alt']:06X}", "PANSND": f"${pan_sound:06X}",

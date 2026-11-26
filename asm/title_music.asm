@@ -29,15 +29,21 @@
 ; $0F35 end + jump address read after the list); they end in RTS, so they are
 ; called with an RTL of that bank as their return address (RTL_C0).
 ;
-; WRAM: $0100-$0109 (bottom of the stack page; the stack never went below
-; $01B3 in a 12000-frame run, see docs/ROM_MAP.md).
+; WRAM: $0100-$010D, $019A-$019B (bottom of the stack page; the stack never
+; went below $01B3 in a 12000-frame run, see docs/ROM_MAP.md).
 ;
 ; Tracks: 0 = the title intro's sounds (the last chunk is silence and
 ; repeats until the music replaces it), 1 = the title music, 2 = the save
-; file / character selection music of the Normal Game. The save music starts
-; on the main-loop pass after the menu's sample set request (group 4, id
-; SAVE_SET) in mode SAVE_MODE ($1031), and plays through the picker until
-; the stage's stop request releases it. Each track is a run of segments
+; file music of the Normal Game, 3 = its character selection music. The
+; menu's sample set request (group 4, id SAVE_SET) in mode SAVE_MODE ($1031)
+; starts track 3 when the character selection comes first ([PICKREQ] = 1),
+; else track 2; the picker switches between them with music_track. While a
+; menu streams (modes 2-4), the next menu's track follows in place (switch:
+; driver command 31 empties the ring, the driver and its SFX go on, no
+; upload): the menus' stop request ($10 $01) and their own sets (01 title,
+; SAVE_SET) never reach Hudson, set 01 switches to the title music. Any other
+; request releases the stream (the stage's song): release first waits for
+; the last SFX sent (sfx_lens) to end. Each track is a run of segments
 ; (SEGS file: bank, first chunk offset, end offset; a 0 bank ends the run,
 ; its word is the segment to loop to), so a track can use bank tails.
 ;
@@ -45,8 +51,9 @@
 ; track's rate + prefill, JMP entry over the loader's RET; then the entry
 ; address), ENTRY (ARAM entry), L_SAMPLES / L_NEW / L_ORIG (upload lists:
 ; SFX samples, SB6 and SB5 SFX definitions), SFX_SAFE, NSONGS, SONG_TABLE,
-; RTL_C0, SEGS (file), SEG_PRE / SEG_TITLE / SEG_SAVE (offsets of each
-; track's first segment), SAVE_SET, SAVE_MODE, SFX_SLOTS (file).
+; RTL_C0, SEGS (file), SEG_PRE / SEG_TITLE / SEG_SAVE / SEG_CHAR (offsets of
+; each track's first segment), L_CHAR, SAVE_SET, SAVE_MODE, PICKREQ,
+; SFX_SLOTS (file).
 
 asar 1.90
 hirom
@@ -61,9 +68,11 @@ org !CODE
 !sfxtog = $000107       ; bit 6 toggles so repeated SFX commands differ
 !sfxok  = $000108       ; 1 = the SB6 menu SFX samples are in ARAM
 !sfxnew = $000109       ; 1 = Hudson's SFX 1/3/4 are the SB6 definitions
-!track  = $00010A       ; track streaming (0 intro, 1 title, 2 save menu)
+!track  = $00010A       ; track streaming (0 intro, 1 title, 2 save menu, 3 character selection)
 !seg    = $00010B       ; word: offset in segs of the segment being sent
-!pend   = $00010D       ; 1 = start the save music on the next main-loop pass
+!pend   = $00010D       ; track (2 / 3) to start on the next main-loop pass, 0 = none
+!sfxend = $00019A       ; NMI frame count when the driver's last SFX ends
+!sfxon  = $00019B       ; 1 = that SFX may still play (release waits for it)
 !NMI_FRAMES = $000068   ; incremented by the NMI handler ($C0:F431)
 !MODE   = $7E1031       ; game mode (3 = Normal Game menu)
 !song   = $0003CD       ; Hudson song currently in ARAM ($FF = none)
@@ -122,36 +131,77 @@ endif
     cmp #$02
     bne .not_sfx
     lda.l !active
-    beq .original
-    lda $05,s               ; id
+    bne +
+    brl .original
++   lda $05,s               ; id
     cmp #$20
-    bcs .swallow
-    rep #$20
+    bcc +
+    brl .swallow
++   rep #$20
     and #$001F
     tax
     sep #$20
     lda.l sfx_slots,x
-    beq .swallow            ; not replayable: dropped (port 0 is ours)
+    beq +                   ; not replayable: dropped (port 0 is ours)
     jsr send_sfx
-    bra .swallow
++   brl .swallow
 .not_sfx:
     cmp #$00
     bne .other
     lda $05,s               ; id
     cmp #$02
     bne .other
+    lda #$00
+    sta.l !pend
     lda.l !active
     beq +
-    lda.l !track            ; the title's pan sound (the intro ended or was
-    cmp #$01                ; skipped) or the save music: the title music
-    beq .swallow            ; replaces it
-    jsr release
-+   lda #$00
-    sta.l !pend
-    lda #$01
+    lda #$01                ; the title's pan sound (the intro ended or was
+    jsr switch              ; skipped) or a menu's music: the title music
+    brl .swallow            ; follows it, the driver (and its SFX) going on
++   lda #$01
     jsr start_stream
-    bra .swallow
+    brl .swallow
 .other:
+    lda.l !active           ; while a menu streams (title, Normal Game menu,
+    beq .hudson             ; character selection), its stop request and its
+    lda.l !MODE             ; own sample sets need no Hudson: the stream goes on
+    cmp #$02                ; (the next screen's music follows it by switch)
+    bcc .hudson
+    cmp #$05
+    bcs .hudson
+    lda $06,s
+    cmp #$10
+    bne +
+    lda $05,s
+    cmp #$01
+    bne .hudson
+    brl .swallow
++   cmp #$04
+    bne .hudson
+    lda $05,s
+    cmp #$01                ; the title's set: back to the title (B on the
+    bne +                   ; character selection), its music at once
+    lda #$01
+    bra .switch
++   cmp #!SAVE_SET
+    bne .hudson
+    lda.l !MODE
+    cmp #!SAVE_MODE
+    bne .hudson
+    lda.l $7E631A
+    bne .hudson
+    lda.l !PICKREQ
+    cmp #$01
+    lda #$02
+    bcc +
+    inc a
++
+.switch:
+    jsr switch
+    lda #$00
+    sta.l !pend
+    brl .swallow
+.hudson:
     lda #$00                ; any other request cancels a pending save music
     sta.l !pend
     lda $06,s
@@ -165,8 +215,12 @@ endif
     bne +
     lda.l $7E631A           ; back to the world map (zone done, pause menu): the menu
     bne +                   ; goes straight to the map, no save music
-    lda #$01                ; Normal Game menu: the save music once the set is in
-    sta.l !pend
+    lda.l !PICKREQ          ; Normal Game menu: once the set is in, the character
+    cmp #$01                ; selection's music when it comes first, else the
+    lda #$02                ; save music
+    bcc ++
+    inc a
+++  sta.l !pend
 +   lda.l !active
     beq .original
     jsr release
@@ -274,6 +328,20 @@ sb1m_song:
 ; A = slot (1-31): port 0 = $80 | toggle | slot, then waits for the echo.
 send_sfx:
     pha
+    phx
+    php
+    rep #$30
+    and #$001F
+    tax
+    sep #$20
+    lda.l !NMI_FRAMES       ; when it ends (release waits for it)
+    clc
+    adc.l sfx_lens,x
+    sta.l !sfxend
+    lda #$01
+    sta.l !sfxon
+    plp
+    plx
     lda.l !sfxtog
     eor #$40
     and #$40
@@ -288,21 +356,33 @@ send_sfx:
 
 sfx_slots:
     incbin "!SFX_SLOTS"
+sfx_lens:                   ; frames each slot's SFX plays
+    db !SFX_LENS
 
 ; ---- $C0:0B2C -------------------------------------------------------------
 loop_hook:
     php
     sep #$20
-    lda.l !active
+    lda.l !sfxon            ; the last SFX has ended
+    beq ++
+    lda.l !sfxend
+    sec
+    sbc.l !NMI_FRAMES
+    beq +
+    bpl ++
++   lda #$00
+    sta.l !sfxon
+++  lda.l !active
     beq .idle
     jsr feed
     bra +
 .idle:
     lda.l !pend
     beq +
+    pha
     lda #$00
     sta.l !pend
-    lda #$02
+    pla
     jsr start_stream
 +   jsl !GS_TICK
     plp
@@ -310,6 +390,68 @@ loop_hook:
     bne +
     jml $C00B31
 +   jml $C00B35
+
+; JSL (from asm/picker.asm), A = track 2 (save files) / 3 (character
+; selection): another track plays -> back to Hudson's driver; the track
+; starts on the next main-loop pass (the screen is dark meanwhile).
+music_track:
+    php
+    sep #$20
+    pha
+    lda.l !active
+    bne +
+    pla
+    sta.l !pend
+    plp
+    rtl
++   pla
+    jsr switch
+    lda #$00
+    sta.l !pend
+    plp
+    rtl
+
+; A = track, the driver running: it goes on (an SFX it plays too), its ring
+; is emptied and the track's segments follow (every track has the driver's
+; rate; command 31 carries the track's volumes). Same track: nothing.
+switch:
+    php
+    sep #$30
+    cmp.l !track
+    beq .same
+    sta.l !track
+    asl
+    tax
+    lda.l track_vols,x
+    sta.l APUIO1
+    lda.l track_vols+1,x
+    sta.l APUIO2
+    lda.l !sfxtog
+    eor #$40
+    and #$40
+    sta.l !sfxtog
+    ora #$9F
+    sta.l APUIO0
+-   cmp.l APUIO0
+    bne -
+    rep #$30                ; (X = track * 2, its high byte 0)
+    lda.l seg_start,x
+    sta.l !seg
+    tax
+    lda.l segs+1,x
+    sta.l !ptr
+    sep #$20
+    lda.l segs,x
+    sta.l !bank
+    lda.l !NMI_FRAMES
+    sta.l !frame
+.same:
+    plp
+    rts
+
+; voice / main volume of each track (the drivers' VOL / MVOL)
+track_vols:
+    db !TRACK_VOLS
 
 ; JSL (M/X 8-bit, from asm/title_anim.asm): streams the title intro's pan
 ; sound, then silence (its last chunk repeats) until the music is asked for.
@@ -343,10 +485,15 @@ start_stream:
     lda $01,s
     cmp #$02
     beq .save
+    cmp #$03
+    beq .char
     %sendlist(!L_STREAM)
     bra .sent
 .save:
     %sendlist(!L_SAVE)
+    bra .sent
+.char:
+    %sendlist(!L_CHAR)
 .sent:
     %c0call($C00F35)        ; end of upload: the loader "returns" into the driver
     lda $4B                 ; the session's last kick
@@ -438,6 +585,26 @@ song_hook:
 release:
     php
     sep #$20
+    lda.l !sfxon            ; an SFX of the driver still playing: it ends first
+    beq .go                 ; (frames counted on the vblank flag: NMI may be off)
+    lda #$00
+    sta.l !sfxon
+    lda.l !sfxend
+    sec
+    sbc.l !NMI_FRAMES
+    beq .go
+    bmi .go
+    cmp #!SFX_MAXLEN+1
+    bcs .go
+-   pha
+--  lda.l $004212
+    bmi --
+--  lda.l $004212
+    bpl --
+    pla
+    dec a
+    bne -
+.go:
     lda #$80
     sta.l APUIO0
 -   lda.l APUIO3
@@ -981,13 +1148,15 @@ feed:
 segs:
     incbin "!SEGS"
 seg_start:
-    dw !SEG_PRE, !SEG_TITLE, !SEG_SAVE
+    dw !SEG_PRE, !SEG_TITLE, !SEG_SAVE, !SEG_CHAR
 
 assert pc() <= !CODE_END, "title music code overflows its allocation"
 
 print "SYM sound_hook ", hex(sound_hook)
 print "SYM loop_hook ", hex(loop_hook)
 print "SYM pre_start ", hex(pre_start)
+print "SYM music_track ", hex(music_track)
+print "SYM segs ", hex(segs)
 print "SYM set_hook ", hex(set_hook)
 print "SYM song_hook ", hex(song_hook)
 print "SYM sb1m_song ", hex(sb1m_song)

@@ -285,11 +285,28 @@ script accumulator (`61` = add).
   ~88 frames sooner.
 * Normal Game menu (mode 3, file lists and the picker): `1001` then `041C`
   (sets) and no music in SB5; the stage then sends `1001`, `0004`. Hack:
-  `041C` in mode 3 arms the save menu music (`$010D`), which the main-loop
-  hook starts once the set is in (stream track 2, 12 kHz; the next non-SFX
-  request releases it). Tracks are segment runs (`segs` in
-  `asm/title_music.asm`), so the save music fills the tails of `$EB` / `$FC`
-  and banks `$FD-$FF`.
+  `041C` in mode 3 picks a stream track: 3 (the character selection's
+  music, Unity's Character Menu Music.wav) when the picker comes first
+  (`$0197` != 0), else 2 (save files, Unity's Save File Menu Music.wav).
+  The picker's ops call `music_track` (F0: 3, F1 confirmed: 2). Coming from
+  another menu's stream (title, picker, save files: modes 2-4) the track
+  switches in place (`switch`: stream driver command 31 keys the music voice
+  off, empties the ring and sets the track's volumes; the CPU feeds the new
+  track's segments; the driver keeps running, so an accept / back SFX plays
+  to its end, and nothing is uploaded): the menus' `1001` and their sets
+  (`0401` title: switches to the title music, `041C`) are swallowed (Hudson
+  plays nothing while a menu streams). The music comes back 40-65 frames
+  after a switch (the scene loads hold the main loop that feeds the ring),
+  always before the next screen is lit. Without a stream (from a stage) the
+  set is loaded and the track starts on the next main-loop pass (an upload
+  of ~27 frames). Any other request releases the stream (SB5's `0004` song
+  before the stage, a stage set); `release` first waits for the last SFX it
+  sent to end (`$019A` end frame, `sfx_lens` per slot; frames counted on the
+  vblank flag). All three streams (title too) run at 12 kHz since the
+  character selection music was added (2026-11-26).
+  Tracks are segment runs (`segs` in `asm/title_music.asm`): the save music
+  fills the tails of the title's banks and `$FD-$FE`; track 3 has
+  `CHAR_SEGS` slots written at the end of the build (`place_char`).
 * All APU port accesses are in `$C0:0DC0-$C0:1130`.
 
 * Menu SFX (group 2): `1` cursor move, `4` accept, `3` back. SB5 plays
@@ -455,13 +472,52 @@ script accumulator (`61` = add).
   script (`$C7:100E` New Game file list, `$C7:0D59` Continue file list).
   File confirm: `42 04 02 / 24 4C 12 C7` (`$C7:124C` = 64-frame fade) at
   `$C7:10DF` and `$C7:0E24`; what follows uses `$1032` (file).
-* Hack (`asm/picker.asm`, `tools/sb6/features/picker.py`): the confirm calls
-  a script that fades, saves `$1032-$104F` and `$1D20-$1D3F`, calls the
-  picker script for its screen and restores; confirmed choices go to
-  `$16C2+seat` / `$16DA+seat` and are applied again after the player reset
-  (`$C4:28B4`, co-op `c4_tail`) and at the stage spawn (`$C2:1697`, not in
-  boss stages). B reloads the menu graphics, drops the call and jumps to
-  the file list.
+* Menu states (`$C7:0BC6` `FF A6 00 06 01 0C` + 16-bit targets): `FF A6`
+  takes a target below the op's own address as the next bank's (the
+  `CMP $0A / INC $0C` at `$C2:1EC4`), and `44 rel16` adds a signed word
+  with the carry into the bank, so it reaches only +-32 KB: a state in
+  another place of bank `$C7` is reached from SB5's own state script, not
+  from the table. Mode 3 fades: the mode switch fades the screen in by
+  itself (`$C1:0838`, after handler 3 `FF 6F`); `FD 07` fades in, `FD 08`
+  fades out (FD table `$C2:09A7`, `$C1:0838` / `$C1:084B`, INIDISP shadow
+  `$0300`); task 7 fades out at `$C7:0BB1` before the states run. `$C7:11AC`
+  (leaving a menu) fades out unless `$103A` = 0, removes objects
+  (`FF 1A 00`), clears BG1/BG3 and sets `$104A` = 1; the NORMAL MODE menu
+  fades in after its window opens (`$C7:0CAA`) only while `$104A` = 0.
+* Hack (`asm/picker.asm`, `tools/sb6/features/picker.py` `flow`), as the
+  fan game: players count -> character selection -> NORMAL MODE menu.
+  The players confirm (`coop.py`) sets `$0197` = 1; SB5's states 0 and 1
+  (`$C7:0BD8`, `$C7:0BE0`) jump (`44`) to ours in `free_c7_options`.
+  State 1: with `$0197` set, `s_pick` (op F0: saves `$1032-$104F` and
+  `$1D20-$1D3F`, the character selection music; Battle's picker script for
+  its screen; op F1: restores, the save music, or `$0199` = 1 when left
+  with B), then `menu_gfx` (the menu's graphics and BG2 map again) and the
+  menu (`$C7:0C1D`, which fades in itself); left with B -> state 0. State
+  0: after a picker (`$0198`) -> `$0197` = 2 (the cursors start on the last
+  choices), screen dark at once, state 1 again; else mode 2 at once (SB5
+  slept 30 frames). The title's `s_wait` opens the players menu when
+  `$0199` = 1. SB5's accept (`$C7:124C`: every choice of the NORMAL MODE
+  menu and its file lists, after SFX 4) slept 64 frames, now 1
+  (`picker.menu_speed`). Measured: A on New Game / Continue / Erase File ->
+  its file list taking input 47 frames (was ~111: wait 65, leaving the menu
+  `$C7:11AC` / state switch ~10, list ~10, the hand's slide 19,
+  `$C7:1220`'s 4-frame sleep), B -> the menu 43. The hand cursor:
+  `$C7:123D` `4F 46` pushes its sprite (animation `$46`: one 16x16 sprite,
+  tile `$02`, attributes `$2E`, at X `$1038`, Y `$1034` - 17), `4A 3A`
+  creates it and slides it in (19 frames; another value than `$46` draws a
+  wrong tile), `4A 3C` (`$C7:1220`) only moves an existing one.
+  Confirmed choices go to `$16C2+seat` / `$16DA+seat` and are applied again
+  after the player reset (`$C4:28B4`, co-op `c4_tail`) and at the stage
+  spawn (`$C2:1697`, not in boss stages). Task 7's fade-out before the
+  states (`$C7:0BB1` `FD 08`) is replaced by "dark at once" while the picker
+  comes first. Measured (Mesen, 1 player, frames at 60 Hz;
+  `tools/menu_check.py`): players confirm -> picker lit 194 (title accept 28,
+  mode 3 load ~65 with its own fade-in of a black screen, SB5's picker setup
+  ~85, fade in 10); last confirm -> save files lit 114 (the confirmation
+  shows 16, fade out ~28, `menu_gfx` ~40, window, fade in 15); B on the save
+  files -> dark at once, picker lit ~89; B on the picker -> dark at once,
+  title lit ~58 with its players menu. Every accept / back sound plays to
+  its end (~43 frames) meanwhile.
 * SB6 screen (the SB6 fan game's SkinSelect): SB5's setup runs with only BG2
   shown (`$030F` = 2, about 70 frames); when task 9 reaches `$C6:8E68` its
   saved pointer is set to `pk_loop` (`FF 1A F4`, sleeps every frame), so
@@ -471,15 +527,15 @@ script accumulator (`61` = add).
   menu's archive `$93` tail, reloaded by `menu_gfx`), glyph and player
   cursor tiles at OBJ `$6000` (tiles 0-11, 16+); the static colors go to BG
   palettes 3, 4, 7 and OBJ palette 4. Afterwards `$030F` = `$13`. When all
-  seats confirm, the outputs `$625F/$6264` are written, the victory plays
-  72 frames, then the picker fades out itself (brightness in the INIDISP
-  shadow `$0300`, then `$80`) and the task goes on at `$C6:8EC4` (no fade
-  there: `00` back to the file script, which loads the next screen's
-  graphics with the screen on, and SB5's picker objects are drawn again
-  once `pick_tick` lets go); B on the first seat sets `$1040` = `$FF` and
-  does the same. The close op hides all 128 OAM entries (the builder only
-  hides its own), and after B the file list is faded in by `pick_tick`
-  once the VRAM queue is empty (the file list script does not fade in).
+  seats confirm, the outputs `$625F/$6264` are written and the picker
+  fades out after 8 ticks (`!WAITF`, 16 frames: the confirmation's
+  animation and sound; brightness in the INIDISP shadow
+  `$0300`, 2 steps per 30 Hz tick, then `$80`), and the task goes on at
+  `$C6:8EC4` (no fade there: `00` back to `s_pick`); B on the first seat
+  sets `$1040` = `$FF`, `$0300` = `$80` at once and does the same. The
+  picker opens dark and `lightup` brings the screen in (3 steps per tick)
+  once it is ready (state 2). The close op hides all 128 OAM entries (the
+  builder only hides its own).
 * Grid: one cell per character with a column in
   `CharacterSelectPortrait.png` (7, chars 0-6; chars 7-9 are left out), 5
   per row. Resting portraits use the default color (BG palettes 3/4/7,
@@ -503,18 +559,24 @@ script accumulator (`61` = add).
 * Sounds: move 1, accept 4, back / taken 3, color change `$1E` (Unity
   `Sounds/Skin/change.wav`, stream driver slot 4, ARAM directory `$3E`).
   Tested in Mesen: 1, 2 and 4 players, B undoing the previous player, B to
-  the file list and back in, wraps, same character with another color,
-  stage receiving the choices. Not tested: Continue (needs a save), real
-  hardware.
+  the title's players menu, B on the save files back to the picker, wraps,
+  same character with another color, stage receiving the choices. Not
+  tested: Continue (needs a save), real hardware.
 * Menu background (checkerboard + heads): palette 0 of set 3 id 14
   (`$81:9796`, Normal menu, orange) or id 70 (`$81:A9F6`, Battle's picker,
   green checker, grey heads, entry 6 = the grid's red X); the checker
   scrolls by swapping entries 3-4 from cycle tables at `$81:E216` (orange,
-  18 records `[3, 2, c, c]`) and `$81:E2A6` (green). The Normal picker
-  showed Battle's green until the menu's cycle wrote orange again. Hack
-  (`tools/sb6/features/menu_bg.py`): blue copies of both, returned by
-  `pal_lookup` for id 14 in mode 3 and id 70 while `$7F:FF00` = 1; the
-  orange cycle table is recolored in place.
+  18 records `[3, 2, c, c]`) and `$81:E2A6` (green), i.e. set `$0D` ids
+  196-213 / 214-231, loaded step by step by the palette task (`2C 14 01`,
+  `$C1:09B0` -> `JSL $C001AC`). The Normal picker showed Battle's green
+  until the menu's cycle wrote orange again. Inside its frame the picker
+  darkens the background by 10 per 5-bit channel (color math), so a color
+  that must show as c there is c + 10. Hack
+  (`tools/sb6/features/menu_bg.py`): a blue copy of id 14 (its cycle table
+  recolored in place) and a green copy of id 70 with the fan game's
+  SkinSelect colors (Character Select Edited1/2.png: checker pair, heads),
+  plus green copies of the 18 cycle steps; `pal_lookup` returns id 14 in
+  mode 3, id 70 and the cycle steps while `$7F:FF00` = 1.
 * Palette lookup `$C0:01DE` (A = id, set `$0AE7`): `[$A8]` = `$81:` word of
   the set's table (`$C0:0379 + 2*set`) at `2*(id-1)`; every loader goes
   through it (`$C0:01AC`, `$C0:01C8`, the slot allocator `$C0:0295`, which

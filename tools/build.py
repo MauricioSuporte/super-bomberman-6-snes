@@ -50,9 +50,9 @@ def main():
     for bank in range(0xEC, 0xF0):
         rb.add_region(f"stream_{bank:02x}", bank << 16, (bank + 1) << 16, "bomber poses streamed one by one (DMA source)")
     rb.add_region("title_fc", 0xFC0000, 0xFD0000, "title intro: pan and drop sounds (streamed BRR, one bank); "
-                  "save menu music after them")
+                  "menu music after them")
     for bank in range(0xFD, 0x100):
-        rb.add_region(f"music_{bank:02x}", bank << 16, (bank + 1) << 16, "streamed BRR audio (save menu music)")
+        rb.add_region(f"music_{bank:02x}", bank << 16, (bank + 1) << 16, "streamed BRR audio (save file / character selection music)")
     for bank in (0xFA, 0xFB):
         rb.add_region(f"title_f{bank & 15:x}", bank << 16, (bank + 1) << 16,
                       "animated title: tiles, maps, tables, code (DMA sources)")
@@ -110,7 +110,8 @@ def main():
                               os.path.join(ROOT, "assets", "sound"), os.path.join(args.out, "cache"), gsfx["syms"],
                               drop_frames=title.drop_frames(os.path.join(ROOT, "assets", "title")),
                               save_wav=os.path.join(ROOT, "assets", "sound", "save_menu_music.wav"),
-                              save_regions=["music_fd", "music_fe", "music_ff", "title_fc"], sb1=maps)
+                              save_regions=["music_fd", "music_fe", "music_ff", "title_fc"], sb1=maps,
+                              char_wav=os.path.join(ROOT, "assets", "sound", "char_select_music.wav"))
     title_music.free_old(rb)         # SB5's title song: no longer uploaded (set $28, song 1, its own samples)
     print(f"title music: {music['seconds']:.1f} s, {music['bytes']} bytes BRR in banks "
           f"{', '.join(f'${b:02X}' for b in music['banks'])}; driver {music['driver']} B, ring {music['ring']} chunks, "
@@ -207,7 +208,7 @@ def main():
     print(f"hud: SB6 status HUD in the Normal Game ({hz['bg3_tiles']} BG3 tiles; clock stopped), "
           f"preview build/hud_preview.png")
     pick = picker.apply(rb, base_rom, info, tinfo["syms"], wmap["wmap_nmi"], wmap["wmap_op"], w1["w1_op"],
-                        pz["pause_nmi"])
+                        pz["pause_nmi"], music["music_track"])
     print(f"picker: character + color (L/R) selection in the Normal Game, {pick['bomber_colors']} colors for Bomberman")
 
     coop.apply(rb, louie["louie_tick"], pick)
@@ -236,6 +237,12 @@ def main():
               + (f"; {info['inexact']} pixels off-palette (nearest color used)" if info["inexact"] else ""))
     else:
         print("bomber: no sheet in assets/bombers, SB5 sprites kept (tools/bomber_sheet.py export --edit)")
+
+    # last: the character selection music takes what the other features left (title_music.CHAR_REGIONS)
+    char_segs = music["place_char"]()
+    print(f"character selection music: {music['char_seconds']:.1f} s at 12 kHz in {len(char_segs)} segments ("
+          + ", ".join(f"${b:02X}:{lo:04X}-{hi:04X}" for b, lo, hi in char_segs)
+          + f"); RMS gain x{music['char_gain']:.2f} -> VOL ${music['char_vol'][0]:02X}, MVOL ${music['char_vol'][1]:02X}")
 
     rb.set_title("SUPER BOMBERMAN 6")
     rb.fix_checksum()

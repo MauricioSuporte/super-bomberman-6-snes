@@ -352,8 +352,12 @@ def music_eval(stage):
             t = boot.get("title_music")
             res.ok("title: music streams ($0100 = 1, SPC PC in the stream driver $70xx-$77xx)", t and t[0] == 1 and 0x70 <= t[1] < 0x78,
                    f"$0100 = {t[0] if t else '?'}, SPC PC page ${t[1] if t else 0:02X}")
+            p = boot.get("picker_music")
+            res.ok("character selection (before the save files): its music streams ($010A = 3, $0100 = 1)",
+                   p and p[0] == 3 and p[1] == 1, f"$010A = {p[0] if p else '?'}, $0100 = {p[1] if p else '?'}")
             m = boot.get("menu_music")
-            res.ok("Normal Game menu: save menu music ($010A = 2)", m and m[0] == 2, f"$010A = {m[0] if m else '?'}")
+            res.ok("Normal Game menu after the picker: save menu music ($010A = 2)", m and m[0] == 2,
+                   f"$010A = {m[0] if m else '?'}")
         return res
     return ev
 

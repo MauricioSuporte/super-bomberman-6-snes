@@ -320,7 +320,97 @@ class Blob:
         return self.labels[label]
 
 
-def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, pause_nmi=0):
+# ---- the Normal Game menu (mode 3) opens with the character selection ----------
+# Task 8 ($C7:0BB9) runs the menu's states from the table at $C7:0BCC ($1037: 0 back to the title, 1 NORMAL
+# MODE menu $C7:0C1D, 2 Continue files, 3 Erase, 4 start, 5 New Game files; each state leaves $1037 = next - 1,
+# then $C7:0C01 adds 1). States 0 and 1 are ours, in free_c7_options: SB5's state 0 / 1 scripts ($C7:0BD8 /
+# $0BE0) jump to them (FF A6 takes a target below the table as the next bank's, `44` reaches +-32 KB):
+#  1: [PICKREQ] != 0 -> the picker first (s_pick); left with B -> state 0; else B on the menu comes back to it
+#  0: after the picker ([PICKED] = 1) -> the picker again with the last choices; else the title at once
+#     (SB5 slept 30 frames first)
+PICKREQ, PICKED, PICKB = 0x0197, 0x0198, 0x0199     # WRAM (docs/FREE_SPACE.md)
+STATE0, STATE1, STATE_NEXT = 0xC70BD8, 0xC70BE0, 0xC70C01
+NORMAL_MENU = 0xC70C1D
+
+
+def _st(v, a):
+    return bytes([0x5B, v, 0x5F, a & 0xFF, a >> 8])
+
+
+def _test(a, v, n):
+    """`5D a 86 v 49 n`: the next n bytes run when [a] == v."""
+    return bytes([0x5D, a & 0xFF, a >> 8, 0x86, v, 0x49, n])
+
+
+def _jump(at, to):
+    """`44 rel16` at `at` (bank $C7) to `to`: relative to the end of the op."""
+    r = (to - (at + 3)) & 0xFFFF
+    return bytes([0x44, r & 0xFF, r >> 8])
+
+
+def _flow_scripts(base, s_pick, menu_gfx):
+    """(state 1 script, state 0 script), state 1 first at `base` (bank $C7)."""
+    nxt = STATE_NEXT & 0xFFFF
+    b16 = base & 0xFFFF
+    s1 = bytearray(_test(PICKREQ, 0, 3))
+    hole = len(s1)
+    s1 += bytes(3)                                   # no picker: jump to the menu (below)
+    s1 += _st(0, PICKED) + bytes([0x24]) + s_pick.to_bytes(3, "little") + _st(0, PICKREQ)
+    left = _st(0xFF, 0x1037)                         # left with B: state 0, the title
+    s1 += _test(PICKB, 1, len(left) + 3) + left
+    s1 += _jump(b16 + len(s1), nxt)
+    s1 += bytes([0x24]) + menu_gfx.to_bytes(3, "little")   # the menu's graphics (the picker's are in VRAM)
+    s1 += _st(1, PICKED)                             # B on the menu comes back to the picker
+    menu = len(s1)
+    s1 += bytes([0x24]) + NORMAL_MENU.to_bytes(3, "little")
+    s1 += _jump(b16 + len(s1), nxt)
+    s1[hole:hole + 3] = _jump(b16 + hole, b16 + menu)
+    at0 = b16 + len(s1)
+    again = _st(0, PICKED) + _st(2, PICKREQ) + _st(0, 0x1037) + _st(0x80, 0x0300)   # dark at once
+    s0 = bytearray(_test(PICKED, 1, len(again) + 3) + again)
+    s0 += _jump(at0 + len(s0), nxt)
+    s0 += bytes.fromhex("0F 02 00")                  # mode 2: the title
+    return bytes(s1), bytes(s0)
+
+
+def flow(rb, s_pick, menu_gfx):
+    # (the mode's own graphics stay: the picker draws its checker and heads with the menu's tiles)
+    # Task 7's fade-out before the states ($C7:0BB1 `FD 08`, then $104A = 0): the screen is black while the
+    # picker comes first (the mode's own fade-in shows nothing yet), so it goes dark at once instead.
+    dark = _st(0x80, 0x0300)
+    tail = (_test(PICKREQ, 0, 2) + bytes.fromhex("FD 08") + _test(PICKREQ, 0, 0)[:-2]
+            + bytes([0x47, len(dark)]) + dark + _st(0, 0x104A) + b"\x00")
+    a7 = rb.alloc("free_c7_options", tail, "Normal Game menu: task 7's fade-out, dark at once before the picker")
+    rb.patch(0xC70BB1, bytes.fromhex("FD 08 5B 00 5F 4A 10 00"), bytes([0x24]) + a7.to_bytes(3, "little") + bytes(4),
+             "Normal Game menu: task 7's fade-out -> skipped when the picker comes first")
+    base = rb.regions["free_c7_options"].cursor
+    s1, s0 = _flow_scripts(base, s_pick, menu_gfx)
+    a1 = rb.alloc("free_c7_options", s1, "Normal Game menu state 1: character selection first, then NORMAL MODE")
+    a0 = rb.alloc("free_c7_options", s0, "Normal Game menu state 0: back to the character selection or the title")
+    if a1 != base or a0 != base + len(s1):
+        raise BuildError("picker flow scripts moved")
+    rb.patch(STATE0, bytes.fromhex("FD 0E 1E 00 00 0F 02 00"), _jump(STATE0 & 0xFFFF, a0 & 0xFFFF) + bytes(5),
+             "Normal Game menu state 0 -> back to the character selection or the title at once")
+    rb.patch(STATE1, bytes.fromhex("24 1D 0C C7 45 1B"), _jump(STATE1 & 0xFFFF, a1 & 0xFFFF) + bytes(3),
+             "Normal Game menu state 1 -> character selection first")
+    menu_speed(rb)
+
+
+# The NORMAL MODE menu's answers (New Game / Continue / Erase File, a file): SB5's accept ($C7:124C, called after
+# SFX 4 by every choice of the menu and its file lists) slept 64 frames; now 1: A -> the next list taking input in
+# ~47 frames (was ~111). The rest is SB5's: leaving the menu, drawing the list and the hand cursor sliding in
+# ($C7:123D: `4F 46` pushes the hand's sprite (animation $46, not a length: another value draws a wrong tile),
+# `4A 3A` creates it and slides it in, 19 frames; `4A 3C` only moves an existing one).
+ACCEPT_SLEEP = 0xC71257      # `FD 0E 40 00 00` in $C7:124C
+ACCEPT_FRAMES = 1
+
+
+def menu_speed(rb):
+    rb.patch(ACCEPT_SLEEP, bytes.fromhex("FD 0E 40 00 00"), bytes([0xFD, 0x0E, ACCEPT_FRAMES, 0, 0]),
+             "Normal menu: accept wait 64 -> 1 frame (New Game / Continue / Erase File, file choices)")
+
+
+def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, pause_nmi=0, music_track=0):
     """`bomber`: result of features/bombers.py. Returns the asm symbols + `bomber_colors`."""
     own = bool(bomber and bomber.get("paltab"))
     if not own or not bomber.get("pick_anims"):
@@ -515,6 +605,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
         "PAUSE_NMI": f"${pause_nmi:06X}",
         "WMAP_OP": f"${wmap_op:06X}",
         "W1_OP": f"${w1_op:06X}",
+        "MUSIC_TRACK": f"${music_track:06X}",
         "CHPAL": ",".join(f"${v:02X}" for v in chpal), "CHCOL": ",".join(str(v) for v in chcol)})
     for c in range(n):
         if chcol[c] > 64:
@@ -532,10 +623,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
         a = syms[name]
         return bytes([a & 0xFF, a >> 8 & 0xFF, a >> 16])
 
-    rb.patch(0xC710E2, bytes.fromhex("24 4C 12 C7"), b"\x24" + ptr("script_new"),
-             "picker: New Game file confirm -> character selection")
-    rb.patch(0xC70E27, bytes.fromhex("24 4C 12 C7"), b"\x24" + ptr("script_cont"),
-             "picker: Continue file confirm -> character selection")
+    flow(rb, syms["s_pick"], syms["menu_gfx"])
     rb.patch(0xC2069B, bytes.fromhex("7C 46 C1"), ptr("pick_op"), "picker: script op FF 1A nn >= $F0 runs native code")
     rb.patch(0xC0F421, bytes.fromhex("22 E0 04 C0"), bytes([0x22]) + ptr("pick_nmi"), "picker: its VRAM transfers in the NMI")
     syms["bomber_colors"] = bomber_colors

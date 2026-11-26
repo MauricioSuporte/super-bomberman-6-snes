@@ -617,7 +617,9 @@ bomber_palcount:
 ;
 ; Set 3 ids 14 (Normal menu, in mode 3) and 70 (Battle's picker, while the
 ; Normal Game's picker runs: $7F:FF00 = 1) become entries 0 / 1 of !BGTAB,
-; copies with a blue background (tools/sb6/features/menu_bg.py; 0 = not built).
+; copies with a blue / green background; while the picker runs, set !CYCSET
+; ids !CYCID.. (the menu's checker cycle steps) become entries 2.. (green)
+; (tools/sb6/features/menu_bg.py; 0 = not built).
 pal_lookup:
     LDA #$81
     STA $AA
@@ -662,6 +664,22 @@ if !BGTAB
     STA $AA
     BRA +
 .notset3
+    CMP.b #!CYCSET
+    BNE .notcyc
+    CPY.b #!CYCID-1
+    BCC .notcyc
+    CPY.b #!CYCID-1+!CYCN
+    BCS .notcyc
+    LDA.l $7FFF00
+    CMP #$01
+    BNE .notcyc
+    TYA
+    SEC
+    SBC.b #!CYCID-1-2
+    TAY
+    BRA .bgpal
+.notcyc
+    LDA $0AE7
 endif
     CMP #$00
     BNE +

@@ -1,15 +1,18 @@
 ; Character + color selection in the Normal Game, laid out like the SB6 fan
 ; game's SkinSelect scene (tools/sb6/features/picker.py has the overview).
 ;
-; Confirming a file (New Game $C7:10E2, Continue $C7:0E27) calls the scripts
-; below instead of the fade $C7:124C: fade, then Battle's character picker
-; ($C6:89CF) for its screen (checker, frame, title). When its task (9)
-; reaches the picker's main loop ($C6:8E68) it is sent to `pk_loop` instead,
-; a script op that sleeps every frame while pick_tick / pick_nmi run the SB6
-; picker; when it is done the task goes on at $C6:8EC4 (the stock end:
-; fade-out, `00` back to our script). B on player 1 leaves with $1040 = $FF:
-; the menu's graphics are loaded again and the file list comes back. The
-; script variables the picker uses are saved around it.
+; The Normal Game menu (mode 3) opens with the character selection, as the
+; fan game goes from the players count to SkinSelect and then to the save
+; files: its state 1 (tools/sb6/features/picker.py `flow`) calls s_pick
+; before the NORMAL MODE menu when [PICKREQ] is set. s_pick runs Battle's
+; character picker ($C6:89CF) for its screen (checker, frame, title). When
+; its task (9) reaches the picker's main loop ($C6:8E68) it is sent to
+; `pk_loop` instead, a script op that sleeps every frame while pick_tick /
+; pick_nmi run the SB6 picker; when it is done the task goes on at
+; $C6:8EC4 (the stock end: `00` back to s_pick). B on player 1 leaves with
+; [PICKB] = 1 (the menu goes back to the title); else the state loads the
+; menu's graphics again (menu_gfx) and fades in with the NORMAL MODE menu. The script variables the
+; picker uses are saved around it.
 ;
 ; Native code is reached from a script through `FF 1A nn` (handler
 ; $C1:467C, its table entry at $C2:069B now points here): nn >= $F0 is ours.
@@ -44,7 +47,10 @@ hirom
 !s3      = !PK+$5B
 !w0      = !PK+$60      ; word scratch
 !palpend = !PK+$69      ; 1 = the CGRAM shadow changed (sent once the VRAM queue is empty)
-!fadein  = !PK+$6A      ; 1 = back from the picker: fade the file list in
+!fadein  = !PK+$6A      ; 1 = back from the picker: fade the menu in
+!keep    = !PK+$6B      ; 1 = back from the save files: the cursors start on the last choices
+!PICKREQ = $000197      ; 1 = the menu opens the picker first, 2 = again from the save files (keep the choices)
+!PICKB   = $000199      ; 1 = the picker was left with B
 
 ; screen state, bank $7F (DB = $7F in the tick: short addresses)
 !st      = $FC00        ; 0 waiting for SB5's setup, 1 loading, 2 choosing, 3 all chosen, 5 fading out, 4 leaving
@@ -92,26 +98,15 @@ hirom
 !nt0     = !SL+$70      ; NMI scratch (words)
 !nt1     = !SL+$72
 !nt2     = !SL+$74
-!WAITF   = 72           ; frames from the last confirmation to the fade (its victory plays)
+!WAITF   = 8            ; ticks (30 Hz) from the last confirmation to the fade: its animation and accept sound
 
 org !E4
 
-script_new:
-    db $24,$4C,$12,$C7              ; the file menu's own fade
-    db $FF,$1A,$F0                  ; open
+s_pick:
+    db $FF,$1A,$F0                  ; open (and the character selection music)
     db $24,$CF,$89,$C6              ; Battle's character picker (its screen; our picker inside)
-    db $FF,$1A,$F1                  ; close; B: drops the call, skips the 00
+    db $FF,$1A,$F1                  ; close ([PICKB] = 1: left with B; else the save music)
     db $00
-    db $24 : dl menu_gfx            ; the menu's graphics again
-    db $FF,$1A,$F2                  ; -> $C7:100E, the New Game file list
-script_cont:
-    db $24,$4C,$12,$C7
-    db $FF,$1A,$F0
-    db $24,$CF,$89,$C6
-    db $FF,$1A,$F1
-    db $00
-    db $24 : dl menu_gfx
-    db $FF,$1A,$F3                  ; -> $C7:0D59, the Continue file list
 
 ; The part of the menu's loader script ($C7:0B47) that the picker's screen
 ; replaced (VRAM $08F0-$15EF and the BG2 map; $1600-$1F1F, the portraits,
@@ -121,6 +116,7 @@ script_cont:
 ; sent again at the end.
 menu_gfx:
     db $26,$03
+    db $29,$0C,$00,$00
     db $29,$22,$F0,$08
     db $29,$6D,$50,$0A
     db $29,$1C,$10,$0F
@@ -173,20 +169,6 @@ endif
     cmp #$F1
     beq .close
     bcc .open
-    pha                             ; ---- F2 / F3: go to a file list
-    lda #$01                        ; the screen is dark (the picker faded out)
-    sta.l !fadein
-    pla
-    ldx #$0E
-    ldy #$10                        ; $C7:100E
-    cmp #$F2
-    beq +
-    ldx #$59                        ; $C7:0D59
-    ldy #$0D
-+   stx $0A
-    sty $0B
-    lda #$C7
-    sta $0C
     plb
     rtl
 
@@ -201,16 +183,28 @@ endif
     sta.l !save2,x
     dex
     bpl -
+    lda.l !PICKREQ                  ; back from the save files: the last choices
+    cmp #$02
+    beq +
+    lda #$00
++   lsr a
+    sta.l !keep
     ldx #$04
 -   lda #!OFFSEAT
     cpx !count
     bcs +
     lda #$01
 +   sta $6269,x
+    lda.l !keep
+    bne +
     txa
     sta.l !col,x                    ; default colors: P1 white, P2 black, P3 red, P4 blue
-    dex
++   dex
     bpl -
+    lda #$00
+    sta.l !PICKB
+    lda #$03                        ; the character selection music
+    jsl !MUSIC_TRACK
     stz $1038
     lda #$04
     sta $1031
@@ -269,20 +263,15 @@ endif
     lda #$01
     sta.l !on
     jsl pick_apply
+    lda #$02                        ; the save files' music
+    jsl !MUSIC_TRACK
     plb
     rtl
 .cancel:
     lda #$00
     sta.l !on
-    rep #$20                        ; drop the call from the file's script
-    lda $10
-    sec
-    sbc #$0003
-    sta $10
-    inc $0A                         ; and skip the script's 00
-    sep #$20
-    ldx $73
-    dec $0CFF,x
+    lda #$01
+    sta.l !PICKB
     plb
     rtl
 
@@ -540,6 +529,7 @@ np_tick:
     lda !st
     cmp #$02
     bne +
+    jsr lightup
     jsr logic
 +   lda.l !SL+$76                   ; video frames since the last tick (the picker runs at 30 Hz)
     sec
@@ -569,9 +559,10 @@ np_tick:
 +   lda !st
     cmp #$05                        ; fade-out: the stock end and the file script
     bne +                           ; load graphics with the screen still on
-    lda.l $7E0300                   ; INIDISP shadow
+    lda.l $7E0300                   ; INIDISP shadow, 1 step per tick (~30 frames)
     and #$0F
-    beq .dark
+    cmp #$02
+    bcc .dark
     dec a
     sta.l $7E0300
     bra +
@@ -581,6 +572,24 @@ np_tick:
     lda #$04
     sta !st
 +   jsr palflush
+    rts
+
+; the screen comes in once the picker is ready (it opens dark: forced blank
+; or brightness 0), 3 steps per tick
+lightup:
+    lda.l $7E0300
+    bpl +
+    lda #$00
+    bra ++
++   cmp #$0F
+    bcs .out
+    clc
+    adc #$03
+    cmp #$0F
+    bcc ++
+    lda #$0F
+++  sta.l $7E0300
+.out:
     rts
 
 ; task 9 resumes in pk_loop
@@ -623,6 +632,16 @@ setup:
     stz !epal,x
     dex
     bpl -
+    lda.l !keep                     ; back from the save files: cursors on the last choices
+    beq ++
+    ldx #$03
+-   lda.l !char,x
+    beq +
+    dec a
+    sta !pidx,x
++   dex
+    bpl -
+++
     rep #$30
     ldx #$0000                      ; [CGRAM byte offset, 15 colors] per palette
     ldy.w #!NSTATIC
@@ -853,7 +872,9 @@ back:
 .leave:
     lda #$FF
     sta.l $7E1040
-    lda #$05
+    lda #$80                        ; back: dark at once (forced blank), no fade
+    sta.l $7E0300
+    lda #$04
     sta !st
     lda #$03
     jsr sfx
@@ -1955,8 +1976,8 @@ chcol:
     db !CHCOL
 
 print "SYM end_e4 ", hex(pc())
-print "SYM script_new ", hex(script_new)
-print "SYM script_cont ", hex(script_cont)
+print "SYM s_pick ", hex(s_pick)
+print "SYM menu_gfx ", hex(menu_gfx)
 print "SYM pick_op ", hex(pick_op)
 print "SYM pick_apply ", hex(pick_apply)
 print "SYM pick_spawn ", hex(pick_spawn)

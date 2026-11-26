@@ -89,6 +89,15 @@ s_wait:
     db $5B,!CURY,$60,$34,$10        ; menu cursor Y
     db $5B,$00,$5F,$36,$10          ; menu 0
     db $24,$D3,$1A,$C7              ; the cursor object
+    db $5D,$99,$01,$86,$01,$49,.back_end-.back  ; [$0199] = 1: back from the character
+.back:                                  ; selection with B: the players menu,
+    db $5B,$00,$5F,$99,$01              ; cursor on the players count (as the
+    db $FF,$91,$09,$0B,$10,$08,$03      ; NORMAL GAME accept at $C7:18B6)
+    db $FF,$8D,!PLAYERS_ARR,!SET,$03,$00,$00
+    db $5B,$01,$5F,$36,$10
+    db $5D,$29,$01,$61,$FF,$5F,$32,$10  ; $1032 = [$0129] - 1
+    db $24,$B5,$1A,$C7                  ; cursor Y
+.back_end:
     db $FF,$1A,$FC                  ; a few frames: the cursor's tiles go through
     db $FF,$1A,$FC                  ; the VRAM queue, it is drawn and gets its
     db $FF,$1A,$FC                  ; SB6 pose (the upload must not share an NMI

@@ -746,8 +746,14 @@ emu.addEventCallback(function()
     if frame == 800 and mode == 2 then                 -- title: the music streams ($0100 = 1, SPC PC $70xx)
       bootv[#bootv + 1] = string.format("V 0 title_music %02X%02X", r(0x0100), (emu.getState()["spc.pc"] >> 8) & 0xFF)
     end
-    if mode == 3 and not pk.menu then pk.menu = frame end
-    if pk.menu and frame == pk.menu + 300 and mode == 3 then  -- Normal Game menu: save menu music ($010A = 2)
+    if mode == 4 and rm(0x7FFC00) == 2 and not pk.chosen then  -- the picker (first): its music ($010A = 3)
+      pk.chosen = frame
+    end
+    if pk.chosen and frame == pk.chosen + 60 then
+      bootv[#bootv + 1] = string.format("V 0 picker_music %02X%02X", r(0x010A), r(0x0100))
+    end
+    if mode == 3 and pk.last and not pk.menu then pk.menu = frame end   -- the save files, after the picker
+    if pk.menu and frame == pk.menu + 120 and mode == 3 then  -- Normal Game menu: save menu music ($010A = 2)
       bootv[#bootv + 1] = string.format("V 0 menu_music %02X", r(0x010A))
     end
     if not stage0 and mode >= 0x0D and mode < 0x74 and (not FX.stage or mode == FX.stage) then stage0 = frame end

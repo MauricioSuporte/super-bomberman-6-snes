@@ -21,7 +21,9 @@
 ;   port 0 = sequence number $00-$7F; ports 1-3 = 3 data bytes. The SPC copies
 ;            the bytes and echoes the sequence on port 0. A chunk is 54
 ;            consecutive sequences (162 bytes = 18 BRR blocks = 18 ms).
-;   port 0 = $80 | toggle << 6 | n, n = 1..31: play SFX slot n (echoed).
+;   port 0 = $80 | toggle << 6 | n, n = 1..30: play SFX slot n (echoed).
+;   port 0 = $80 | toggle << 6 | 31: flush (the next track follows; ports 1 / 2
+;            = its voice / main volume), echoed.
 ;   port 0 = $80: release. The SPC restores Hudson's state, sets port 3 =
 ;            $A5, waits for port 0 = the loader's last kick value (the CPU
 ;            first puts ports 1-3 back as the loader left them), then sets
@@ -224,6 +226,9 @@ main:
     and a,#$1f
     bne +
     jmp release
++   cmp a,#$1f
+    bne +
+    jmp flush
 +   mov y,!seq
     mov $f4,y                       ; acknowledge the command
     dec a
@@ -280,6 +285,25 @@ main:
     or a,#$03
     mov !LAST_HEADER,a
 .done:
+    jmp main
+
+; Command 31: another track follows (same rate). The stream voice stops, the
+; ring is emptied (the next chunk goes to its start, playback restarts once
+; PREFILL chunks are in, as after an underrun) and takes the volumes in ports
+; 1 (voice) and 2 (main), read before the echo; an SFX keeps playing.
+flush:
+    mov $f2,#$5c : mov $f3,#!SV_BIT ; key off the stream voice
+    mov $f2,#!SV+0 : mov $f3,$f5
+    mov $f2,#!SV+1 : mov $f3,$f5
+    mov $f2,#$0c : mov $f3,$f6
+    mov $f2,#$1c : mov $f3,$f6
+    mov !state,#0
+    mov !level,#0
+    mov !slot,#0
+    mov !ptr,#!RING&$ff
+    mov !ptr+1,#!RING>>8
+    mov y,!seq
+    mov $f4,y                       ; acknowledge
     jmp main
 
 ; Writes SFX frames until the next wait leaves time to spare.

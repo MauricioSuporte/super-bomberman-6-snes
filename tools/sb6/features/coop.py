@@ -209,7 +209,9 @@ def _title_menu(rb):
         return bytes.fromhex("5B 03 5F 25 1D 5B 03 5F 24 1D") + store_count(n)
 
     bodies = [one + store_count(1), two_or_more(2), two_or_more(3), two_or_more(4)]
-    end = bytes.fromhex("06 06 0F 03 00")
+    # then the Normal Game menu (mode 3) opens with the character selection (features/picker.py flow):
+    # [$0197] = 1, [$0198] = 0
+    end = bytes.fromhex("5B 01 5F 97 01 5B 00 5F 98 01 06 06 0F 03 00")
     # Layout: for k < 3: [cursor == k ? body_k, skip to end]; then body_3; end.
     parts = []
     for k, body in enumerate(bodies):

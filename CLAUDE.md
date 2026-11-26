@@ -70,7 +70,11 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   `pick_tick` (logic, OAM) and `pick_nmi` (VRAM) run ours. Grid = the
   columns of `assets/picker/CharacterSelectPortrait.png`; one seat chooses
   at a time; top row = animations 02 / 20 of each character (<= 8 16x16
-  sprites per pose). State in `$7F:FC00` (docs/FREE_SPACE.md).
+  sprites per pose). State in `$7F:FC00` (docs/FREE_SPACE.md). It is its own
+  scene as in the fan game: players count -> picker -> NORMAL MODE menu
+  (`flow` in picker.py: mode 3 states 0 / 1; B goes back one step: picker
+  -> title players menu, save files -> picker with the last choices);
+  green background (`features/menu_bg.py`), its own music (stream track 3).
 * Bomber colors: every column of `BombermanPallete.png` after the first is
   palette id `$5A + n` of set 0 (`OWN_ID`, `pal_lookup`); columns 1-6 also
   replace the stock ids 1-6. A `char<n>_pallete.png` whose first column is
@@ -162,9 +166,11 @@ SB5's intro is skipped; the title's own intro runs at frames ~450-670,
 music and pads from ~730); an attract demo starts ~36 s later. Old scripts that
 wait for frame ~5650 still work (the title is already up). Check: title music streams (`$0100` = 1, SPC PC in `$70xx`), OPTIONS opens
 the DISCORD submenu / QR on the title (`features/options.py`; SB5's Options
-and Password screens are gone), Normal Game switches to the save menu music (`$010A` = 2,
-voice 7 pitch `$0600`, through the picker), the stage releases it (Hudson PC
-`$08xx`, stage music).
+and Password screens are gone), Normal Game opens the picker with its music (`$010A` = 3),
+then the save files with the save menu music (`$010A` = 2, voice 7 pitch `$0600`), the stage
+releases it (Hudson PC `$08xx`, stage music). `python tools/qa_check.py menus` (`tools/menu_check.py`)
+drives those menus with one player: sounds played to their end across screens, each screen's track, the
+NORMAL MODE menu's answers (~0.8 s) and its hand cursor's sprite.
 
 The testrunner ignores the multitap setting (every port lands on P1), so
 P3/P4 input is injected by Lua with `emu.write` to `$2C/$31/$36+seat` from an

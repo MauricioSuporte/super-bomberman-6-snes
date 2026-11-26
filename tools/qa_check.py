@@ -51,6 +51,9 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            behind, below OAM 104, gone after); Red stuns and Black pushes a boss rival (1-6) and, in Battle, any
            other bomber (with its Louie), never a Normal Game teammate
   (every scenario: SB5's static graphics queue never writes an OBJ page a bomber / Louie / egg owns)
+  menus    tools/menu_check.py (one player, the Normal Game menus: every accept / back sound plays to its end, each
+           screen's music (stream tracks switched in place), the character selection's last confirmation shows
+           before its fade, NORMAL MODE items -> their file lists and back in ~0.5 s, a file -> the stage; ~15 s)
   perf     tools/coop4_check.py (fps >= 50, Louie colors, P3/P4 colors, safe starts; ~1 min)
   flames   tools/flame_check.py (explosions look like 1-1's on every stage; ~1 min)
 
@@ -71,6 +74,7 @@ from qa import engine, suites as S  # noqa: E402
 ROOT = engine.ROOT
 JOBS = int(os.environ.get("JOBS", "6"))
 SLOW = {"perf", "flames"}
+EXTERNAL = {"perf": ["tools/coop4_check.py"], "flames": ["tools/flame_check.py"], "menus": ["tools/menu_check.py"]}
 
 
 def _jobs():
@@ -153,7 +157,7 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     verbose = "-v" in sys.argv
     jobs = _jobs()
-    names = list(jobs) + ["perf", "flames"]
+    names = list(jobs) + list(EXTERNAL)
     if "--list" in sys.argv:
         print(__doc__.split("Suites")[1].split("The first run")[0])
         return
@@ -205,10 +209,10 @@ def main():
             r.ok(f"{tag}: evaluation", False, traceback.format_exc(limit=3)[-600:])
         return name, r, time.time() - t
 
-    ext = [n for n in want if n in SLOW]
+    ext = [n for n in want if n in EXTERNAL]
     with ThreadPoolExecutor(JOBS) as ex:
         futs = [ex.submit(one, it) for it in todo]
-        extf = {n: ex.submit(_external, ["tools/coop4_check.py"] if n == "perf" else ["tools/flame_check.py"]) for n in ext}
+        extf = {n: ex.submit(_external, EXTERNAL[n]) for n in ext}
         for f in futs:
             name, r, dt = f.result()
             results.setdefault(name, []).extend(r)
