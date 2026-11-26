@@ -121,6 +121,9 @@ CURSOR_SEQS = [[0, 1, 2, 2, 1, 0, 3, 4, 4, 3, 0], [0, 3, 4, 4, 3, 0, 1, 2, 2, 1,
                [0, 7, 8, 8, 7, 0, 5, 6, 6, 5, 0], [0, 5, 6, 6, 5, 0, 7, 8, 8, 7, 0],
                [0, 7, 8, 8, 7, 0, 6, 5, 5, 6, 0]]
 CURSOR_ANIM_FRAMES, CURSOR_IDLE_FRAMES, CURSOR_CONFIRM_EYE = 30, 180, 2
+# SB5's wait after an accepted title item ($C7:1AFD, 64): the press reaches the next menu 10 frames
+# after the wait, so 20 = CURSOR_ANIM_FRAMES from the press (measured in Mesen).
+ACCEPT_WAIT = CURSOR_ANIM_FRAMES - 10
 
 
 def cursor_tables(asset_dir):
@@ -335,6 +338,13 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None, cache_dir=Non
         rb.patch(win, bytes.fromhex("FF 0C 30 80 D0 90 02"), window, f"{where} title: PUSH START blink window moved")
         rb.patch(cpy, bytes.fromhex("FF 8D 06 04 03 00 00"), version, f"{where} title: version instead of (c) line")
     rb.patch(0xC71ABF, bytes.fromhex("61 A0"), bytes([0x61, 0xA0 - TEXT_SHIFT]), "title menu cursor Y moved")
+    # An accepted item (A/Start, $C7:189C: SFX 4, then $C7:1AEA sleeps 64 frames with the cursor
+    # hopping, then FD 0E 04) took 74 frames to the next menu / the fade; it takes the cursor's
+    # confirmation (CURSOR_ANIM_FRAMES, 0.5 s) now. s_accept also starts that confirmation, so a
+    # press the game does not take (while it waits, fades or shows the QR) does not.
+    rb.patch(0xC7189C, bytes.fromhex("42 04 02 24 EA 1A C7"), call(syms["s_accept"]) + skip(1) + b"\xFF",
+             "title menu: accept through s_accept (cursor confirmation)")
+    rb.patch(0xC71AFD, bytes.fromhex("5B 40"), bytes([0x5B, ACCEPT_WAIT]), "title menu: shorter wait after accept")
     # initial cursor Y ($1034) when the title appears (intro path; mode 2: s_wait)
     rb.patch(0xC6FE6F, bytes.fromhex("5B A0 60 34 10"), bytes([0x5B, 0xA0 - TEXT_SHIFT, 0x60, 0x34, 0x10]),
              "title menu cursor initial Y moved")

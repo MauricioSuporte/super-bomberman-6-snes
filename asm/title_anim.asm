@@ -52,13 +52,14 @@ hirom
 !cref   = !V+$34        ; frames, for the periodic rewrite
 !cany   = !V+$35        ; scratch: any button held
 !ctile  = !V+$36        ; sprite frame (tile 0/2/4/6) that holds the pose
-!cy     = !V+$37        ; confirmation: the cursor's Y, menu and menu Y when it began
-!cm     = !V+$38
-!c34    = !V+$39
+!cy     = !V+$37        ; $1034 - the sprite's Y at rest (held while SB5's cursor hops)
+!cm     = !V+$38        ; menu $1036 when the confirmation began
+!c34    = !V+$39        ; (unused)
 !cvis   = !V+$3A        ; 1 = the cursor sprite was on screen in the last frame
 !cforce = !V+$3B        ; frames the pose and colors are still sent again
 !cw     = !V+$3C        ; FF 1A FC: 1 = its frame has been waited
 !smul   = !V+$3D        ; 1 = player 0 shows a pose in several steps (both areas)
+!cgo    = !V+$3E        ; FF 1A FD: 1 = the game accepted an item (the cursor confirms)
 !sof    = !V+$40        ; 2 words: the pending step's record in !ALT
 
 !BG1SC  = $4A           ; map $4800, 32x64
@@ -96,11 +97,23 @@ s_wait:
     db $FF,$1A,$FC
     db $42,$02,$00                  ; title music
     db $00
+; The title menu's accept ($C7:189C calls it instead of SFX 4 + $C7:1AEA):
+; the cursor's confirmation starts only here, when the game takes the press.
+s_accept:
+    db $FF,$1A,$FD
+    db $42,$04,$02                  ; SFX 4 (accept)
+    db $24,$EA,$1A,$C7              ; SB5's wait (shortened: title.py ACCEPT_WAIT)
+    db $00
 
 ; ---------------------------------------------------------------------------
 ; FF 1A F8-FA (from pick_op: A = the operand, M/X 8-bit, $0A-$0C = next op).
 title_op:
-    cmp #$F9
+    cmp #$FD
+    bne +
+    lda #$01                        ; ---- FD: an item was accepted (s_accept)
+    sta.l !cgo
+    rtl
++   cmp #$F9
     beq .waitload
     cmp #$FA
     beq .waitdone
@@ -543,8 +556,9 @@ idle_start:
     sta.l !cref
     sta.l !cidle
     sta.l !cidle+1
-    lda #$90                        ; Start/A still held from the skip: no confirmation
-    sta.l !prev
+    sta.l !cgo
+    lda #$11                        ; rest Y offset until the first rest frame
+    sta.l !cy
     lda #$FF
     sta.l !cpose
     lda #$00
@@ -560,9 +574,11 @@ idle_start:
 ; rest, tiles 2/4/6 while it hops after an accepted option); the pose is
 ; written over the 4 tiles of the frame in use and the colors over the
 ; palette. Rest pose; after !CURIDLE frames without input a look around
-; (random direction and face); A/Start: the confirmation, whose face stays
-; until the next input - SB5's hop is held still meanwhile (the fan game's
-; cursor only nods), while the same menu and option are up.
+; (random direction and face); an accepted item (FF 1A FD from s_accept,
+; not the pad: a press the game ignores does nothing): the confirmation,
+; which plays to its end and whose face stays until the next input - SB5's
+; hop is held still meanwhile (the fan game's cursor only nods), while the
+; same menu and option are up.
 ; Tables from tools/sb6/features/title.py.
 cursor:
     lda.l !done
@@ -576,34 +592,17 @@ cursor:
     lda $19
     and #$F0
     ora $1A
-    sta.l !cany
-    lda $1A
-    and #$10
-    sta.l !t0
-    lda $19
     bra ++
 +   lda $19
     ora $1B
     and #$F0
     ora $1A
     ora $1C
-    sta.l !cany
-    lda $1A
-    ora $1C
-    and #$10
-    sta.l !t0
-    lda $19
-    ora $1B
-++  and #$80
-    ora.l !t0
-    tay                             ; Y = Start/A held
-    lda.l !prev
-    eor #$FF
-    sta.l !t0
-    tya
-    sta.l !prev
-    and.l !t0
-    sta.l !t0                       ; Start/A pressed now
+++  sta.l !cany
+    lda.l !cgo                      ; the game accepted an item (FF 1A FD, its
+    sta.l !t0                       ; accept path): presses it ignores - while it
+    lda #$00                        ; waits, fades or shows the QR - never start
+    sta.l !cgo                      ; a confirmation
     lda.l !canim                    ; confirmed in another menu (Normal Game ->
     cmp.b #!CURCONFIRM              ; players): back to rest and its looks around
     bcc +
@@ -621,12 +620,8 @@ cursor:
     beq +
     lda.b #!CUREYE
     sta.l !ceye
-    lda $08C0
-    sta.l !cy
     lda $1036
     sta.l !cm
-    lda $1034
-    sta.l !c34
     lda.b #!CURCONFIRM
     bra .start
 +   lda.l !cany
@@ -716,22 +711,27 @@ cursor:
     adc.l !t0
 .show:
     tay
-    lda.l !canim                    ; ---- confirmation: no hop
-    cmp.b #!CURCONFIRM
-    bcc +
-    lda $1036
-    cmp.l !cm
-    bne +
+    lda $08C0                       ; ---- no SB5 hop: an accepted item starts
+    cmp #$E0                        ; the cursor object's hop script ($C0:C99D,
+    bcs +                           ; frames 2/4/6, Y +1/-5, ~64 frames), which
+    lda $08C1                       ; outlives the shortened wait into the next
+    and #$06                        ; menu. At rest (frame 0) the Y offset from
+    bne .hop                        ; the menu Y $1034 is measured; while it
+    lda $1034                       ; hops the Y is held there.
+    sec
+    sbc $08C0
+    sta.l !cy
+    bra +
+.hop:
     lda $1034
-    cmp.l !c34
-    bne +
-    lda.l !cy
+    sec
+    sbc.l !cy
     sta $08C0                       ; OAM shadow and OAM (whichever the NMI
     stz $2102                       ; sends first)
     stz $2103
     lda $08BF
     sta $2104
-    lda.l !cy
+    lda $08C0
     sta $2104
 +   lda $08C1                       ; the sprite's frame
     and #$06
@@ -1053,5 +1053,6 @@ sptr:
 print "SYM end ", hex(pc())
 print "SYM s_load ", hex(s_load)
 print "SYM s_wait ", hex(s_wait)
+print "SYM s_accept ", hex(s_accept)
 print "SYM title_op ", hex(title_op)
 print "SYM title_nmi ", hex(title_nmi)

@@ -147,7 +147,12 @@ script accumulator (`61` = add).
   pose (4 tiles, 63 poses = 7 faces x 9 heads) to whichever of the frames
   0/2/4/6 the shadow asks for (VRAM `$6000 + $20*tile`, lower row `+$100`)
   and its 15 colors to CGRAM 129-143, from the NMI while the title idles;
-  during the confirmation it writes the Y of the moment A/Start was pressed
+  the confirmation starts when the game accepts an item (`FF 1A FD` in
+  `s_accept`), not on the pad, and plays to its end;
+  SB5's hop is the cursor object's own script (`$C0:C99D`: animation `$5A`,
+  ~64 frames, then `$59`), started by the accept and outliving the hack's
+  shorter wait into the next menu: while the sprite frame is not 0 the SB6
+  cursor writes `$1034` minus the rest offset it measured at frame 0 (`$11`)
   to the shadow and to OAM (no hop). Looks around after 180 frames without
   input; pads read from `$19-$1C` (pad 2 = `$FFFF` when unplugged).
   The game loads its own cursor tiles through its VRAM queue (`$C0:0580`,
@@ -178,7 +183,11 @@ script accumulator (`61` = add).
 * Script op `FD 0E n 00 00` puts the task to sleep n frames (SB5's wait loop
   `$C7:1B0B`, `$103A` frames, `FD 0E 01` at `$C7:1B36`): a script may wait
   this way; an accepted title item waits 64 frames there (`$C7:1AEA`) with
-  the cursor hopping, then reaches the menu checks at `$C7:18A3`.
+  the cursor hopping, then reaches the menu checks at `$C7:18A3` (74 frames
+  from the press). The hack waits 20 (`5B 40` at `$C7:1AFD`, `ACCEPT_WAIT` in
+  `features/title.py`): 30 frames from the press, the cursor's confirmation;
+  `$C7:189C` (SFX 4 + `$C7:1AEA`) calls `s_accept`, whose `FF 1A FD` starts
+  that confirmation (`!cgo`), so presses the game ignores do not.
 * Title menu (task `$C7:1872`, every frame): `$1036` menu (0 NORMAL / BATTLE
   / OPTIONS, 1 players, 2 unused in the title), `$1032` item, `$1037` last
   item (set per menu at `$C7:19D3`). A/Start: `$C7:189C` SFX 4 + `$C7:1AEA`,

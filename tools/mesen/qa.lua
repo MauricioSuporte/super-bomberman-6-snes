@@ -743,7 +743,7 @@ emu.addEventCallback(function()
     if pk.last and frame == pk.last + 40 then         -- every seat confirmed: the player row's colors (OBJ palettes 0-3)
       bootv[#bootv + 1] = "V 0 picker_cg " .. hexs(0x100, 0x80, emu.memType.snesCgRam)
     end
-    if frame == 1000 and mode == 2 then                -- title: the music streams ($0100 = 1, SPC PC $70xx)
+    if frame == 800 and mode == 2 then                 -- title: the music streams ($0100 = 1, SPC PC $70xx)
       bootv[#bootv + 1] = string.format("V 0 title_music %02X%02X", r(0x0100), (emu.getState()["spc.pc"] >> 8) & 0xFF)
     end
     if mode == 3 and not pk.menu then pk.menu = frame end

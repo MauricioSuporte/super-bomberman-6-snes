@@ -3,7 +3,7 @@
 SB5's title menu (menu `$1036` = 0: NORMAL GAME / BATTLE GAME / OPTIONS) sent
 OPTIONS to mode `$0B` (Options screen: Password, Sound, Sound Test). The hack
 keeps the title up instead: OPTIONS is accepted like the other items (SFX 4,
-the cursor's confirmation, SB5's 64-frame wait in `$C7:1AEA`), then the menu
+the cursor's confirmation, SB5's wait in `$C7:1AEA`, 0.5 s in the hack), then the menu
 block shows the submenu (menu 3, one item: DISCORD). DISCORD shows a QR code
 (invite to the Super Bomberman 6 Discord server, `assets/options/discord_qr.png`)
 over the title on BG3; any button closes it and the submenu is back. B in the

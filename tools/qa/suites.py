@@ -2124,7 +2124,7 @@ def louie_scenarios_b():
     sc = []
     st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", 0, 3, ROW], [42, "poke", 0x1632, 1], [41, "cell", cell(4, ROW), 0x30],
                                            [60, "pad", 0, "y", 2]] + _acts(56, 120)
-    st += [[k, "read", "ride", 0x1782, 1] for k in range(56, 100)] + [[k, "readoam", "oam"] for k in range(64, 76, 2)]
+    st += [[k, "read", "ride", 0x1782, 1] for k in range(56, 100)] + [[k, "readoam", "oam"] for k in range(64, 78, 2)]
     sc.append(Scenario("l_pink_jump", 120, steps=st))
     # (SB5's other abilities, as they were: their sounds)
     st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", 1, 4, ROW], [42, "pad", 1, "a", 2], [47, "place", 1, 3, ROW],
@@ -2167,6 +2167,8 @@ def louie_rival_scenarios():
     st += [[k, "place", s, x, R] for k in (448, 449) for s, x in ((0, 3), (4, 4))]
     st += [[449, "poke", 0x1632, 1], [450, "pad", 0, "y", 2], [400, "read", "iph", 0x1FBD4, 1]]
     st += [[k, "read", "stun", 0x15BA, 5] for k in range(446, 470, 2)]
+    # walls above / below the rival's run: its AI (random, seeded by the boot) must not walk out of the row
+    st += [[540, "cell", cell(x, y), 0x30] for x in range(4, 9) for y in (R - 1, R + 1)]
     st += [[k, "place", s, x, R] for k in (548, 549) for s, x in ((1, 3), (4, 5))]
     st += [[549, "poke", 0x1632 + 1, 1], [550, "pad", 1, "y", 2]]
     st += [[k, "read", "x", 0x182A, 5] for k in range(440, 620, 2)]
@@ -2477,8 +2479,11 @@ def _eval_b(res, logs):
                f"{jump[:1]}..{jump[-1:]} sound {_reqs(l, SND_PINK)}")
         # its shadow on the ground (type 0 animation $0A, mapping 39: SB5's quarter $0EB drawn 4 times, flipped;
         # features/bombs.py), the 16 x 16 ellipse while the rider is up
+        # (from 4 frames into the jump: its first frame follows the pad by 1-2 frames, as the boot's timing falls)
         bad = []
         for k, o in l.values.get("oam", []):
+            if jump and k < jump[0] + 4:
+                continue
             ps = [(o[4 * i], o[4 * i + 1], o[4 * i + 3] & 0xC0) for i in range(128)
                   if o[4 * i + 2] == 0xEB and not o[4 * i + 3] & 1 and o[4 * i + 1] < 0xE0]
             xs, ys = {x for x, _, _ in ps}, {y for _, y, _ in ps}
