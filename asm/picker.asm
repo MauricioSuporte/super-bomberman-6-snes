@@ -339,11 +339,9 @@ pick_apply:
     lda.l $7E1D1A                   ; Battle
     and #$01
     bne .out
+    jsr unchosen
     ldx #$00
--   txa
-    cmp.l $7E0000|!count
-    bcs .out
-    lda.l !char,x
+-   lda.l !char,x
     dec a
     cmp #$09
     bcs +
@@ -362,6 +360,62 @@ pick_apply:
     pla
     plp
     rtl
+
+; Seats not chosen on the title (they join the Normal Game with Start, asm/coop.asm) are Bomberman in the
+; first color no other Bomberman wears, from the seat's own: P2 black, P3 red, P4 blue (the HUD's heads read
+; the same choices). M/X 8-bit.
+unchosen:
+    phb
+    lda #$7F
+    pha
+    plb
+    ldx #$00
+-   txa
+    cmp.l $7E0000|!count
+    bcc +
+    lda #$01
+    sta.l !char,x
+    lda #$FF
+    sta.l !col,x
++   inx
+    cpx #$04
+    bcc -
+    ldx #$00
+.seat:
+    txa
+    cmp.l $7E0000|!count
+    bcc .next
+    sta.l !s2
+    sta.l !s1                       ; first try: the seat's own color
+.try:
+    ldy #$00
+.other:
+    tya
+    cmp.l !s2
+    beq .skip
+    lda.w !char-$7F0000,y
+    cmp #$01
+    bne .skip
+    lda.w !col-$7F0000,y
+    cmp.l !s1
+    bne .skip
+    lda.l !s1                       ; worn: the next of white, black, red, blue
+    inc a
+    and #$03
+    sta.l !s1
+    bra .try
+.skip:
+    iny
+    cpy #$04
+    bcc .other
+    lda.l !s1
+    sta.l !col,x
+.next:
+    inx
+    cpx #$04
+    bcc .seat
+    plb
+    rts
 
 ; A = character (0-8), !s1 = color: A = palette id of set 0 (chpal + color,
 ; asm/bombers.asm; chpal 0 = the cartridge's).
@@ -1664,6 +1718,11 @@ endif
     lda.l !SLst
     cmp #$01
     bne +
+    rep #$20                        ; SB5's VRAM queue first: its setup's map rows (the 2P panel at the top
+    lda.l $7E0355                   ;   row) sent after ours would stay over the picker's BG1 (the queue
+    cmp.l $7E0357                   ;   stops at line 250, pause.QUEUE_LAST_LINE, or later on a slower
+    sep #$20                        ;   emulator / console)
+    bne .quit
     jsr nmi_load
     bra .quit
 +   jsr nmi_hover                   ; C set: a swap was made (the VBlank is used up)

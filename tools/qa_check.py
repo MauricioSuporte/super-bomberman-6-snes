@@ -15,11 +15,13 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
   sfx      bomb, explosion by fire range, pierce bomb, enemy death, item, remote
   spawn    every stage: the 4 seats start in their corners, safe (bomb + hide with any soft blocks, no enemy
            within 6 cells, shut in by soft blocks), nobody dies standing still; and with P3/P4 out of the stage at
-           its start (they join with Start): their spawn cells in their corners and as safe, Start brings them there
+           its start (they join with Start): their spawn cells in their corners and as safe, Start brings them there;
+           a one-player game the same for P2-P4 (Bomberman, P2 black / P3 red / P4 blue, the HUD's choices too)
   music    each World 1 stage's music plays (Hudson driver), the title / save menu music, fps without input
   boss16   1-6: intro (players held, rival walks in), white -> black -> Golden, crowd / death sounds, items,
            the kick drop, victory, 1-7 next
-  boss17   1-7: intro (players held facing up, no idle), lights out with the hole, 8 hits, red below half,
+  boss17   1-7: intro (players held facing up, no idle), lights out with the hole (1P and 4P: no lit lines,
+           the NMI ends in the vblank), 8 hits, red below half,
            death explosions, victory, mode $1C
            (1-6 and 1-7, on foot and with every seat on a Louie from the stage before: while an intro holds the
            players each one faces up in its stand / riding pose, its Louie too, never SB5's idle)
@@ -46,7 +48,8 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            kicks it on, SB5's soft block kick stops at a bomb and kicks it; Black: hatches out of an egg (colors, cry,
            ridden), dashes 3 cells (sound), invincible meanwhile (a flame: Louie kept; without the dash: lost), pushes an
            enemy 2 cells and stops on it; Green / Black dashes leave afterimages (every frame shown, 6 / 12 frames
-           behind, below OAM 104, gone after)
+           behind, below OAM 104, gone after); Red stuns and Black pushes a boss rival (1-6) and, in Battle, any
+           other bomber (with its Louie), never a Normal Game teammate
   (every scenario: SB5's static graphics queue never writes an OBJ page a bomber / Louie / egg owns)
   perf     tools/coop4_check.py (fps >= 50, Louie colors, P3/P4 colors, safe starts; ~1 min)
   flames   tools/flame_check.py (explosions look like 1-1's on every stage; ~1 min)
@@ -85,8 +88,13 @@ def _jobs():
     out["music"] = [(S.stage_fx(st), S.music_scenarios(), S.music_eval(st)) for st in S.STAGES]
     out["spawn"] = [(S.stage_fx(st), S.spawn_scenarios(), S.spawn_eval(st)) for st in S.STAGES]
     out["spawn"] += [(S.out_fx(st), S.spawn_out_scenarios(st), S.spawn_out_eval(st)) for st in S.STAGES]
+    out["spawn"].append((S.FX_A, S.gameover_scenarios(), S.gameover_eval(S.FX_A), "gameover_spawn"))
+    out["spawn"] += [(S.one_fx(st), S.spawn_out_scenarios(st, (1, 2, 3)), S.spawn_out_eval(st, (1, 2, 3)))
+                     for st in S.STAGES]
     out["boss16"] = [(S.stage_fx(0x67), S.b16_scenarios(), S.b16_eval(None))]
-    out["boss17"] = [(S.stage_fx(0x68), S.b17_scenarios(), S.b17_eval(None))]
+    out["boss16"].append((S.out_fx(0x67), S.b16_out_scenarios(), S.b16_out_eval(None), "s67_out_boss16"))
+    out["boss17"] = [(S.stage_fx(0x68), S.b17_scenarios(), S.b17_eval(None)),
+                     (S.B17_1P, S.b17_dark_scenarios(), S.b17_dark_eval(None))]
     for st in (0x67, 0x68):
         name = "boss16" if st == 0x67 else "boss17"
         sc = S.hold16_scenarios() if st == 0x67 else S.hold17_scenarios()
@@ -112,6 +120,8 @@ def _jobs():
     out["items"].append((S.FX_A, S.magnet_scenarios(), S.magnet_eval(S.FX_A), f"{S.FX_A.name}_magnet"))
     out["louies"] = [(S.LA_FX, S.louie_scenarios_a(), S.louie_eval("a")), (S.LB_FX, S.louie_scenarios_b(), S.louie_eval("b")),
                      (S.FX_A, S.louie_egg_scenarios(), S.louie_egg_eval(), f"{S.FX_A.name}_louie_egg")]
+    out["louies"].append((S.LR_FX, S.louie_rival_scenarios(), S.louie_rival_eval(None), "s67_louie_rival"))
+    out["louies"].append((S.LA_FX, S.louie_battle_scenarios(), S.louie_rival_eval(None), "s0D_louie_battle"))
     norm = {}
     for name, js in out.items():
         norm[name] = [(j[0], j[1], j[2], j[3] if len(j) > 3 else f"{j[0].name}_{name}") for j in js]

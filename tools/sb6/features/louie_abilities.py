@@ -4,7 +4,7 @@
 * Yellow Louie: a bomb ahead rolls away with the row of bombs after it; a rolling train takes the bombs it meets
   along and kicks a soft block on; a kicked soft block kicks the bomb it stops at.
 * Black Louie (SB5's bosses' Louie) hatches out of eggs too (0-6) and dashes: 3 cells, invincible, pushing the first
-  enemy 2 cells.
+  enemy 2 cells, or else an opponent bomber (a boss rival; any other bomber in Battle), stunned as by the Red punch.
 * Green and Black dashes leave afterimages (OAM copies of the rider and Louie, flickering).
 
 Rules and addresses: asm/louie_abilities.asm; docs/ROM_MAP.md "Louie abilities".

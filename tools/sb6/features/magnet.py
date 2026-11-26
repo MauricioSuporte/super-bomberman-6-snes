@@ -3,7 +3,7 @@
 Item $0F (SB5's mine, ability $7E:4ED5 bit $20, exclusive with the other bomb types) gives it: its field icon is
 Unity's MagnetBombIcon (features/items.py), its HUD bomb type icon Unity's HUD/NormalGame/MagnetBomb.png
 (features/hud.py), its bomb assets/bombs/MagnetBomb.png (OBJ tiles $12E / $100 / $102, animation 4: features/bombs.py).
-A magnet bomb at rest looks along its row and column for an enemy and, one 2-12 cells away in view, gets kicked
+Like SB5's search bomb, only a bomber's first bomb out is a magnet bomb; the others are normal. A magnet bomb at rest looks along its row and column for an enemy and, one 2-12 cells away in view, gets kicked
 toward it (rules in asm/magnet.asm). No bomb becomes a mine any more: SB5's mine setup is freed.
 """
 import os
@@ -50,8 +50,7 @@ def apply(rb):
         rb.free_old(name, s, size, crc, purpose)
     rb.patch(0xC43646, bytes.fromhex("89 21"), bytes.fromhex("89 01"),
              "magnet: a dying bomber's magnet bombs stay (only remote bombs go off)")
-    rb.patch(0xC51C49, bytes.fromhex("D0 EF"), bytes.fromhex("EA EA"),
-             "magnet: every bomb of ability $20 shows animation 4 (the magnet bomb)")
+    # $C5:1C46 (SB5's mine test, kept): only the first bomb out of an ability $20 owner shows animation 4
     m = syms["mg_rest"]
     rb.patch(0xC51FEA, bytes.fromhex("4C 58 20"), bytes([0x4C, m & 0xFF, m >> 8 & 0xFF]),
              "magnet: a magnet bomb at rest looks for enemies")

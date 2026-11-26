@@ -968,7 +968,7 @@ start_up:
 
 ; Seats held by an intro (1-6's rivals, 1-7's clown): each faces up in the stand pose of its state (on a
 ; Louie: its riding animation; before, a rider kept facing down in 1-7 and showed SB5's idle on a Louie
-; while 1-6 held it), and SB5's frames-standing count ($17E2) stays 0, so nobody idles. A new animation
+; while 1-6 held it), and SB5's frames-standing count ($17E2) stays 1, so nobody idles. A new animation
 ; only when the seat shows another one (one each frame cost 3 fps with 4 players). Left alone: death
 ; ($16), jumping onto / thrown off a Louie ($17-$1A), time up / victory ($1F/$20), a carried bomb. (Until the
 ; strip with the new pose is served, $079F still shows the old one: asked again, as SB5 does for a walk.)
@@ -977,7 +977,8 @@ hold_up:
 .seat:
     lda $15A2,x
     bmi .next                   ; no bomber in this seat
-    stz $17E2,x
+    lda #$01                    ; standing, not idle: 0 would run SB5's 'just stopped' ($C4:43A4 -> $C4:4318) every
+    sta $17E2,x                 ; frame, a new strip each frame (1 KB of vblank, the darkness' HDMA lost with 1P)
     lda $1782,x
     and #$08
     bne .next
@@ -1303,12 +1304,33 @@ keep_spawn:
     cmp #!RIVAL1
     bne +
     ldx #$03
--   lda $182A,x
+.seat:
+    lda $15A2,x                 ; out of the stage (P3/P4 may join later with Start): its x/y are stale, its
+    bmi .cell                   ; spawn cell ($4E8D/$4EA5, its start: coop_e4.asm e4_spawn_all) is where it starts
+    lda $17FA,x
+    cmp #$FF
+    beq .cell
+    lda $182A,x
     sta.l !SPX,x
     lda $1872,x
     sta.l !SPX+4,x
+    bra .next
+.cell:
+    lda.l $7E4E8D,x             ; x = column * 16, y = row * 16 (cell = (x + 8) >> 4)
+    asl
+    asl
+    asl
+    asl
+    sta.l !SPX,x
+    lda.l $7E4EA5,x
+    asl
+    asl
+    asl
+    asl
+    sta.l !SPX+4,x
+.next:
     dex
-    bpl -
+    bpl .seat
 +   rts
 
 ; before the Golden Bomber (stand_task, the screen black): each living seat back

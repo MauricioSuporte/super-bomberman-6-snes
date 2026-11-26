@@ -25,8 +25,10 @@ endmacro
 ;   fight (SB1 $3DBC): it accelerates toward the nearest live player, 1/256 px a frame per frame on
 ;     each axis up to 1/4 px a frame (doubled while it cries, state $0C), over everything, the center
 ;     kept in x 47-192, y 48-160; a flame on one of the 5 x 5 cells around its center is a hit (!CHP
-;     hits; SB1: 18), a player within 16 px of its center dies. Hit (SB1 $3EF1): 96 frames stunned (no
-;     move, no flames; it blinks with its white silhouette), 8 shots out in 8 directions (SB1 $C7:412A:
+;     hits; SB1: 18), a player within 16 px of its center dies. Hit (SB1 $3EF1): !HITT = 96 frames stunned
+;     (no move, as SB1; hit while it cries and runs, state $0C: picture D, the hurt face, meanwhile),
+;     !INVT = 192 frames no flame counts (twice SB1's), blinking with its white silhouette 4 frames in 8
+;     meanwhile, 8 shots out in 8 directions (SB1 $C7:412A:
 ;     15/16 px a frame straight, 10/16 diagonal; a player within 8 px dies; gone off the screen), and
 ;     its expression goes on by SB1's state tables ($C7:425C animation, next, after a hit). Below half
 ;     its hits it keeps SB1's red flash colors.
@@ -105,6 +107,11 @@ endmacro
 !ONM   = !CB+$AE
 !OI    = !CB+$B0
 !CWH   = !CB+$2E          ; 1: the white silhouette of the picture is shown (blink after a hit)
+!HITT  = 96                ; frames stunned after a hit (SB1's)
+!INVT  = 192               ; frames invulnerable after a hit, blinking (twice SB1's stun)
+!CINV  = !CB+$3C          ; invulnerable frames left (inv_tick)
+!CHURT = !CB+$3D          ; 1: hit while running (state $0C): the stun shows picture D
+!PIC_D = 3                ; picture D, the hurt face (sb1_2-8_clown_frames.png column 3)
 !CSHW  = !CB+$2F          ; picture pic_tick shows (!CWANT or its white one)
 !CFUP  = !CB+$38          ; seats turned up by world1's start_up (!CLOWNHOLD + $1F there)
 !CDL   = !CB+$39          ; darkness: level now, level wanted (0-!CDMAX), 1 = on
@@ -332,9 +339,12 @@ ph_appear:
 
 ph_fight:
     jsr chase
+    jsr inv_tick
+    lda.l !CINV                 ; invulnerable after a hit: no flame counts
+    bne +
     jsr flames
     bcs .hit
-    jsr touch_boss
++   jsr touch_boss
     jsr anim_step
     bcc .rts
     lda.l !CST
@@ -355,9 +365,20 @@ ph_fight:
     sta.l !CHITS
     beq .death
     jsr hp_pal
-    lda #$60
+    lda #!HITT                  ; stunned (ph_hit), then fighting again, invulnerable and blinking until !INVT
     sta.l !CTIM
+    lda #$00
+    sta.l !CTIM+1
+    lda #!INVT
+    sta.l !CINV
+    lda #$00
+    sta.l !CHURT
     lda.l !CST
+    cmp #$0C                    ; crying, running at twice the speed: stunned with the hurt face (D)
+    bne +
+    lda #$01
+    sta.l !CHURT
++   lda.l !CST
     lsr a
     lsr a
     tax
@@ -383,19 +404,35 @@ ph_fight:
     sta.l !CPH
     rts
 
-ph_hit:
-    lda.l !CTIM                 ; its white silhouette 4 frames in 8 (SB1 flashed red: the owner wants white)
+; invulnerable frames (!CINV) after a hit: its white silhouette (SB1 flashed red: the owner wants white) 4 frames
+; in 8 (the two pictures sit in the two BG2 buffers: a blink is a BG2SC swap); the last frame: the picture again
+inv_tick:
+    lda.l !CINV
+    beq .rts
+    dec a
+    sta.l !CINV
+    beq .off
     lsr a
     lsr a
     and #$01
+.off:
     sta.l !CWH
+.rts:
+    rts
+
+ph_hit:
+    jsr inv_tick
     jsr touch_boss
     jsr anim_step
-    jsr tick
+    lda.l !CHURT
+    beq +
+    lda #!PIC_D                 ; (its white silhouette blinks as N's: white_of)
+    sta.l !CWANT
++   jsr tick
     bne +
-    jsr stop
     lda #$00
-    sta.l !CWH
+    sta.l !CHURT
+    jsr stop
     lda.l !CST
     lsr a
     lsr a
@@ -935,7 +972,18 @@ place:
 pic_tick:
     lda.l !CWANT
     sta.l !CSHW
-    lda.l !CWH
+    lda.l !CINV                 ; invulnerable: SB1's own white flash after the stun (states $14 / $18: N and
+    beq +                       ;   white N in turns) would add to the blink (white 9 frames in 14): its
+    lda.l !CWANT                ;   pictures 7-10 show as N D E G, only the fixed blink below whitens
+    cmp #7
+    bcc +
+    cmp #11
+    bcs +
+    tax
+    lda.l normal_of-7,x
+    sta.l !CWANT
+    sta.l !CSHW
++   lda.l !CWH
     beq +
     lda.l !CWANT
     cmp #!CPICS
@@ -1250,6 +1298,8 @@ hp_pal:
 ; the white silhouette of a picture (N D E G -> 7 8 9 10; the others have none)
 white_of:
     db 7, 1, 2, 8, 9, 5, 10, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+normal_of:                      ; white N D E G -> N D E G
+    db 0, 3, 4, 6
 
 ; ---- the dark (SB1: its BG2 subtracted on the subscreen, with a hole around the face) ----
 ; the fixed color subtracted from BG1, BG3 and the backdrop below the HUD (color math, CGWSEL / CGADSUB

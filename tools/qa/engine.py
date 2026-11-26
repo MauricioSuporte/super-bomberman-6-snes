@@ -104,6 +104,7 @@ class Log:
         self.values = {}       # name -> [(k, bytes)]
         self.msgs = []
         self.dma = []          # raw "Y" / "Z" lines
+        self.hdma_late = []    # (frame, scanline, value): HDMAEN written on a visible line (OPS.hdmawatch)
         self.clobber = []      # (k, page, owner, vram): static graphics written over a live sprite page
         for l in lines:
             f = l.split()
@@ -140,6 +141,8 @@ class Log:
                 self.clobber.append((int(f[1]), int(f[2]), int(f[3], 16), int(f[4], 16)))
             elif t in ("Y", "Z"):
                 self.dma.append(l)
+            elif t == "HL":
+                self.hdma_late.append((int(f[1]), int(f[2]), int(f[3], 16)))
             elif t in ("X", "W"):
                 self.msgs.append(l)
 

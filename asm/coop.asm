@@ -3,9 +3,13 @@
 ;
 ; Seats 3/4 are pads 3/4 (multitap on port 2; the cartridge's pad reader
 ; $C0:0A56 already fills the per-seat arrays $2C/$31/$36+seat for five pads).
-; With one or two players every hook below takes the cartridge's own path:
-; `!coopst` (this stage is a co-op stage) is set only by c4_stage_slots when
-; `!count` >= 3 and the mode is a campaign stage.
+; Every Normal Game campaign stage runs the co-op rules with four seats
+; (`!roster` 4): the seats not chosen on the title (`!pmask` = the chosen
+; ones) start out of the stage and join with Start like an absent co-op
+; seat (safe corner, HUD PUSH START, default Bomberman: P2 black, P3 red,
+; P4 blue, `pick_apply`). SB5's forced one-player sessions (`!solo`, flags
+; 5/6 of `$7E:2900`), Battle and a count never chosen (0) keep the
+; cartridge's own path: `!coopst` stays 0.
 ;
 ; Boss stages ($67-$6E, `!bossst`): the rival bomber is created in bomber
 ; slot 4 (P5) instead of slot 2 (P3), so up to four players fight it.
@@ -59,6 +63,7 @@ hirom
 !bseat    = $0157       ; word: seat being benched / restored (E4 scratch)
 !anchx    = $0159       ; 2 bytes: spawn anchor x of P3/P4 (corner or beside P1/P2)
 !anchy    = $015B       ; 2 bytes: spawn anchor y of P3/P4
+!solo     = $015D       ; 1 = SB5's forced one-player session (stock rules)
 
 ; Bomber fields kept for benched seats (recomp seat_fields).
 macro bench_fields()
@@ -70,23 +75,18 @@ endmacro
 ; ===========================================================================
 org !C4
 
-; $C4:286F: equipment reset for every chosen seat (stock: P1, P2).
+; $C4:286F: equipment reset for every seat (stock: P1, P2; any seat may
+; join a Normal Game with Start).
 c4_reset:
     lda #$00
     jsr $2906
     lda #$01
     jsr $2906
-    lda !count
-    cmp #$03
-    bcc +
     lda #$02
     jsr $2906
-    lda !count
-    cmp #$04
-    bcc +
     lda #$03
     jsr $2906
-+   jmp $2879
+    jmp $2879
 
 ; $C4:28B4 (tail of the player reset, ends with RTL): forced one-player
 ; sessions as in the original; co-op lives = players + 2, P3 red, P4 blue.
@@ -105,8 +105,21 @@ c4_tail:
     sta $1D25
     sta $1D24
     sta !count
+    sta !solo
     jml !PICK_APPLY
 .normal:
+    stz !solo
+    lda !count                      ; players chosen on the title: $1D25 is co-op's participant mask
+    beq .derive                     ;   (e4_set_masks: after a game over only the last seat, e.g. $04 for
+    cmp #$02                        ;   P3, which left !count 1 and a stage with no bomber, retried forever):
+    lda #$01                        ;   everyone chosen back, as the title set it
+    bcc +
+    lda #$03
++   sta $1D25
+    sta $1D24
+    lda !count
+    bra .coop
+.derive:
     lda $1D25
     and #$03
     cmp #$03
@@ -132,12 +145,12 @@ c4_tail:
     sta $16DC                       ; P3 red
     inc a
     sta $16DD                       ; P4 blue
-    lda #$07
+    php                             ; chosen seats take part, the others join with Start
+    sep #$10
     ldx !count
-    cpx #$04
-    bne +
-    lda #$0F
-+   sta !pmask
+    lda.l roster_bits,x
+    plp
+    sta !pmask
     stz !benched
     jml !PICK_APPLY
 
@@ -163,7 +176,7 @@ c4_stage_slots:
     lda #19
     sta !mofs
     sta !mbase
-    lda !count
+    lda #$04                        ; four seats, chosen or not
     sta !roster
     stz !roster+1
     lda #$01
@@ -187,18 +200,14 @@ c4_stage_slots:
     sta !roster
     stz !roster+1
     stz !coopst
-    lda !count
-    cmp #$03
+    jsl e4_coop_rules
     bcc .rts
     lda $1031
     cmp #$6A
     bne +
-    lda !count
-    cmp #$04
-    bcc +
     lda #$03                        ; two rivals: P1-P3 fight
     bra ++
-+   lda !count
++   lda #$04
 ++  sta !roster
     lda #$01
     sta !coopst
@@ -1129,12 +1138,8 @@ coop_boot:
 e4_coop_check:
     php
     sep #$20
-    lda.l $7E0000|!count
-    cmp #$03
+    jsl e4_coop_rules
     bcc .no
-    lda.l $7E1D1A
-    lsr a
-    bcs .no                         ; Battle
     lda.l $7E1031
     cmp #$0D
     bcc .no
@@ -1150,6 +1155,22 @@ e4_coop_check:
     rtl
 .no:
     plp
+    clc
+    rtl
+
+; C = 1 when this session may run the co-op rules: a Normal Game (not Battle) with players chosen on the title,
+; not SB5's forced one-player session. (M 8-bit)
+e4_coop_rules:
+    lda.l $7E1D1A
+    lsr a
+    bcs .no                         ; Battle
+    lda.l $7E0000|!solo
+    bne .no
+    lda.l $7E0000|!count
+    beq .no
+    sec
+    rtl
+.no:
     clc
     rtl
 

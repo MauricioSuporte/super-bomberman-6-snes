@@ -443,6 +443,55 @@ function OPS.music(st) music = {0, 0, {}} end
 function OPS.door(st)       -- door seat: the seat stands on World 1's exit door ($7F:FB10 x, y; asm/world1.asm)
   place(st[3], rm(0x7FFB10), rm(0x7FFB11))
 end
+-- regwatch: "RW k scanline pc addr value" for every CPU write to the window / color math registers ($2123-$2133),
+-- HDMAEN ($420C) and channel 7's registers ($4370-$437A) from frame st[1] to st[3] (research)
+local rw_until, rw_on = -1, false
+function OPS.regwatch(st)
+  rw_until = st[3]
+  if rw_on then return end
+  rw_on = true
+  local function cb(a, v)
+    if k > rw_until then return end
+    local s = emu.getState()
+    W(string.format("RW %d %d %02X%04X %04X %02X", k, s["ppu.scanline"], s["cpu.k"], s["cpu.pc"], a & 0xFFFF, v))
+  end
+  emu.addMemoryCallback(cb, emu.callbackType.write, 0x2123, 0x2133)
+  emu.addMemoryCallback(cb, emu.callbackType.write, 0x420C, 0x420C)
+  emu.addMemoryCallback(cb, emu.callbackType.write, 0x4370, 0x437A)
+end
+-- watchw a0 a1 until: "WW k scanline pc addr value" for every CPU write to WRAM a0-a1 (bank-00 addresses)
+-- until frame `until` (research)
+function OPS.watchw(st)
+  local stop = st[5]
+  emu.addMemoryCallback(function(a, v)
+    if k > stop then return end
+    local s = emu.getState()
+    W(string.format("WW %d %d %02X%04X %04X %02X", k, s["ppu.scanline"], s["cpu.k"], s["cpu.pc"], a & 0xFFFF, v))
+  end, emu.callbackType.write, st[3], st[4])
+end
+-- caller a until: "CA k pc ret" at each execution of a (24-bit) until frame `until`: the JSL return address
+-- (stack bytes S+1..S+3) and the one below it (research)
+function OPS.caller(st)
+  local stop = st[4]
+  emu.addMemoryCallback(function()
+    if k > stop then return end
+    local s = emu.getState()
+    local sp = s["cpu.sp"]
+    local b = {}
+    for i = 1, 9 do b[i] = emu.read(sp + i, emu.memType.snesDebug) end
+    W(string.format("CA %d %06X %02X%02X%02X %02X%02X%02X %02X%02X%02X", k, st[3], b[3], b[2], b[1], b[6], b[5], b[4], b[9], b[8], b[7]))
+  end, emu.callbackType.exec, st[3], st[3])
+end
+-- hdmawatch until: "HL k scanline value" for every CPU write to HDMAEN ($420C) on a visible line (0-224) until
+-- frame `until`: the NMI ending after the HDMA init of line 0 (an HDMA channel runs uninitialised that frame)
+function OPS.hdmawatch(st)
+  local stop = st[3]
+  emu.addMemoryCallback(function(a, v)
+    if k > stop then return end
+    local line = emu.getState()["ppu.scanline"]
+    if line <= 224 then W(string.format("HL %d %d %02X", k, line, v)) end
+  end, emu.callbackType.write, 0x420C, 0x420C)
+end
 function OPS.shot(st) local h = io.open(OUTP .. "_" .. sc.name .. "_" .. st[3] .. ".png", "wb") h:write(emu.takeScreenshot()) h:close() end
 -- dump name: QA_OUT_<scenario>_<name>.dump = "QAD1" + VRAM (64 KB) + CGRAM (512) + OAM (544) + WRAM $0000-$1FFF (8 KB)
 --   + BG1SC, BG2SC, BG12NBA, BG34NBA, BG3SC, BGMODE as last written (the field's BG2SC is in WRAM $0369, the scrolls in $0331-$0339)

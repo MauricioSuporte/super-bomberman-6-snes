@@ -232,7 +232,17 @@ def boss_numbers():
         out[stage - 0x67] = 1 << 4 | num
     return out
 
+QUEUE_LAST_LINE = 250      # SB5's VRAM queue (NMI $C0:04E0) starts an entry only before this scanline
+
+
 def apply(rb):
+    # SB5's VRAM queue started entries up to line 259 (CMP #$0104): a 256-byte entry there and the rest of the NMI
+    # ended at lines 2-3 of the next frame, after the HDMA init of line 0 (the NMI writes HDMAEN $420C = 0 first and
+    # $0AEA at its end): channel 7 ran uninitialised that frame (1-7's darkness / light window, the pause panel:
+    # stray lines, the light gone). Keeping HDMA on during the NMI's DMA is no fix (5A22 v1: HDMA starting during a
+    # DMA can hang the console). Measured: the NMI's end comes <= 5 lines after the last entry's start.
+    rb.patch(0xC004F2, bytes.fromhex("C9 04 01"), bytes([0xC9, QUEUE_LAST_LINE & 0xFF, QUEUE_LAST_LINE >> 8]),
+             "NMI: the VRAM queue's last entry starts by line 250 (the NMI ends inside the vblank: HDMA init at line 0)")
     tiles, screens, top, fw, box = build_tables()
     ntiles = len(tiles) // 16
     if FIRST_TILE + ntiles > 0x200 or len(tiles) > 0x500:

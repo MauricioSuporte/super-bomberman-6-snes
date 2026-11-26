@@ -134,6 +134,7 @@ def anim_scenarios():
                     [3, "cell", cell(cx + 3 * dx, cy + 3 * dy), 0x80], [3, "cell", cell(cx + 4 * dx, cy + 4 * dy), 0x80],
                     [6 + o, "pad", s, "a", 3], [14 + o, "pad", s, "a", 70], [24 + o, "pad", s, DIRS[OPP[d]], 14],
                     [44 + o, "pad", s, DIRS[d], 3]]
+        st2 = [[1, "burn", 4]] + st2            # (no enemy in a kicked bomb's way: it depends on the fixture)
         sc += [Scenario(f"a_punch_{DIRS[d]}", 100, steps=st, pose=(0, 1, 2, 3)),
                Scenario(f"a_kick_{DIRS[d]}", 90, steps=st2),
                Scenario(f"a_throw_{DIRS[d]}", 200, steps=st3, pose=(0, 1, 2, 3))]
@@ -401,6 +402,35 @@ def spawn_eval(stage):
     return ev
 
 
+# ---------------------------------------------------------------- game over -> continue (co-op)
+# Every seat dies without a life, P3 last: SB5's game over ($C5:3B37) runs the player reset ($C4:286F, co-op
+# c4_tail). $1D25 was co-op's participant mask then ($04): it left !count ($0129) 1 and a stage with no bomber,
+# retried forever. Continue (Start on the game over screen and the world map) must bring the 4 seats back.
+def gameover_scenarios():
+    st = [[5, "poke", 0x1D23, 0]] + [[400 + 120 * i, "burn", 30, s] for i, s in enumerate((0, 1, 3, 2))]
+    st += [[k, "read", "m", 0x1031, 1] for k in range(0, 2100, 10)]
+    st += [[k, "read", "c", 0x0129, 4] for k in range(0, 2100, 10)]
+    st += [[k, "read", "o", 0x17FA, 4] for k in range(0, 2100, 10)]
+    st += [[k, "pad", 0, "start", 4] for k in range(700, 1700, 90)]
+    return [Scenario("gameover", 2100, steps=st, invincible=False)]
+
+
+def gameover_eval(fx):
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs["gameover"]
+        m, c, o = (dict(l.values.get(n, [])) for n in ("m", "c", "o"))
+        over = next((k for k in sorted(m) if m[k][0] == 0x08), None)
+        back = next((k for k in sorted(m) if over and k > over and m[k][0] == 0x0D), None)
+        res.ok("game over (P3 last) -> continue: the stage starts again", back is not None, f"game over {over}, stage {back}")
+        end = max(o) if o else None
+        res.ok("continue: 4 players again (!count 4, every seat in !pmask), 4 bombers in the stage",
+               back is not None and c[end][0] == 4 and c[end][3] == 0x0F and all(b != 0xFF for b in o[end]),
+               f"count/roster/pmask {c[end].hex() if end else '-'}, objects {o[end].hex() if end else '-'}")
+        return res
+    return ev
+
+
 # ---------------------------------------------------------------- 1-6: SB1 World 5's tournament
 def b16_scenarios():
     st = [[k, "burn", 10, 4] for k in range(300, 3000, 150)]
@@ -444,8 +474,10 @@ def b16_eval(fx):
             ids = [a for k, a in l.anims.get(s, []) if done and k < done - 5]   # ("intro" is read every 5 frames)
             res.ok(f"1-6 intro: P{s + 1} no idle / walk", not any(a == IDLE or WALK <= a < WALK + 4 for a in ids), _ids(ids))
         counts = [(k, sum(1 for b in v if b & 0x80)) for k, v in l.values.get("items", [])]
-        res.ok("1-6: items appear during the duels", any(n > 0 for k, n in counts if 300 < k < 2500),
-               " ".join(f"{k}:{n}" for k, n in counts[:20]))
+        placed = [int(m.split()[1]) for m in l.msgs if " exec C54557 " in m]   # (an item may be taken within 100 frames)
+        res.ok("1-6: items appear during the duels", any(n > 0 for k, n in counts if 300 < k < 2500)
+               or any(300 < k < 2500 for k in placed),
+               f"placed at {placed[:8]}; " + " ".join(f"{k}:{n}" for k, n in counts[:20]))
         drops = [int(m.split()[1]) for m in l.msgs if " exec C54557 A=000B" in m]
         on_map = any(0x0B in v for _, v in l.values.get("imap", []))
         res.ok("1-6: the Golden drops the kick ($0B, SB5 $C5:4557 after its death)",
@@ -460,7 +492,45 @@ def b16_eval(fx):
     return ev
 
 
+# 1-6 with P3/P4 out at the start (they join with Start later): before the Golden Bomber (the stands' last
+# blackout, asm/world1.asm spawn_reset) every seat goes back to its start: P1/P2 where they started, P3/P4 their
+# spawn cells $4E8D/$4EA5 (keep_spawn; before, their stale x/y from before they joined). x = column * 16,
+# y = row * 16 ($182A / $1872); intro phase $7F:FBD4 (3 = the stands blink, then 0 / 1 the Golden walks in).
+def b16_out_scenarios():
+    st = [[0, "read", "sx", 0x4E8D, 4], [0, "read", "sy", 0x4EA5, 4], [0, "read", "x0", 0x182A, 4],
+          [0, "read", "y0", 0x1872, 4], [265, "poke", 0x1D23, 3], [270, "pad", 2, "start", 3], [300, "pad", 3, "start", 3]]
+    st += [[k, "burn", 10, 4] for k in range(400, 3000, 150)]
+    st += [[k, "pad", s, ("left", "right", "up", "down")[s], 20] for k in range(340, 1200, 40) for s in range(4)]
+    st += [[k, "read", "iph", 0x1FBD4, 1] for k in range(0, 3600, 5)]
+    st += [[k, "read", "x", 0x182A, 4] for k in range(0, 3600, 5)]
+    st += [[k, "read", "y", 0x1872, 4] for k in range(0, 3600, 5)]
+    return [Scenario("b16_out", 3600, steps=st)]
+
+
+def b16_out_eval(fx):
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs["b16_out"]
+        sx, sy, x0, y0 = (l.value(n) for n in ("sx", "sy", "x0", "y0"))
+        want = [(x0[s], y0[s]) if s < 2 else (sx[s] * 16, sy[s] * 16) for s in range(4)] if sx and x0 else None
+        iph = dict(l.values.get("iph", []))
+        xs, ys = dict(l.values.get("x", [])), dict(l.values.get("y", []))
+        blink = [k for k in sorted(iph) if iph[k][0] == 3]
+        after = next((k for k in sorted(iph) if blink and k > blink[-1]), None)
+        got = [(xs[after][s], ys[after][s]) for s in range(4)] if after in xs else None
+        cell = lambda p: f"({(p[0] + 8) >> 4},{(p[1] + 8) >> 4})"
+        res.ok("1-6 (P3/P4 joined later): before the Golden every seat is back at its start",
+               bool(want and got) and got == want,
+               f"at {after}: " + (" ".join(cell(p) for p in got) if got else "-") +
+               " want " + (" ".join(cell(p) for p in want) if want else "-"))
+        return res
+    return ev
+
+
 # ---------------------------------------------------------------- 1-7: SB1 2-8's clown
+CLOWN_HITT, CLOWN_INVT = 96, 192    # asm/sb1_enemies.asm !HITT, !INVT
+
+
 def b17_scenarios():
     st = [[k, "burn_clown", 8] for k in range(560, 3000, 110)]
     st += [[k, "read", "clown", 0x1E000, 0x40] for k in range(0, 2400, 10)]
@@ -468,13 +538,68 @@ def b17_scenarios():
     st += [[k, "readcg", "bg3", 48, 16] for k in range(0, 2000, 50)]
     st += [[k, "pad", s, ("left", "right", "up", "down")[s], 20] for k in range(5, 400, 40) for s in range(4)]
     st += [[k, "read", "hdma", 0x1E200, 0xE0 * 2] for k in (400, 450)]
-    return [Scenario("b17_fight", 2800, steps=st)]
+    st += [[k, "read", "cwh", 0x1E000, 0x40] for k in range(500, 2700)]     # every frame: the hits' blink / pictures
+    st += [[1, "hdmawatch", 3600]]
+    return [Scenario("b17_fight", 3600, steps=st)]
+
+
+# 1-7's darkness with one player (P2-P4 out of the stage, PUSH START): the intro's hold rewrote SB5's
+# frames-standing count to 0 every frame, SB5 sent the stand pose's strip again each frame (1 KB of vblank) and
+# the NMI ended on lines 2-130 of the next frame, after the HDMA init: stray lit lines, the light hole gone.
+B17_1P = Fixture("s68_1p", stage=0x68, players=1, ready=30)
+
+
+def b17_dark_scenarios():
+    st = [[1, "hdmawatch", 1500]]
+    st += [[k, "read", "clown", 0x1E000, 0x40] for k in range(0, 1500, 10)]
+    st += [[k, "shot", f"f{k:04d}"] for k in range(420, 520, 4)]
+    return [Scenario("b17_dark", 1500, steps=st)]
+
+
+def dark_lines(path):
+    """Mean brightness of each line of a screenshot at its sides (x 24-71, 184-231: outside the light hole)."""
+    from PIL import Image
+    px = Image.open(path).convert("RGB").load()
+    xs = list(range(24, 72, 2)) + list(range(184, 232, 2))
+    return [sum(sum(px[x, y]) for x in xs) / len(xs) for y in range(224)]
+
+
+def hdma_ok(res, l, who):
+    late = [h for h in l.hdma_late if h[2]]     # (a late write of 0, nothing on: loading, fades, harmless)
+    res.ok(f"1-7 {who}: the NMI ends inside the vblank (HDMA never turned on on a visible line)", not late,
+           f"{len(late)} late, e.g. {late[:6]}")
+
+
+def b17_dark_eval(fx):
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs["b17_dark"]
+        hdma_ok(res, l, "1P darkness")
+        cl = dict(l.values.get("clown", []))
+        dark = []
+        for k in range(420, 520, 4):
+            from .engine import OUT
+            p = os.path.join(OUT, f"{tag}.log_b17_dark_f{k:04d}.png")
+            c = cl.get(k - k % 10)
+            if os.path.exists(p) and c and c[0x3B] and c[0x39] >= 24:
+                dark.append((k, dark_lines(p)))
+        if not dark:
+            res.ok("1-7 1P darkness: screenshots of the dark intro", False, "no frame with the darkness on")
+            return res
+        base = [sorted(L[y] for _, L in dark)[len(dark) // 2] for y in range(224)]
+        bad = [(k, [y for y in range(32, 210) if L[y] > base[y] + 40][:6]) for k, L in dark]
+        bad = [b for b in bad if b[1]]
+        res.ok("1-7 1P darkness: no lit lines across the dark screen (same picture every frame)", not bad,
+               f"{len(dark)} frames; bright lines {bad[:4]}")
+        return res
+    return ev
 
 
 def b17_eval(fx):
     def ev(logs, boot, tag):
         res = Result()
         l = logs["b17_fight"]
+        hdma_ok(res, l, "4P darkness / fight")
         cl = l.values.get("clown", [])
         phase = [(k, v[0]) for k, v in cl]
         hits = [(k, v[8]) for k, v in cl]
@@ -499,6 +624,42 @@ def b17_eval(fx):
             lines = [(hd[2 * i], hd[2 * i + 1]) for i in range(0xE0)]
             hole = any(0 < a < b < 0xFF for a, b in lines[30:])
         res.ok("1-7 intro: window around the face (light hole)", hole, "")
+        # a hit: stunned (phase 4) CLOWN_HITT frames, invulnerable ($3C) CLOWN_INVT frames, white silhouette ($2E)
+        # meanwhile 4 frames in 8; the hit counter ($08) unchanged until it is over
+        cw = l.values.get("cwh", [])
+        first = next((k for k, v in cw if v[0] == 4), None)
+        stun = [k for k, v in cw if first and k >= first and v[0] == 4]
+        stun = len([k for i, k in enumerate(stun) if k - first == i])
+        inv = [(k, v) for k, v in cw if first and k > first and v[0x3C]]
+        inv = [(k, v) for i, (k, v) in enumerate(inv) if k - first - 1 == i]
+        runs = []
+        for k, v in inv:                # the picture shown ($2F): white (7-10) or not; SB1's own white flash after
+            w = 7 <= v[0x2F] <= 10      # the stun (states $14 / $18) must not add to the blink
+            if runs and runs[-1][0] == w:
+                runs[-1][1] += 1
+            else:
+                runs.append([w, 1])
+        # (video frames: a lag frame, under 60 fps, holds the game a frame: a run may last one frame more)
+        lens = [n for _, n in runs[1:-1]]
+        ihits = {v[8] for k, v in inv}
+        after = [v for k, v in cw if inv and k == inv[-1][0] + 1]
+        res.ok(f"1-7 hit: stunned {CLOWN_HITT} frames, invulnerable {CLOWN_INVT} (moving again meanwhile), blinking "
+               "white 4 frames in 8, the picture again after it",
+               CLOWN_HITT <= stun <= CLOWN_HITT * 21 // 20 and CLOWN_INVT <= len(inv) + 1 <= CLOWN_INVT * 21 // 20 and lens
+               and all(4 <= n <= 6 for n in lens) and len(ihits) == 1 and after and after[0][0x2E] == 0,
+               f"stunned {stun}, invulnerable {len(inv) + 1}, hits {sorted(ihits)}, runs {[n for _, n in runs]}")
+        # the stun's picture ($07): D (3, the hurt face) after a hit while it runs crying (state $03 = $0C), else N (0)
+        faces, bad = [], []
+        for (k0, v0), (k1, v1) in zip(cw, cw[1:]):
+            if v0[0] == 3 and v1[0] == 4 and k1 == k0 + 1:
+                want = 3 if v0[3] == 0x0C else 0
+                got = {v[7] for k, v in cw if k1 + 2 <= k < k1 + CLOWN_HITT - 4 and v[0] == 4}
+                faces.append((k1, v0[3], sorted(got)))
+                if got != {want}:
+                    bad.append(k1)
+        res.ok("1-7 hit: stunned with the hurt face (D) when hit while running (state $0C), else N",
+               faces and not bad and any(s == 0x0C for _, s, _ in faces),
+               " ".join(f"{k}:state {s:02X} pics {g}" for k, s, g in faces))
         hs = [h for _, h in hits]
         res.ok("1-7: 8 hits to beat it", hs and max(hs) == 8 and 0 in hs, f"hits {sorted(set(hs), reverse=True)}")
         red = [(k, v[0x18], v[8]) for k, v in cl]
@@ -680,14 +841,22 @@ def out_fx(stage):
     return Fixture(f"s{stage:02X}_4p_out34", stage=stage, ready=120, absent=(2, 3))
 
 
-def spawn_out_scenarios(stage):
+def one_fx(stage):
+    """A one-player Normal Game: P2-P4 out of the stage (not chosen on the title), they may join with Start."""
+    return Fixture(f"s{stage:02X}_1p", stage=stage, players=1, ready=120)
+
+
+def spawn_out_scenarios(stage, out=(2, 3)):
     t = 600 if stage == 0x68 else 270           # (1-7: the clown's intro holds every pad, Start too)
     st = [[k, "spawn"] for k in range(0, 260, 5)]
-    st += [[t - 5, "poke", 0x1D23, 3], [t, "pad", 2, "start", 3], [t + 30, "pad", 3, "start", 3], [t + 70, "spawn"]]
-    return [Scenario("sp_out", t + 80, steps=st, invincible=False)]
+    st += [[t - 5, "poke", 0x1D23, 3]] + [[t + 30 * i, "pad", s, "start", 3] for i, s in enumerate(out)]
+    end = t + 30 * len(out) + 40
+    st += [[end, "spawn"], [end, "read", "pals", 0x16DA, 4], [end, "read", "chars", 0x16C2, 4],
+           [end, "read", "picks", 0x1FF02, 4], [end, "read", "cols", 0x1FF08, 4]]
+    return [Scenario("sp_out", end + 10, steps=st, invincible=False)]
 
 
-def spawn_out_eval(stage):
+def spawn_out_eval(stage, out=(2, 3)):
     def ev(logs, boot):
         import os, sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -695,9 +864,10 @@ def spawn_out_eval(stage):
         res = Result()
         l = logs["sp_out"]
         snap = [(int(m.split()[1]), m.split(" ", 3)[3].replace("|", "\n")) for m in l.msgs if " spawn " in m]
-        name = STAGES[stage]
+        who = "/".join(f"P{s + 1}" for s in out) + " out"
+        name = f"{STAGES[stage]} ({who})"
         if not snap:
-            res.ok(f"{name} (P3/P4 out): start state read", False, "no spawn line")
+            res.ok(f"{name}: start state read", False, "no spawn line")
             return res
 
         def field(text, key):
@@ -707,27 +877,37 @@ def spawn_out_eval(stage):
         k0 = has_en[0] + 60 if has_en else start[-1][0]
         text = min(start, key=lambda s: abs(s[0] - k0))[1]
         seats, pts = field(text, "seats"), field(text, "points")
-        res.ok(f"{name} (P3/P4 out): P1/P2 in the stage, P3/P4 out", seats[0] != 0xFF and seats[1] != 0xFF
-               and seats[2] == 0xFF and seats[3] == 0xFF, " ".join(f"{c:02X}" for c in seats))
+        res.ok(f"{name}: the chosen seats in the stage, the others out",
+               all((seats[s] == 0xFF) == (s in out) for s in range(4)), " ".join(f"{c:02X}" for c in seats))
         if stage not in (0x67, 0x68):
             where = [((c & 15) >= 8, (c >> 4) >= 7) for c in pts]
-            res.ok(f"{name} (P3/P4 out): P3/P4's spawn cells in their corners",
-                   all(where[s] == tuple(map(bool, CORNERS[s])) for s in (2, 3)),
+            res.ok(f"{name}: the out seats' spawn cells in their corners",
+                   all(where[s] == tuple(map(bool, CORNERS[s])) for s in out),
                    " ".join(f"P{s + 1}({c & 15},{c >> 4})" for s, c in enumerate(pts)))
         # every seat judged at its spawn cell, as if it stood there
         lines = text.split("\n")
-        as_in = "\n".join("seats " + " ".join(f"{c if s < 2 else pts[s]:02X}" for s, c in enumerate(seats))
+        as_in = "\n".join("seats " + " ".join(f"{c if s not in out else pts[s]:02X}" for s, c in enumerate(seats))
                           if x.startswith("seats ") else x for x in lines)
         bad = coop4_check.spawn_safety(as_in, stage not in (0x67, 0x68))
-        res.ok(f"{name} (P3/P4 out): every spawn cell is safe (bomb + hide with any soft blocks, enemies >= 6 cells,"
+        res.ok(f"{name}: every spawn cell is safe (bomb + hide with any soft blocks, enemies >= 6 cells,"
                " shut in)", not bad, "; ".join(bad))
         after = field(snap[-1][1], "seats") if snap[-1][0] >= 260 else [0xFF] * 4
         dist = [abs((after[s] & 15) - (pts[s] & 15)) + abs((after[s] >> 4) - (pts[s] >> 4)) if after[s] != 0xFF else 99
-                for s in (2, 3)]
-        res.ok(f"{name} (P3/P4 out): Start brings P3/P4 in at their spawn cells", all(d <= 1 for d in dist),
-               " ".join(f"P{s + 3}({c & 15},{c >> 4})" if c != 0xFF else f"P{s + 3} out" for s, c in enumerate(after[2:])))
+                for s in out]
+        res.ok(f"{name}: Start brings them in at their spawn cells", all(d <= 1 for d in dist),
+               " ".join(f"P{s + 1}({after[s] & 15},{after[s] >> 4})" if after[s] != 0xFF else f"P{s + 1} out"
+                        for s in out))
         died = [(k, s) for k, s in l.deaths if k > 0]
-        res.ok(f"{name} (P3/P4 out): nobody dies standing still", not died, f"deaths {died}")
+        res.ok(f"{name}: nobody dies standing still", not died, f"deaths {died}")
+        if len(out) == 3:
+            # not chosen: Bomberman (character 0, picker choice 1) in SB5's colors P2 black, P3 red, P4 blue
+            # (palette ids $80:BB4E + seat), and the HUD's heads read the same choices
+            pals, chars, picks, cols = (l.value(x) for x in ("pals", "chars", "picks", "cols"))
+            res.ok(f"{name}: the joiners are Bomberman, P2 black / P3 red / P4 blue (in game and the HUD's choices)",
+                   bool(pals) and all(chars[s] == 0 and pals[s] == pals[0] + s and picks[s] == 1 and cols[s] == s
+                                      for s in out),
+                   f"chars {chars.hex() if chars else None} pals {pals.hex() if pals else None} "
+                   f"picks {picks.hex() if picks else None} cols {cols.hex() if cols else None}")
         return res
     return ev
 
@@ -1603,6 +1783,7 @@ def portal_eval(stage):
 # frozen by the clock's timer $0E20 (word).
 B_MAGNET = 0x20
 MAGNET_ANIM = 4
+MAG = 0x7FFB2C                  # features/magnet.py: a byte per bomb slot ($80 + n = a magnet bomb)
 MAG_DIST = 4                    # the enemy, 4 cells away: the bomb stops 3 cells away, next to it
 
 
@@ -1671,6 +1852,11 @@ def magnet_scenarios():
                      [96, "pad", 0, "a", 3], [104, "read", "bombs", 0x0E2C, 0x78], [104, "read", "anims", 0x079F, 0x60]]
     st += [[k, "readoam", "oam"] for k in range(104, 170)]
     sc.append(Scenario("m_item", 170, steps=st))
+    # two bombs out: only the first is a magnet bomb (like SB5's search bomb), the second a normal one
+    st = arenas() + [[1, "burn", 20], [1, "poke", 0x4ED5, B_MAGNET], [1, "poke", 0x4EBD, 2], [96, "pad", 0, "a", 3],
+                     [100, "pad", 0, "right", 16], [124, "pad", 0, "a", 3], [130, "read", "bombs", 0x0E2C, 0x78],
+                     [130, "read", "anims", 0x079F, 0x60], [130, "read", "mag", MAG, 20]]
+    sc.append(Scenario("m_second", 132, steps=st))
     # the control bomb's frames, the search bomb's, the enemy death puff (none of the magnet bomb's tiles)
     st = arenas() + [[1, "poke", 0x4ED5, B_REMOTE], [6, "pad", 0, "a", 3]] + [[k, "readoam", "oam"] for k in range(10, 60)]
     sc.append(Scenario("m_control", 60, steps=st))
@@ -1737,6 +1923,13 @@ def magnet_eval(fx):
             want = [0x100, 0x12E, 0x100, 0x102]
             res.ok("magnet bomb: frames medium large medium small", any(seq[i:i + 4] == want for i in range(4)),
                    " ".join(f"{t:03X}" for t in seq))
+        l = logs.get("m_second")
+        if l:
+            mine = sorted((i, obj) for k, live in _bombs(l) for i, owner, c, mo, obj in live if owner == 0)
+            anims, mag = l.value("anims"), l.value("mag")
+            got = [(anims[obj] if anims else None, mag[i] >> 7 if mag else None) for i, obj in mine]
+            res.ok("magnet: only the first of two bombs out is a magnet bomb (animation 4, then 1 normal)",
+                   len(got) == 2 and sorted(got) == [(1, 0), (MAGNET_ANIM, 1)], f"(anim, magnet) {got}")
         l = logs.get("m_control")
         if l:
             seq, flip = [], False
@@ -1960,6 +2153,65 @@ def louie_egg_scenarios():
     if stage_items.LOUIE_TEST == 0x0D:            # (only while the test eggs are in)
         sc.append(Scenario("l_egg_order", 160, steps=st))
     return sc
+
+
+# Opponent bombers (asm/louie_abilities.asm bomber_hit): a boss rival (1-6, seat 4) and, in Battle ($1D1A bit 0,
+# poked here around the dash), any other bomber get SB5's Red punch stun ($15BA) and are pushed PUSH_PX by the Black
+# dash (with their Louie); a Normal Game teammate is not. 1-6: after the first rival walked in (intro phase 2).
+LR_FX = Fixture("s67_4p_rb", stage=0x67, ready=30, mounts=(RED, BLACK, -1, -1))     # P1 red, P2 black
+
+
+def louie_rival_scenarios():
+    R = ROW
+    st = [[k, "cell", cell(x, R), 0] for k in (440, 540) for x in range(1, 14)]
+    st += [[k, "place", s, x, R] for k in (448, 449) for s, x in ((0, 3), (4, 4))]
+    st += [[449, "poke", 0x1632, 1], [450, "pad", 0, "y", 2], [400, "read", "iph", 0x1FBD4, 1]]
+    st += [[k, "read", "stun", 0x15BA, 5] for k in range(446, 470, 2)]
+    st += [[k, "place", s, x, R] for k in (548, 549) for s, x in ((1, 3), (4, 5))]
+    st += [[549, "poke", 0x1632 + 1, 1], [550, "pad", 1, "y", 2]]
+    st += [[k, "read", "x", 0x182A, 5] for k in range(440, 620, 2)]
+    return [Scenario("l_rival", 620, steps=st)]
+
+
+def louie_battle_scenarios():
+    """LA_FX (1-1): P4 on the Black Louie dashes into P3 (on its Yellow Louie), with / without the Battle flag."""
+    sc = []
+    for battle in (True, False):
+        st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", 3, 1, ROW], [41, "place", 2, 4, ROW], [42, "poke", 0x1632 + 3, 1],
+                                               [60, "pad", 3, "y", 2]]
+        st += [[k, "poke", 0x170A + s, 0] for k in range(44, 60, 6) for s in range(4)]
+        if battle:
+            st += [[k, "poke", 0x1D1A, 0x01] for k in range(55, 110)] + [[110, "poke", 0x1D1A, 0]]
+        st += [[k, "read", "x", 0x182A, 5] for k in range(56, 120, 2)] + [[k, "read", "stun", 0x15BA, 5] for k in range(56, 120, 8)]
+        sc += _at([Scenario("l_battle_push" if battle else "l_mate_push", 120, steps=st)])
+    return sc
+
+
+def louie_rival_eval(fx):
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs.get("l_rival")
+        if l:
+            iph = l.value("iph")
+            st = [v[4] for k, v in l.values.get("stun", []) if k >= 452]
+            res.ok("Red Louie: the punch stuns a boss rival (1-6, seat 4: $15BA)", bool(iph and iph[0] == 2 and st and all(st)),
+                   f"intro {iph.hex() if iph else '-'}, stun {st[:4]}")
+            xs = dict(l.values.get("x", []))
+            x0, x1 = xs.get(550, [0] * 5)[4], xs.get(618, [0] * 5)[4]
+            res.ok(f"Black Louie: the dash pushes a boss rival {PUSH_PX} pixels", x1 - x0 == PUSH_PX, f"rival x {x0} -> {x1}")
+        for name, want in (("l_battle_push", PUSH_PX), ("l_mate_push", 0)):
+            l = logs.get(name)
+            if not l:
+                continue
+            _back({name: l})
+            xs = dict(l.values.get("x", []))
+            x0, x1 = xs.get(56, [0] * 5)[2], xs.get(118, [0] * 5)[2]
+            stun = any(v[2] for k, v in l.values.get("stun", []))
+            what = "Battle: an opponent (P3 on its Louie)" if want else "Normal Game: a teammate"
+            res.ok(f"Black Louie: {what} is {'pushed' if want else 'not pushed'} by the dash",
+                   x1 - x0 == want and stun == bool(want), f"P3 x {x0} -> {x1}, stunned {stun}")
+        return res
+    return ev
 
 
 def _ghost_pairs(o, axis_sign):

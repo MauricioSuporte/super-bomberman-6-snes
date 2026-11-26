@@ -2,8 +2,8 @@
 ;
 ; Item $0F (SB5's mine) sets ability bit $20 ($7E:4ED5+seat, exclusive with remote / pierce / search: $C5:438C).
 ; Patched outside this file: no bomb becomes a mine ($C4:3072, SB5's mine setup is freed), a dying bomber's bit $20
-; bombs do not go off with it ($C4:3646), every bomb of a bit $20 owner shows animation 4 (the magnet bomb,
-; $C5:1C49). Each bomb slot (0-19) has a byte in !MAG: 0 = a normal bomb, $80 + n = a magnet bomb that looks
+; bombs do not go off with it ($C4:3646). Like SB5's search bomb, only a bomber's first bomb out is a magnet bomb
+; (animation 4 by SB5's own test at $C5:1C46, !MAG by mg_place); the others are normal bombs. Each bomb slot (0-19) has a byte in !MAG: 0 = a normal bomb, $80 + n = a magnet bomb that looks
 ; again in n frames.
 ;
 ; A magnet bomb at rest (SB5's bomb update, $C5:1FEA) looks along its row and column (Unity MagnetBomb.cs: 4
@@ -40,6 +40,12 @@ mg_place:
     pla
     and #$20
     beq +
+    lda $1752,x                 ; bombs out, this one counted: only the first is a magnet bomb (like SB5's search
+    dec                         ; bomb, $C4:3064)
+    beq .first
+    lda #$00
+    bra +
+.first:
     lda #$80                    ; a magnet bomb: looks at once
 +   phx
     tyx

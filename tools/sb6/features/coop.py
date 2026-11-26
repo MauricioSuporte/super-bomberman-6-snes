@@ -8,7 +8,9 @@ patch, limited to four seats (multitap on port 2):
     confirm block calls a script that stores the count in `!count`);
   * stage setup, spawns (P3 lower-left corner, P4 lower-right, moved to
     the nearest safe floor once the map exists), lives = players + 2,
-    Start revives a dead seat, P3 red / P4 blue Bomberman;
+    Start revives a dead seat, P3 red / P4 blue Bomberman; every Normal
+    Game campaign stage seats four, the seats not chosen join with Start
+    (also in a one- or two-player game);
   * every P1/P2-only seat loop (`CPX/CPY #$02`) compares with `!roster`
     (2 unless the stage is a co-op stage), the enemy -> player distance
     arrays move to four-seat arrays, mounts move to rider + 19.

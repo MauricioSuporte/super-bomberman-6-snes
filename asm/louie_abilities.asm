@@ -26,7 +26,9 @@
 ;   (odd frames) frames before, behind the real sprites, one at a time (a flicker: see-through), GHOST_T frames
 ;   past the dash.
 ;
-; No enemy effects in boss stages ($0155, 1-7) nor in Battle. State $7F:E800-$7F:E9F8 (docs/FREE_SPACE.md).
+; Opponent bombers (a boss rival: seat >= the roster; in Battle every other bomber): SB5's Red punch already stuns
+; them; the Black dash with no enemy ahead pushes the first one in its lane 2 cells, stunned as by the punch
+; (bomber_hit / bomber_push). No enemy effects in boss stages ($0155, 1-7) nor in Battle. State $7F:E800-$7F:E9F8 (docs/FREE_SPACE.md).
 
 asar 1.90
 hirom
@@ -361,6 +363,31 @@ push_step:
     clc
     adc.l !SCR+6
     sta $05BF,y
+    sep #$20
+    cpx #$05
+    bcs .enemy
+    lda $1782,x                 ; a bomber (bomber_push; SB5 makes its cell from its object): its Louie too
+    bpl .rts
+    txa
+    clc
+    adc $0128                   ; (co-op: !mofs, asm/coop.asm)
+    tay
+    lda $17FA,y
+    bmi .rts
+    tay
+    rep #$20
+    lda $055F,y
+    clc
+    adc.l !SCR+4
+    sta $055F,y
+    lda $05BF,y
+    clc
+    adc.l !SCR+6
+    sta $05BF,y
+    sep #$20
+    bra .rts
+.enemy:
+    rep #$20
     lda.l !SCR+2                ; the centre's cell
     clc
     adc.w #8
@@ -609,6 +636,7 @@ la_pads:
 +   jsr seat_frame
 ++  dex
     bpl .seat
+    jsr bomber_push
 .out:
     plb
     plp
@@ -733,12 +761,9 @@ release:
     sta $15A2,x
 +   rts
 
-; seat X dashes: the first enemy just ahead (in its lane, 1-20 pixels in front) is pushed; the dash holds
+; seat X dashes: the first enemy just ahead (in its lane, 1-20 pixels in front) is pushed; the dash holds.
+; No enemy: an opponent bomber ahead (a boss rival, any other bomber in Battle: bomber_hit) is pushed too.
 dash_hit:
-    jsr no_enemies
-    bcc +
-    jmp .rts
-+
     txa
     sta.l !SCR+12               ; seat
     lda.l !DDIR,x
@@ -755,7 +780,10 @@ dash_hit:
     rep #$20
     sta.l !SCR+10               ; seat y
     sep #$20
-    ldx #$05
+    jsr no_enemies
+    bcc +
+    jmp .none
++   ldx #$05
 .loop:
     cpx $012D
     bcc +
@@ -851,9 +879,145 @@ dash_hit:
     inx
     jmp .loop
 .none:
+    jmp bomber_hit
+
+; dash_hit, no enemy hit: the first opponent bomber (seats 0-4 but the rider) in the lane ahead (!SCR+8/+10 the
+; rider's x / y, !SCR+12 the rider, !SCR+13 the direction) gets SB5's Red punch stun ($15BA |= direction, as
+; $C4:5565) and is pushed 2 cells by la_pads (push_step, !PUSH / !PDIR of actors 0-4); the dash holds as on an enemy
+bomber_hit:
+    ldx #$04
+.seat:
+    txa
+    cmp.l !SCR+12
+    beq .next
+    jsr opponent
+    bcc .next
+    jsr alive
+    bcc .next
+    lda.l !PUSH,x
+    bne .next
+    jsr in_lane
+    bcc .next
+    lda #!PUSH_T
+    sta.l !PUSH,x
+    lda.l !SCR+13
+    sta.l !PDIR,x
+    ora $15BA,x
+    sta $15BA,x
     lda.l !SCR+12
     tax
-.rts:
+    lda #!IMP_T
+    sta.l !IMP,x
+    lda #!INV_T+!IMP_T
+    sta.l !INV,x
+    jmp shoulder_hold
+.next:
+    dex
+    bpl .seat
+    lda.l !SCR+12
+    tax
+    rts
+
+; carry set when seat X is an opponent: in Battle every bomber, in the Normal Game a rival (seat >= the
+; roster, asm/coop.asm !roster: the boss bombers of 1-6 and the zones' boss stages)
+opponent:
+    lda $1D1A
+    lsr a
+    bcs .yes
+    txa
+    cmp $012A
+    bcs .yes
+    clc
+    rts
+.yes:
+    sec
+    rts
+
+; carry set when actor X is in the dash's lane ahead (1-20 pixels in front, within 9 pixels to the side). M 8-bit.
+in_lane:
+    lda $1842,x
+    xba
+    lda $182A,x
+    rep #$20
+    sec
+    sbc.l !SCR+8
+    sta.l !SCR+4                ; dx
+    sep #$20
+    lda $188A,x
+    xba
+    lda $1872,x
+    rep #$20
+    sec
+    sbc.l !SCR+10
+    sta.l !SCR+6                ; dy
+    sep #$20
+    lda.l !SCR+13
+    cmp #$02
+    beq .down
+    cmp #$03
+    beq .left
+    cmp #$04
+    beq .up
+    rep #$20
+    lda.l !SCR+4
+    sta.l !SCR
+    lda.l !SCR+6
+    bra .test
+.left:
+    rep #$20
+    lda.l !SCR+4
+    eor.w #$FFFF
+    inc a
+    sta.l !SCR
+    lda.l !SCR+6
+    bra .test
+.down:
+    rep #$20
+    lda.l !SCR+6
+    sta.l !SCR
+    lda.l !SCR+4
+    bra .test
+.up:
+    rep #$20
+    lda.l !SCR+6
+    eor.w #$FFFF
+    inc a
+    sta.l !SCR
+    lda.l !SCR+4
+.test:
+    clc
+    adc.w #9
+    cmp.w #19
+    bcs .no
+    lda.l !SCR
+    dec a
+    cmp.w #20
+    bcs .no
+    sep #$21
+    rts
+.no:
+    sep #$20
+    clc
+    rts
+
+; la_pads, every frame: seats 0-4 being pushed (bomber_hit) move 2 pixels
+bomber_push:
+    ldx #$04
+-   lda.l !PUSH,x
+    beq +
+    jsr alive
+    bcc .off
+    lda.l !PUSH,x
+    dec a
+    sta.l !PUSH,x
+    ldy $17FA,x
+    jsr push_step
+    bra +
+.off:
+    lda #$00
+    sta.l !PUSH,x
++   dex
+    bpl -
     rts
 
 ; ---------------------------------------------------------------- afterimages: history (seat X)

@@ -373,7 +373,7 @@ script accumulator (`61` = add).
 | co-op | see `tools/sb6/features/coop.py` | 3/4-player Normal Game (below) |
 | `$C7:10E2`, `$C7:0E27` | `24 4C 12 C7` | file confirm -> character selection (`asm/picker.asm`, below) |
 | `$C2:069B` | `7C 46 C1` | script op `FF 1A nn`: nn >= `$F0` runs `pick_op` |
-| `$C0:F421` | `22 E0 04 C0` | NMI: the SB6 picker's VRAM loads, portrait swaps and poses (`pick_nmi`), which first calls `title_nmi` |
+| `$C0:F421` | `22 E0 04 C0` | NMI: the SB6 picker's VRAM loads, portrait swaps and poses (`pick_nmi`), which first calls `title_nmi`; its screen load starts only with SB5's VRAM queue empty (SB5's setup queues full BG1 rows with the 2P panel: sent after ours they stayed over the top row, seen in Snes9x) |
 | `$C5:0058` | `A9 01 8D 1D 1D` | pause entry: also opens the SB6 pause menu in the Normal Game (`pm_open`, `asm/pause.asm`) |
 | `$C5:009E` | `20 B7 00 F0` | each paused frame: the pause menu (`pm_tick`) instead of SB5's Start test (Battle keeps it) |
 | `$C0:01FA` | `A9 81 85 AA C2 30` | palette lookup: ids `$80+` of set 0 = bomber palettes (`pal_lookup`, `asm/bombers.asm`) |
@@ -723,7 +723,8 @@ script accumulator (`61` = add).
   stands blink first with nobody in seat 4 (intro phase 3: intro_pads
   holds the players' pads), then golden_wait makes it and opens the gate.
   In the last blackout spawn_reset puts every living seat back on its
-  start (kept at the first intro): a bomber's x / y are its object's
+  start (kept at the first intro, keep_spawn; a seat out of the stage then, P3/P4 joining later with
+  Start, keeps its spawn cell `$4E8D`/`$4EA5` x 16): a bomber's x / y are its object's
   (`$055F,obj` / `$05BF,obj`, obj = `$17FA,seat`; `$C4:31BD` makes
   `$182A` / `$1872` from them + `$1D3B` / `$1D3D` every frame), pose `$46`
   facing up. A rival's death item (`$C4:3E10`, table `$C4:B9CA` by
@@ -936,7 +937,16 @@ script accumulator (`61` = add).
   them with X 8-bit. Ring `$7E:8000-$BFFF` (entries are written straight
   past its end and the offsets masked with `$3FFF`): header mode, size,
   VRAM address, then the data. The NMI (`$C0:04E0`) sends entries while the
-  scanline allows it (size < 8: CPU writes, else DMA channel 0). The NMI
+  scanline allows it (size < 8: CPU writes, else DMA channel 0). SB5 started
+  an entry up to line 259 (`$C0:04F2`); the hack stops at 250
+  (`pause.QUEUE_LAST_LINE`): the NMI must end before line 0, where HDMA is
+  initialised (it writes HDMAEN 0 first and `$0AEA` at its end), else
+  channel 7 runs uninitialised that frame (1-7's darkness, the pause panel:
+  stray lines). SB5's bomber strips (`$C5:6AAF`) cost 1 KB of vblank per
+  pose sent: a seat's frames-standing count `$17E2` = 0 runs SB5's "just
+  stopped" (`$C4:43A4` -> `$C4:4318`, a new stand pose and strip) every
+  frame; held seats keep it at 1 (`hold_up`, asm/world1.asm). QA:
+  `OPS.hdmawatch` (HDMAEN turned on on a visible line). The NMI
   hook `stream_nmi` (`asm/bombers.asm`) runs before `$C5:6AAF`, which
   relies on channel 0's registers and on the vblank time left: a long DMA
   there corrupts the later transfers (flames, HUD).
@@ -1019,8 +1029,17 @@ script accumulator (`61` = add).
   `$C0:0B5D`): placed on the clown's center every frame (`$C3:4CFC`); SB1's
   rules (states, tables, speeds, hits) run in its routine, contact kills go
   through SB5's `$C3:47C9` with the seat distances (`$0110+`) set to 0 for
-  the seats touched. 8 hits (SB1 18); after a hit it blinks with its white
-  silhouettes (pictures 7-10, `!CWH`: no red flash), below half its hits
+  the seats touched. 8 hits (SB1 18); after a hit it is stunned `!HITT` =
+  96 frames (as SB1), invulnerable `!INVT` = 192 frames (`!CINV`, `inv_tick`: no
+  flame counts, also once it moves again) and blinks meanwhile with its white
+  silhouettes (pictures 7-10, `!CWH`: no red flash), 4 frames on / off (a
+  blink swaps BG2SC between the two picture buffers, no upload); SB1's own
+  white flash after the stun (states `$14` / `$18`: N and white N in turns)
+  shows as N meanwhile (`pic_tick`, `normal_of`), else it stayed white 9
+  frames in 14. After the
+  stun SB1's sequence ends in state `$0C` (crying, twice the speed toward
+  the players for 128 frames); a hit during it (`!CHURT`) shows the hurt
+  face D (picture 3) through the stun, other hits keep N. Below half its hits
   it keeps SB1's red colors softened (`hp_pal`; `CLOWN_RED` = 0.4 of the red over its own). The sinking shows every picture
   (the next one waits until the queue sent it). The body is never killed
   (SB5's enemy death sound / burst and, with `$1D50` = 0, the clear task's
@@ -1526,11 +1545,22 @@ script accumulator (`61` = add).
   its SFX 4 does not sound before a set/song is loaded. Move stays the
   foreign driver's own SFX.
 
-## Normal Game co-op (3-4 players)
+## Normal Game co-op (1-4 players)
 
 Ported from the recomp's `normal_coop_mod.c` / `coop_corner_spawns_mod.c`
-(`docs/NORMAL_COOP.md` there). With 1-2 players every hook takes the stock
-path (roster 2, actor base `$18`, mount offset from `$1CBF`).
+(`docs/NORMAL_COOP.md` there). Every Normal Game campaign stage runs it with
+4 seats (`!roster` 4, ZONE3 - D 3), also with 1-2 players: the seats not
+chosen on the title start out of the stage (`!pmask` = the chosen ones,
+lives = players + 2 as SB5's), their corners kept clear, and join with
+Start; `pick_apply` (asm/picker.asm `unchosen`) makes them Bomberman in the
+first color no other Bomberman wears from the seat's own (P2 black, P3 red,
+P4 blue; the HUD heads read the same choices; SB6's blue head has no blue in
+the HUD's palettes and shows its purple). SB5's forced one-player sessions
+(flags 5/6 of `$7E:2900`, `!solo` `$015D`), Battle and a count never chosen
+take the stock path (roster 2, actor base `$18`, mount offset from `$1CBF`). A boss stage started by one
+player has P1 (and P2's spawn) in SB5's middle cell (7,9), 5 cells below
+1-7's clown: `pair` (coop_e4.asm) moves them to the two-player cells (5,9)
+/ (9,9), P3/P4's anchors follow (3,9) / (11,9).
 
 * Pads: `$C0:0A56` already reads 5 seats (multitap BIOS `$C0:F1D7`, raw
   `$19-$27`). Per seat: held actions `$2C+s`, held dirs `$31+s`, new actions
@@ -1796,7 +1826,9 @@ path (roster 2, actor base `$18`, mount offset from `$1CBF`).
 * Magnet bomb (`features/magnet.py`, `asm/magnet.asm`): ability `$20` /
   item `$0F` (SB5's mine) = SB6's magnet bomb; no mine is made any more
   (`$C4:3072` jumps over the call, SB5's mine setup `$C4:3093-$C4:30C2` is
-  freed), every bomb of its owner shows animation 4 (OBJ `$12E` / `$100` /
+  freed); like the search bomb only its owner's first bomb out (`$1752` = 1
+  after the drop, `mg_place`; SB5's own `$C5:1C46` test for the animation)
+  is a magnet bomb, the others are normal; it shows animation 4 (OBJ `$12E` / `$100` /
   `$102`, `assets/bombs/MagnetBomb.png`), a byte per slot at `$7F:FB2C`. At
   rest (`$C5:1FEA`, the bomb update's no-motion path) it looks along its row
   and column (enemies = actors 5 to `$198C` alive, cell `$16AA`; the view
@@ -1887,6 +1919,13 @@ The full list with sizes is generated in `build/sb6.map`.
   sets the walk (base + 0) again when it ends; while `!DASH` / `!IMP` last, `la_lanim` (at `$C4:5427`, SB5's mount
   animation setter) drops every other animation request, so Y alone also shows the charge. After a push the dash
   holds `IMP_T` = 15 frames on the charge's last pose (pair 7, `$07A0` = `$FF`, `shoulder_hold`) where it hit. Pose sheet: `tools/louie_sheet.py 6` -> `assets/louies/louie6_sb5.png`.
+* Opponent bombers: SB5's Red punch already stuns any bomber of `$1CBF` (5 in boss stages and Battle: the 1-6
+  rivals, Battle's opponents). The Black dash, with no enemy ahead, takes the first opponent bomber in its lane
+  (`bomber_hit`; Battle: every other seat, Normal Game: a seat >= `!roster` `$012A`, i.e. a boss rival; never a
+  teammate): `$15BA` |= the direction (the punch's stun) and `!PUSH` / `!PDIR` of that actor (0-4) make `la_pads`
+  (`bomber_push`, before the objects) move it `PUSH_T` x 2 pixels with `push_step` (its object, and its Louie's when
+  riding; SB5 makes `$182A` / `$16AA` from the object). QA: `louies` (`l_rival` in 1-6, `l_battle_push` /
+  `l_mate_push` with `$1D1A` bit 0 poked in 1-1).
 
 ## Bomberman sprites (`tools/sb6/features/bomberman_sprites.py`)
 
@@ -2004,6 +2043,13 @@ in next to P1 in the top left corner, and their corners got no keep-clear area: 
 to their anchor (corner), and `e4_reserve` / `shield` treat a seat out of the stage at that cell like a
 bomber (SB5's 3x3, the bomb-and-hide run, shut in by soft blocks; `seat_cell` / `seat_out` / `keep3x3`).
 `tools/qa_check.py spawn` checks it on every stage (`Fixture.absent`).
+
+Game over in co-op: SB5's game over (`$C5:3B37`, `$1D23` < 0) runs the player reset `$C4:286F`, whose tail
+(`c4_tail`) took the player count from `$1D25`, but in co-op `$1D25` is the participants' mask (`e4_set_masks`):
+only the last seat to die. P3 last left `$1D25` = `$04` and `!count` 1: after Continue the stage started with no
+bomber and was retried forever (P1 last: a one-player game). `c4_tail` now restores `$1D25` / `$1D24` from the
+count chosen on the title (1 player: 1, else 3) and takes the co-op path (lives, `!pmask` = the chosen seats).
+QA: `spawn` `gameover`.
 
 Start safety (`tools/coop4_check.py` spawn_safety) passes on every World 1 stage: SB1 enemy starts next to the
 lower corners were moved (1-2 spring (13,9) -> (11,7); 1-3 chameleons (13,8), (1,8), (11,11) -> (11,7), (3,7),

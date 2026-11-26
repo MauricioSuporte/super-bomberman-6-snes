@@ -407,7 +407,8 @@ e4_spawn_all:
     lda.l $7E0000|!benched
     beq +
     jsl e4_bench_restore
-+   jsr anchors
++   jsr pair
+    jsr anchors
     ldx #$00
 .seat:
     txa
@@ -450,6 +451,31 @@ e4_spawn_all:
     sta.l $7E0000|!spawnchk
     plp
     rtl
+
+; Boss stage started by one player: SB5 put P1 (and P2's spawn) in the middle, (7,9), 5 cells below 1-7's
+; clown; the two-player cells instead (P1 2 left, P2 2 right), as with 2-4 players (M = X = 8).
+pair:
+    lda.l $7E0000|!bossst
+    beq .rts
+    lda.l $7E4E8D
+    cmp.l $7E4E8E
+    bne .rts
+    lda.l $7E4EA5
+    cmp.l $7E4EA6
+    bne .rts
+    lda.l $7E4E8D
+    cmp #$03
+    bcc .rts
+    cmp #$0C
+    bcs .rts
+    sec
+    sbc #$02
+    sta.l $7E4E8D
+    clc
+    adc #$04
+    sta.l $7E4E8E
+.rts:
+    rts
 
 ; Spawn anchors of P3/P4 (M = X = 8). Regular stages: lower corners. Boss
 ; stages (recomp spawn_tile): P3 two tiles left of P1's spawn, P4 two tiles
