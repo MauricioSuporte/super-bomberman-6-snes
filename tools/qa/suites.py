@@ -21,6 +21,7 @@ Facts measured in Mesen for these checks (SB5's ids unless said; docs/ROM_MAP.md
 """
 import os
 
+from . import engine
 from .engine import Fixture, Scenario
 
 R, D, L, U = range(4)
@@ -463,6 +464,13 @@ def b16_eval(fx):
         dsfx = [k for k, c in l.cmds if c == SFX["death"]]
         res.ok("1-6: mechas' deaths = crowd $61 (x2)", len(deaths) == 3 and len([k for k in crowd if k < deaths[2]]) == 2,
                f"crowd at {crowd}")
+        from sb6.features import voice_sfx as V
+        starts = [k for k, c in l.cmds if c == V.CMD]
+        jing = [k for k, g, i in l.reqs if (g, i) == (0, 0x20) and (len(deaths) < 3 or k < deaths[2])]   # (not 1-7's)
+        # (the start jingle plays once, when the white duel begins: the next duels follow on without it)
+        res.ok("1-6: SB6's \"start\" voice after the start jingle (SFX $63)",
+               len(jing) >= 1 and all(any(j < k < j + 120 for k in starts) for j in jing),
+               f"jingles {jing}, $63 at {starts}")
         res.ok("1-6: Golden's death = death sound $60", len(deaths) == 3 and any(k >= deaths[2] - 2 for k in dsfx),
                f"$60 at {dsfx}")
         # intro: the players' pads are held while the rival walks in
@@ -2543,3 +2551,279 @@ def _hatch_range():
         t = b[1] | b[2] << 8 | b[3] << 16
     i = d.find(bytes.fromhex("22 EB 1D C0"), o(t), o(t) + 64)
     return d[i - 1] if i >= 2 and d[i - 2] == 0xA9 else None
+
+
+# ---------------------------------------------------------------- SB6 stage voices
+# features/voice_sfx.py (asm/game_sfx.asm vs_*), stages voice_sfx.STAGES: "start" START_DELAY passes after SB5's
+# stage start jingle is asked for (request 0/$20: after the jingle, before the music), a random "good" at the clear
+# jingle (0/$21), as Hudson SFX voice_sfx.CMD / CMD_GOOD whose sample (directory voice_sfx.SRC) loops over a ring of
+# BRR blocks = the cornered sound's part B ARAM (game_sfx b1-$DCFF), filled by the main loop behind the play
+# position on idle time; after a voice, part B goes back there (the cornered sound is silent meanwhile, $7F:FBB1).
+# Checked: the command and the S-DSP key-on (pitch; no other key-on ever plays directory SRC), every block the
+# voice plays was in the ring before it played (no underrun) and no block was written until the one it replaces had
+# played (2 blocks of margin), the clip plays to its END, B back afterwards (byte for byte), no main-loop pass lost
+# while a voice plays or loads (frames without the loop hook $C0:0B2C). Cornered ($5E, directory game_sfx
+# SRC_CORNER): its part A loops into B and plays to B's last block, in every stage whose SB1 song keeps B.
+VOICE_HOOK = 0xC00B2C
+VOICE_WRAM = 0x1FBE8                 # $7F:FBE8: on, record, clip, sent (word), pos (word), play... (game_sfx.asm)
+VOICE_BOK = 0x1FBB1                  # $7F:FBB1: 1 = part B in ARAM
+VOICE_B = 4                          # clip number of part B
+
+
+def _part_b():
+    from sb6.features import game_sfx
+    rom = open(engine.ROM, "rb").read()
+    return game_sfx.build(bytearray(rom), os.path.join(engine.ROOT, "assets", "sound"),
+                          os.path.join(engine.ROOT, "build", "cache"))[3]["part_b"]
+
+
+def voice_fx(stage=0x0D):
+    return Fixture(f"s{stage:02X}_4p_voice", stage=stage, ready=2)
+
+
+def _voice_steps(dsp_from, ring):
+    return [[dsp_from, "dsplog"], [dsp_from, "spcwatch", ring[0], ring[1], 3]]
+
+
+def voice_start_scenarios(ring):
+    n = 640
+    st = _voice_steps(150, ring) + [[k, "read", "vs", VOICE_WRAM, 18] for k in range(0, n, 4)]
+    st += [[k, "read", "bok", VOICE_BOK, 1] for k in range(0, n, 4)] + [[n - 5, "dsplog"]]
+    return [Scenario("v_start", n, steps=st, exec=(VOICE_HOOK,))]
+
+
+def voice_clear_scenarios(stage, ring):
+    n = 560
+    sc = portal_scenarios(stage)[0]
+    st = [s for s in sc.steps if s[1] != "dsplog" and not (s[1] == "read" and str(s[2])[:1] in "md")]
+    st += _voice_steps(300, ring) + [[n - 5, "dsplog"]]
+    st += [[k, "read", "vs", VOICE_WRAM, 18] for k in range(300, n, 4)]
+    st += [[k, "read", "bok", VOICE_BOK, 1] for k in range(300, n, 4)]
+    return [Scenario("v_clear", n, steps=st, exec=(VOICE_HOOK,))]
+
+
+def voice_end_scenarios(stage, ring):
+    """The boss stages' end (voice_sfx.END_STAGES): the 1-6 tournament / the 1-7 fight up to the boss clear jingle
+    (0/$22, after SB5's boss victory music is uploaded) and 90 frames on: "good" from the end ring."""
+    if stage == 0x68:
+        sc, n, w = b17_scenarios()[0], 2800, 2600
+    else:
+        sc, n, w = b16_scenarios()[0], 3300, 2560   # (the Golden's death moves with the ROM: ~2640-2950)
+    st = [s for s in sc.steps if s[0] < n and s[1] in ("burn_clown", "burn", "pad")]
+    st += _voice_steps(w, ring) + [[n - 5, "dsplog"]]
+    st += [[k, "read", "vs", VOICE_WRAM, 18] for k in range(w, n, 4)]
+    st += [[k, "read", "bok", VOICE_BOK, 1] for k in range(w, n, 4)]
+    return [Scenario("v_end", n, steps=st, exec=(VOICE_HOOK,))]
+
+
+def corner_scenarios(b_lo):
+    """P1 walled in with a bomb ~500 frames into the stage (after "start": B back)."""
+    st = arenas([0])
+    cx, cy = QUAD[0]
+    st += [[3, "cell", c, 0x30] for c in (cell(cx + 1, cy), cell(cx - 1, cy), cell(cx, cy + 1), cell(cx, cy - 1))]
+    st += [[208, "dsplog"], [208, "spcwatch", b_lo, 0xDCFF, 3], [206, "read", "bok", VOICE_BOK, 1],
+           [220, "pad", 0, "a", 3], [315, "dsplog"]]
+    return [Scenario("v_corner", 320, steps=st)]
+
+
+def _voice_ring(l, ring, nr, ns, src=None):
+    """-> (key-ons [(k, voice, pitch)], clips played to their end (blocks), worst lead, worst margin behind,
+    problems)"""
+    from sb6.features import voice_sfx as V
+    regs, kons = {}, []
+    for k, cyc, r, v in l.dsp:
+        regs[r] = v
+        if r == 0x4C:
+            for n in range(8):
+                if v >> n & 1 and regs.get(16 * n + 4) == (V.SRC if src is None else src):
+                    kons.append((k, n, regs.get(16 * n + 2, 0) | regs.get(16 * n + 3, 0) << 8))
+    playing, P, last_p, F, played = False, 0, 0, None, []
+    lead, gapw, bad, ki = 10 ** 9, 10 ** 9, [], 0
+    for kind, k, addr, brr in l.spc:
+        while ki < len(kons) and kons[ki][0] <= k:
+            playing, P, last_p = True, 0, 0
+            F = nr - 1 if F is None else F       # (the ring was filled before the watch began)
+            ki += 1
+        if playing and ring <= brr < ring + 9 * nr:
+            p = (brr - ring) // 9
+            d = (p - last_p) % nr
+            if F + 1 in ns and P + d > F:
+                playing = False                  # past its last block: END (the S-DSP goes on silently)
+                played.append(F + 1)
+            elif d > 40:
+                bad.append(f"{k}: jumped {last_p}->{p}")
+            P, last_p = P + d, p
+        if kind == "A" and ring <= addr < ring + 9 * nr and (addr - ring) % 9 == 0:
+            w = (addr - ring) // 9
+            if F is None:
+                j = w
+            elif w == 0 and (F + 1) % nr:
+                j, playing = 0, False            # another clip's first blocks
+            else:
+                dd = (w - F - 1) % nr
+                j = F + 1 + (dd if dd < nr // 2 else dd - nr)
+            if playing and j >= nr:
+                gapw = min(gapw, P - (j - nr))
+                if P - (j - nr) < 2:
+                    bad.append(f"{k}: block {j} written over {j - nr} while block {P} plays")
+            F = j if F is None or j == 0 else max(F, j)
+        if playing and P >= F and F + 1 in ns:
+            playing = False                      # its last block (END)
+            played.append(F + 1)
+        if playing:
+            lead = min(lead, F - P)
+            if F < P:
+                bad.append(f"{k}: block {P} plays, the ring holds up to {F}")
+        if len(bad) > 8:
+            break
+    return kons, played, lead, gapw, bad
+
+
+def _voice_lags(l, k0, n):
+    hooks = set()
+    for m in l.msgs:
+        f = m.split()
+        if len(f) > 3 and f[2] == "exec" and int(f[3], 16) == VOICE_HOOK:
+            hooks.add(int(f[1]))
+    return [k for k in range(k0, k0 + n) if k not in hooks]
+
+
+def voice_plan(stage):
+    """build/voice_plan.json (voice_sfx.late): ring, nr, shared (B goes back to the ring's top), steps ("start"
+    that many semitones lower), pitch of "start", its blocks."""
+    import json
+    return {p["stage"]: p for p in json.load(open(os.path.join(engine.ROOT, "build", "voice_plan.json")))}[stage]
+
+
+def _aram(tag, name):
+    return open(os.path.join(engine.OUT, f"{tag}.log_{name}_aram.bin"), "rb").read()
+
+
+def voice_eval(kind, stage, tag):
+    sn = STAGES.get(stage, f"${stage:02X}")
+
+    def ev(logs, boot):
+        from sb6.features import crowd, voice_sfx as V
+        res = Result()
+        name = "v_" + kind
+        l = logs.get(name)
+        if not res.ok(f"{sn} voice {kind}: scenario ran", l is not None, ""):
+            return res
+        try:
+            aram = _aram(tag, name)
+        except OSError as e:
+            res.ok(f"{sn} voice {kind}: ARAM dump", False, str(e))
+            return res
+        plan = voice_plan(V.END_KEY if kind == "end" else stage)
+        ring, nr, shared = plan["ring"], plan["nr"], plan["shared"]
+        src = plan.get("src", V.SRC)
+        clips = V.clips(os.path.join(engine.ROOT, "assets", "sound"), plan["steps"])
+        ns = [len(d) // 9 for d, _ in clips]
+        pitch = plan["pitch"] if kind == "start" else V.PITCH
+        rate = pitch * 32000 / 4096
+        res.ok(f"{sn} voice {kind}: directory ${src:02X} = the ring (${ring:04X}, {nr} blocks"
+               f"{', part B at its top' if shared else ''})",
+               (aram[0xFD00 + 4 * src] | aram[0xFD01 + 4 * src] << 8) == ring, "")
+        jingle = {"start": 0x20, "clear": 0x21, "end": 0x22}[kind]
+        asked = [k for k, g, i in l.reqs if (g, i) == (0, jingle)]
+        if kind == "start" and plan.get("good_only"):
+            # (1-2: "good" only, its ring is the song's piano: "start" never asked for, never keyed on)
+            kons = _voice_ring(l, ring, nr, set(ns), src)[0]
+            music = [k for k, g, i in l.reqs if (g, i) == (0, 6)]
+            res.ok(f"{sn} voice start: none (good only): jingle, music, no voice SFX, no key-on of ${src:02X}",
+                   bool(asked and music) and not [c for k, c in l.cmds if c in (V.CMD, V.CMD_GOOD)] and not kons,
+                   f"jingle {asked[:1]}, music {music[:1]}, key-ons {kons[:2]}")
+            wr = [x for x in l.spc if x[0] == "A"]
+            res.ok(f"{sn} voice start: the song's sample at the ring (${ring:04X}) never written while the stage plays",
+                   not wr, f"writes {wr[:3]}")
+            return res
+        sfx = V.CMD if kind == "start" else V.CMD_GOOD
+        after = [(k, c) for k, c in l.cmds if c in (V.CMD, V.CMD_GOOD) and asked and k >= asked[0]]
+        cmd = [k for k, c in after]
+        lo, hi = (V.START_DELAY - 1, V.START_DELAY + 2) if kind == "start" else (0, 20)
+        res.ok(f"{sn} voice {kind}: jingle (0/${jingle:02X}) -> SFX ${sfx:02X} {lo}-{hi} frames later",
+               bool(asked and cmd and after[0][1] == sfx and lo <= cmd[0] - asked[0] <= hi),
+               f"jingle {asked[:2]}, SFX {cmd[:3]}")
+        if kind == "start":
+            music = [k for k, g, i in l.reqs if (g, i) == (0, 6)]
+            ends = cmd[0] + 2 + ns[0] * 16 * 60 // int(rate) if cmd else 0
+            res.ok(f"{sn} voice start: after the jingle's last note, over before the stage music",
+                   bool(cmd and asked and music and cmd[0] - asked[0] >= 90 and ends < music[0]),
+                   f"jingle {asked[:1]}, start {cmd[:1]}-{ends}, music {music[:1]}")
+        kons, played, lead, gapw, bad = _voice_ring(l, ring, nr, set(ns), src)
+        kons = [x for x in kons if asked and x[0] >= asked[0]]
+        res.ok(f"{sn} voice {kind}: one key-on of directory ${src:02X} at pitch ${pitch:04X} (+-3), <= 6 frames after it",
+               bool(len(kons) == 1 and abs(kons[0][2] - pitch) <= 3 and cmd and 0 <= kons[0][0] - cmd[0] <= 6),
+               " ".join(f"{k}:v{n}:{p:04X}" for k, n, p in kons))
+        want = [ns[0]] if kind == "start" else ns[1:]
+        res.ok(f"{sn} voice {kind}: the clip plays to its END from the ring (${ring:04X}, {nr} blocks)",
+               bool(played and played[0] in want), f"played {played}, clip blocks {want}")
+        res.ok(f"{sn} voice {kind}: every block in the ring before it plays, none written over an unplayed one",
+               not bad and lead >= 0 and gapw >= 2,
+               f"worst lead {lead}, worst margin behind {gapw}; " + "; ".join(bad[:4]))
+        k0 = kons[0][0] if kons else 0
+        if kons:
+            lags = _voice_lags(l, k0, 70)
+            res.ok(f"{sn} voice {kind}: no main-loop pass lost while it plays", not lags, f"lost {lags}")
+        vs = dict(l.values.get("vs", []))
+        bok = dict(l.values.get("bok", []))
+        b = _part_b()
+        if kind == "end" or plan.get("good_only"):   # (SB5's boss victory song: B as SB5's songs have it, nobody
+            # cornered; 1-2: no B in ARAM, the stage is over)
+            return res
+        if not shared:
+            res.ok(f"{sn} voice {kind}: part B stays in ARAM ($7F:FBB1 = 1 until the clear jingle)",
+                   all(v[0] == 1 for k, v in bok.items() if vs.get(k, b"\0")[0] == 0xA5
+                       and not (kind == "clear" and asked and k >= asked[0]))
+                   and aram[crowd.HIGH_LO - len(b):crowd.HIGH_LO] == b, "")
+            return res
+        back = [k for k in sorted(vs) if k > k0 and vs[k][0] == 0xA5 and vs[k][2] == VOICE_B
+                and (vs[k][3] | vs[k][4] << 8) == len(b) // 9 and vs[k][7] == 2 and bok.get(k, b"\0")[0] == 1]
+        res.ok(f"{sn} voice {kind}: then part B goes back to the ring's top on idle time ($7F:FBB1 = 1)", bool(back),
+               f"back at {back[:1]}")
+        if back and kons:
+            lags = _voice_lags(l, k0 + 70, max(0, back[0] - k0 - 70))
+            res.ok(f"{sn} voice {kind}: no main-loop pass lost while B loads", not lags, f"lost {lags}")
+            res.ok(f"{sn} voice {kind}: part B back byte for byte", aram[crowd.HIGH_LO - len(b):crowd.HIGH_LO] == b, "")
+        if kind == "start":
+            silent = [k for k in sorted(bok) if asked and asked[0] <= k and bok[k][0] != 1]
+            res.ok(f"{sn} voice start: the cornered sound waits for B only while the voice holds the ring",
+                   bool(back) and all(k < back[0] for k in silent), f"B missing at {silent[:1]}-{silent[-1:]}")
+        return res
+    return ev
+
+
+def corner_eval(stage, tag):
+    sn = STAGES.get(stage, f"${stage:02X}")
+
+    def ev(logs, boot):
+        from sb6.features import crowd, game_sfx as G
+        res = Result()
+        l = logs.get("v_corner")
+        if not res.ok(f"{sn} cornered: scenario ran", l is not None, ""):
+            return res
+        aram = _aram(tag, "v_corner")
+        b = _part_b()
+        b1 = crowd.HIGH_LO - len(b)
+        from sb6.features import voice_sfx as V
+        voiced = stage in V.STAGES
+        first = [v for k, v in l.values.get("bok", [])][:1]
+        res.ok(f"{sn} cornered: part B in ARAM (${b1:04X}-$DCFF{', $7F:FBB1 = 1' if voiced else ''})",
+               aram[b1:crowd.HIGH_LO] == b and (not voiced or (first and first[0][0] == 1)), "")
+        loop = aram[0xFD00 + 4 * G.SRC_CORNER + 2] | aram[0xFD00 + 4 * G.SRC_CORNER + 3] << 8
+        res.ok(f"{sn} cornered: part A loops into B (directory ${G.SRC_CORNER:02X})", loop == b1, f"loop ${loop:04X}")
+        cmd = [k for k, c in l.cmds if c == G.CMD_CORNER]
+        res.ok(f"{sn} cornered: SFX ${G.CMD_CORNER:02X}", bool(cmd), f"{cmd[:3]}")
+        regs, kon = {}, None
+        for k, cyc, r, v in l.dsp:
+            regs[r] = v
+            if r == 0x4C and v & 8 and regs.get(0x34) == G.SRC_CORNER and kon is None:
+                kon = k
+        last = max([brr for kind, k, a, brr in l.spc if kind == "B" and kon is not None and k >= kon
+                    and b1 <= brr < crowd.HIGH_LO] or [0])
+        res.ok(f"{sn} cornered: plays through part B to its end (sampled once a frame: within 12 blocks)",
+               bool(kon is not None and last >= crowd.HIGH_LO - 9 * 12), f"key-on {kon}, last block ${last:04X}")
+        writes = [k for kind, k, a, brr in l.spc if kind == "A"]
+        res.ok(f"{sn} cornered: nothing written into B meanwhile", not writes, f"{writes[:3]}")
+        return res
+    return ev

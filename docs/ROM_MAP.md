@@ -241,6 +241,23 @@ script accumulator (`61` = add).
   * others: `$80:8655 + 3*id` = `[set, song, cmd]` → `$C0:0E31` set upload
     (if ≠ `$03CE`), `$C0:0E9C` song upload (if ≠ `$03CD`), then the command
     twice through `$C0:0E7F`.
+* Port-1 transfer (command `$31`, `$C0:106C`; SPC side `$1042`): ports 2-3 = ARAM address, port 1 =
+  `$31` | `$03C1` (bit-7 toggle), answered with `$31 ^ $80`; then each word in ports 2-3 with the byte count in
+  port 1 (echoed), an odd count ends it (the SPC writes `$AA` to port 2), port 1 = `$7F`, `$03C1` toggled. The
+  SPC handler also returns at once when it reads `$7F` (SB5 gives a command up that way on a lag frame,
+  `$C0:1126`). Measured in Mesen (1-1, music playing): Hudson's main loop (`$08C6`) looks at port 1 only every
+  ~100 scanlines (the answer came after 2-214 lines), a word costs ~1.2 lines (CPU + SPC handshake), and the
+  words may go on past 64 bytes (the SPC's index carries into the address high byte). The main loop's sound
+  hook `$C0:0B2C` (`loop_hook`) runs after the frame's tasks, just before SB5 waits for the NMI
+  (`$80:F496`); a pass that reaches that wait after line ~220 loses the next frame. Stage start in 1-1 (4
+  players): song upload ~186 frames after the stage mode, the players move with the start jingle (request
+  0/`$20`, command 2) ~100 frames later, its last note ~84 frames in, the stage music (command 1) ~178 frames after the jingle; the clear
+  jingle is request 0/`$21` (command 3). SB6's stage voices (`features/voice_sfx.py`) use all of this.
+  With 4 players running and bombing (coop4_check), the main loop reaches `loop_hook` at lines ~180-220: no idle
+  time is left, so any port-1 transfer then costs frames (a voice that streams while the stage runs must be in
+  ARAM before it plays, or mostly). In 1-5 right after the start jingle Hudson's driver also stays away from its
+  port poll (SPC PC in `$1xxx-$2Fxx` / `$FFxx`, not the `$0A08` / `$08CF` loop) for ~12 frames at a time, with or
+  without SB6's voices: a transfer started then gets no answer.
 * Group 3 in detail: `$80:8765 + 2*id` = `[set, command]`; the task at
   `$C0:0FEC` takes the set's first upload block and sends it with port-1
   command `$31` (`$C0:106C`, at most `$40` bytes per main-loop pass, skipped
@@ -1476,9 +1493,13 @@ script accumulator (`61` = add).
   `tools/sb1_song.py`; 2026-11-22: back from the MIDI versions, which stay in `sb1_w<n>m_song.txt`
   for reference); 1-7 also plays SB1's own boss song (`sb1_boss_song.txt`, the owner's choice over the
   MIDI `sb1_bossm_song.txt`); 1-6 plays a song made from khinsider's MIDI (`tools/midi_song.py`;
-  `sb1_music.IMAGES` = the SB1 sound RAM of its samples). World 2's song (1-2) and the boss song (1-7)
-  are too long to leave the cornered sound's part B free (`NO_PART_B`): their lists take that ARAM too, which
-  is safe because gs_song = SB1M_SONG never sends B (the cornered sound plays part A only there).
+  `sb1_music.IMAGES` = the SB1 sound RAM of its samples). The boss song (1-7) and World 2's (1-2) are too long to leave the cornered
+  sound's part B free (`NO_PART_B`): their lists take that ARAM too, which is safe because gs_song = SB1M_SONG
+  never sends B (the cornered sound plays part A only there). World 2's piano (SB1 sample
+  `$00`, nothing above 8 kHz) at a lower rate (`SLOW_RATE`) would free room, but re-encoding it to BRR is audible:
+  grainy at half the rate (BRR noise -34 dB), still heard by the owner at 0.9 (-44 dB); it stays as it is. The clear
+  jingle (0/`$21`) is a World 1 stage's last sound: it replaces the song (SB5's jingle samples only) and the next stage
+  uploads its own list, so 1-2's "good" streams into the piano's ARAM then (`sb1_music.GOOD_RING`).
   coop4_check with the driver songs: 1-1..1-5 at 52-55 fps, 1-7 at 54.
   1-6's duels (`$67`/`$69`/`$6B`) play SB1's World 5 song from a MIDI (`sb1_w5m_song.txt`, made by
   `tools/midi_song.py` from khinsider's `level.mid`: a 2-beat pickup + 20 bars looped, as the SB6 fan

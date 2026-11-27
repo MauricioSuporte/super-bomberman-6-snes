@@ -196,6 +196,15 @@ exec callback at `$C0:0AF9` (end of the pad reader).
   title_music's sound/set/song/loop hooks call `gs_*`. Only send them while
   `$0188` = 1 (R in ARAM). Research: `tools/spc_render.py` turns a Mesen log
   of S-DSP writes into a WAV.
+* SB6's stage voices (1-1, 1-3 to 1-5, 1-6's first duel; 1-2 "good" only, from its piano's ARAM after the song: `GOOD_RING`; "start" `START_DELAY` passes after the start jingle 0/`$20`, between
+  it and the music, a random "good" with the clear jingle 0/`$21`, or 0/`$22` after 1-6's / 1-7's boss (a ring
+  in what SB5's boss victory music leaves, `END_*`); `features/voice_sfx.py`, `vs_*` in
+  `asm/game_sfx.asm`) play from a ring of BRR blocks (the cornered sound's part B ARAM below `$DD00`, B goes back
+  after each voice; 1-3 / 1-6: a range of its own) that the main loop refills with Hudson's port-1 transfer, on idle
+  time unless the voice is about to catch up (the driver answers port 1 every ~100 lines: start under line 185,
+  give up at 195, stop at 200). With 4 players there is no idle time: "start" is `START_STEPS` semitones lower
+  where its ring is small. `qa_check.py voice` checks no underrun / overwrite, no lost pass, part B back and the
+  cornered sound played to its end.
 * Stage music is Hudson's (World 1 included). 1-1 to 1-5 and 1-7 play SB1's World 1-4 and 6 songs and its boss song
   converted to Hudson songs (`features/sb1_music.py` `STAGES`, from `assets/sound/sb1_w<n>_song.txt`,
   made by `tools/sb1_song.py` from a Mesen DSP log of SB1; 1-6 plays `sb1_w5m_song.txt`, made by `tools/midi_song.py` from khinsider's MIDI, with SB1's samples; the other `*m_song.txt` MIDI versions are kept unused): `sb1m_song` in

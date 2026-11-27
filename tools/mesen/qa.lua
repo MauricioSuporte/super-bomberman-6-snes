@@ -154,8 +154,8 @@ for _, scx in ipairs(PLAN.scenarios) do
         if sc and sc.exec then
           local s = emu.getState()
           local sp = s["cpu.sp"]
-          W(string.format("X %d exec %06X A=%04X X=%04X Y=%04X $AE=%02X $AF=%02X ret=%02X%02X%02X $BD=%02X%02X%02X", k, a, s["cpu.a"], s["cpu.x"],
-            s["cpu.y"], r(0xAE), r(0xAF), r(sp + 3), r(sp + 2), r(sp + 1), r(0xBF), r(0xBE), r(0xBD)))
+          W(string.format("X %d exec %06X A=%04X X=%04X Y=%04X $AE=%02X $AF=%02X ret=%02X%02X%02X $BD=%02X%02X%02X sl=%d", k, a, s["cpu.a"], s["cpu.x"],
+            s["cpu.y"], r(0xAE), r(0xAF), r(sp + 3), r(sp + 2), r(sp + 1), r(0xBF), r(0xBE), r(0xBD), s["ppu.scanline"] or -1))
         end
       end, emu.callbackType.exec, a, a)
     end
@@ -334,6 +334,10 @@ function OPS.lit(st)          -- lit name: V line, 1 byte = screen brightness (0
   W(string.format("V %d %s %02X", k, st[3], c["ppu.forcedBlank"] and 0 or (c["ppu.screenBrightness"] or 0)))
 end
 function OPS.readoam(st) W(string.format("V %d %s %s", k, st[3], hexs(0, 544, emu.memType.snesSpriteRam))) end
+function OPS.spcpc(st)        -- spcpc name: V line, the SPC700 PC (2 bytes, big endian) and its ports 0-3 as the CPU sees them
+  local c = emu.getState()
+  W(string.format("V %d %s %04X%02X%02X%02X%02X", k, st[3], c["spc.pc"] or 0, emu.read(0xF4, emu.memType.spcMemory), emu.read(0xF5, emu.memType.spcMemory), emu.read(0xF6, emu.memType.spcMemory), emu.read(0xF7, emu.memType.spcMemory)))
+end
 -- dsplog: from its frame on, every S-DSP write "SW k <spc cycle> <reg> <value>", and once the S-DSP / ARAM
 -- at that moment ("SD <cycle>" + QA_OUT_<scenario>_aram.bin / _dsp.bin: tools/spc_render.py renders the log)
 local dsp_on = false
@@ -355,6 +359,27 @@ do
       if not sc or not dsp_on then return end
       W(string.format("SW %d %d %02X %02X", k, emu.getState()["spc.cycle"], emu.read(0xF2, emu.memType.spcMemory), v))
     end, emu.callbackType.write, 0xF3, 0xF3, emu.cpuType.spc, emu.memType.spcMemory)
+  end
+end
+-- spcwatch {k, "spcwatch", lo, hi, voice}: from its frame on, every SPC write to ARAM lo..hi
+-- "SA k addr brr" (brr = the S-DSP voice's current BRR block address) and, every frame, "SB k brr"
+-- (the SB6 stage voices' ring, features/voice_sfx.py)
+local spcw = nil
+function OPS.spcwatch(st) spcw = st end
+do
+  local want = nil
+  for _, s in ipairs(PLAN.scenarios) do
+    for _, st in ipairs(s.steps or {}) do if st[2] == "spcwatch" then want = st end end
+  end
+  if want then
+    local key = "spc.dsp.voices[" .. want[5] .. "].brrAddress"
+    emu.addMemoryCallback(function(a)
+      if not sc or not spcw then return end
+      W(string.format("SA %d %04X %04X", k, a & 0xFFFF, emu.getState()[key]))
+    end, emu.callbackType.write, want[3], want[4], emu.cpuType.spc, emu.memType.spcMemory)
+    emu.addEventCallback(function()
+      if sc and spcw then W(string.format("SB %d %04X", k, emu.getState()[key])) end
+    end, emu.eventType.endFrame)
   end
 end
 -- wlog steps: the callbacks are set up when the script loads (Mesen ignores ones added later); each logs
@@ -560,6 +585,8 @@ function OPS.align(st)
           for i = -1, n + 4 do       -- (another enemy on the lane, from behind the seat to past the enemy)
             if cb == (py + i * dy) * 16 + px + i * dx then ok = false end
           end
+          local bx, by = cb & 15, cb >> 4     -- (nor near the seat in its row / column: a magnet bomb's other ways)
+          if by == py and math.abs(bx - px) <= n + 1 or bx == px and math.abs(by - py) <= n + 1 then ok = false end
         end
       end
       if ok then
@@ -642,6 +669,7 @@ local function begin(i)
   dsp_on = false
   shows = {}
   wlog_on = {}
+  spcw = nil
   W("S " .. sc.name)
   if sc.rec and sc.rec.pose then posef = io.open(OUTP .. "_" .. sc.name .. ".pose", "wb") end
   prof = sc.profile and {} or nil

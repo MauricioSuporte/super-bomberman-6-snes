@@ -54,6 +54,17 @@ IMAGES = {"bossm": "boss", "w1m": "w1", "w2m": "w2", "w3m": "w3", "w4m": "w4", "
 # songs too long to leave the cornered sound's part B free (World 2's and the boss's driver songs): their
 # list takes that ARAM too (gs_song = SB1M_SONG never sends B, the cornered sound plays part A only)
 NO_PART_B = {"w2", "boss"}
+# SB1 samples kept at a lower rate (song name -> ((srcn, rate factor), ...)), their notes' pitch scaled up.
+# Re-encoding to BRR adds noise that grows as the rate drops: at half the rate World 2's piano sounded grainy
+# (BRR noise -34 dB), at 0.9 it is -44 dB, and the piano has nothing above 8 kHz to lose (-48 dB).
+# Even 0.9 was audible on World 2's piano ($00, 10 KB, what would make room for the cornered sound's part B and
+# SB6's voices in 1-2): none kept
+SLOW_RATE = {}
+# songs that leave no room for a ring while they play (1-2: 618 bytes): "good" only, its ring = an SB1 sample's
+# ARAM (song name -> srcn). The clear jingle is the stage's last sound (the next stage uploads its own song), and
+# the song does not play then; no "start" (it plays before the music)
+GOOD_RING = {"w2": 0x00}
+VOICE_INST_CROWD = 30   # 1-6 (the crowd owns instrument 29 / entry $3E): instrument nothing of its set defines
 SONG_UNITS = {"w5": (12,), "w5m": (12,), "w3m": (16,), "w6m": (12,)}
 MUSIC_SCRIPTS = {0x68: (0xC71D71, 0xC71D80), 0x67: (0xC71B93, 0xC71BA2), 0x69: (0xC71F1D, 0xC71F2C), 0x6B: (0xC7215A, 0xC72169)}
 SB5_SET, SB5_SONG = 0x2C, 0x05       # SB5's ZONE1 song: its sequence (set), its samples (song)
@@ -529,13 +540,43 @@ class Space:
 
 # ---------------------------------------------------------------------------------------------------------
 
-def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, b_lo=None, portal=False):
+def slow_rate(data, loop_off, q):
+    """A looping BRR sample at ~q times its rate: (BRR bytes, loop offset, pitch factor). The loop keeps a whole
+    number of blocks (the ratio is chosen for it); its start is the first block boundary where the resampled
+    signal repeats."""
+    from fractions import Fraction
+    from scipy.signal import resample_poly
+    import numpy as np
+    x = np.array(brr.decode(data), dtype=np.float64)
+    a, L = loop_off // 9 * 16, len(x) - loop_off // 9 * 16
+    L2 = 16 * round(L * q / 16)
+    r = Fraction(L2, L)
+    y = resample_poly(np.concatenate([x[:a]] + [x[a:]] * 4), r.numerator, r.denominator)
+    s = -(-int(a * r + 64) // 16) * 16
+    pcm = np.clip(np.rint(y[:s + L2]), -32768, 32767).astype(np.int64)
+    os.makedirs(os.path.join(tm.ROOT, "build", "cache"), exist_ok=True)
+    out = bytearray(tm.encoded_pcm(pcm, os.path.join(tm.ROOT, "build", "cache"), "sb1_half"))
+    out[-9] |= 0x03
+    return bytes(out), s // 16 * 9, float(1 / r)
+
+
+def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, b_lo=None, portal=False,
+          voice_dir=None, voice_steps=0, slow=(), good_ring=None):
     """cheer_dir: also the crowd SFX (features/crowd.py). b_lo: start of game_sfx's cornered part B, kept free
     up to crowd.HIGH_LO ($DD00): gs_song sends it after the song (song 5 has room for B there). portal: also
-    World 1's portal sound track (features/portal_sfx.py: it plays this song's SB1 bell)."""
+    World 1's portal sound track (features/portal_sfx.py: it plays this song's SB1 bell). voice_dir: also the
+    SB6 stage voices (features/voice_sfx.py): their SFX sequence, and their ring = the free ARAM right below
+    $DD00 (B's ARAM included: an SB1 song never sends B); the ring's contents are a list of their own."""
     notes, meta = read_song(path)
     loop, end, row = meta["loop"], meta["end"], meta["row"]
     srcns = sorted({n["srcn"] for n in notes})
+    smp = sb1_samples(image, srcns, sb1_dir)
+    for s, q in slow:
+        data, lp, f = slow_rate(*smp[s], q)
+        smp[s] = (data, lp)
+        for n in notes:
+            if n["srcn"] == s:
+                n["pitch"] = round(n["pitch"] * f)
     zimg, zsamples = sb5_zone1(rom)
     heads = song_heads(zimg)
     (jlo, jhi), jdirs, jedl = sb5_jingles(zimg)
@@ -557,7 +598,6 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
         low_top = cblocks[0][0]
         if len(cblocks) > 1:
             high_lo = cblocks[1][0] + len(cblocks[1][1])
-    smp = sb1_samples(image, srcns, sb1_dir)
     lo, hi, n_smp = SAMPLE_BASE, high_lo, 0
     for s in srcns:
         data, loop_off = smp[s]
@@ -698,6 +738,51 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
             s = min(srcns, key=lambda s: abs(_zcr(smp[s][0]) - z))
             dirs[4 * d:4 * d + 4] = dirs[4 * dir_of[s]:4 * dir_of[s] + 4]
             aliased[d] = s
+    voice_info = None
+    if voice_dir:
+        from . import voice_sfx
+        if b_lo is None and good_ring is None:
+            raise BuildError("SB1 music: the stage voices need the ARAM below $DD00 (part B kept free)")
+        # instrument / directory entry: 29 / $3E, or (the crowd's there) 30 / a directory entry of the song's
+        # range it leaves blank; their SFX sequences first (the ring takes what is left below B)
+        inst, src = voice_sfx.INST, voice_sfx.SRC
+        if cheer_dir:
+            inst = VOICE_INST_CROWD
+            src = max(d for d in free_dirs if d not in dir_of.values() and d not in jdirs)
+        va, vseq = [], []
+        for good in (False, True):
+            sq = voice_sfx.sequence(0, voice_dir, good, voice_steps, inst)
+            a = space.alloc(len(sq), "the stage voices' SFX")
+            vseq.append((a, voice_sfx.sequence(a, voice_dir, good, voice_steps, inst)))
+            blocks.append(vseq[-1])
+            va.append(a)
+    if voice_dir and good_ring is not None:
+        # "good" only, from the ARAM of SB1 sample good_ring (the song is over when the clear jingle plays); the
+        # head list = the sequences again (no "start" blocks)
+        ring = struct.unpack_from("<H", dirs, 4 * dir_of[good_ring])[0]
+        nr = len(smp[good_ring][0]) // 9 & ~1
+        if nr < voice_sfx.MIN_RING:
+            raise BuildError(f"SB1 music {os.path.basename(path)}: sample {good_ring:02X} too short for a ring")
+        voice_info = (tuple(va), ring, nr, False, voice_steps, inst, src, tuple(vseq))
+    elif voice_dir:
+        # the ring: the free ARAM right below $DD00 with the cornered sound's part B (shared: B goes back to its
+        # top after a voice), or a free range of its own if that is bigger (B then stays). With the crowd (1-6)
+        # around B: B's ARAM only
+        below = [r for r in space.ranges if r[1] == low_top and not cheer_dir]
+        lo_ring = below[0][0] if below else b_lo
+        nr = (crowd.HIGH_LO - lo_ring) // 9 & ~1
+        own = max(space.ranges, key=lambda r: r[1] - r[0])
+        if (own[1] - own[0]) // 9 & ~1 > nr:
+            nr = (own[1] - own[0]) // 9 & ~1
+            ring, shared = own[1] - 9 * nr, False
+            own[1] = ring
+        else:
+            ring, shared = crowd.HIGH_LO - 9 * nr, True
+            if below and ring < below[0][1]:
+                below[0][1] = ring
+        if nr < voice_sfx.MIN_RING or (shared and (crowd.HIGH_LO - b_lo) % 18):
+            raise BuildError(f"SB1 music {os.path.basename(path)}: ring ${ring:04X} for the stage voices")
+        voice_info = (tuple(va), ring, nr, shared, voice_steps, inst, src, None)
     blocks.append((head, header(taddr, instruments)))
     blocks += [(taddr[ch], tr[ch]) for ch in sorted(tr)]
     # song table: command 1 = SB1's song, 2.. = SB5's (their headers where SB5 has them)
@@ -707,7 +792,7 @@ def build(image, path, rom, sb1_dir, unit_choices=(24, 16, 12), cheer_dir=None, 
     info = dict(seq=seq, samples=n_smp, notes=len(notes), tempo=tempo, unit_ms=unit_ms, row_ms=row,
                 cents=worst, channels=sorted(keys), subs=len(subs), units=units, jingles=(jlo, jhi), jingle_dirs=jdirs,
                 jingle_samples=jbytes, aram_left=space.free(), head=head, aliased=aliased,
-                dropped=channels_of.dropped, portal=portal_info)
+                dropped=channels_of.dropped, portal=portal_info, voice=voice_info)
     return tm._list(blocks, bytes([0x00, 0x08])), info
 
 
@@ -749,21 +834,27 @@ def late_alloc(rb):
     _late.clear()
 
 
-def apply(rb, sound_dir, b_lo, portal_table=None):
+def apply(rb, sound_dir, b_lo, portal_table=None, voice_table=None, corner_table=None):
     """-> (asm defines, [info per stage]). SB1M_TABLE: per stage [stage id, upload list (long)], then $FF.
     portal_table: game_sfx's PORTAL table (filled here: per stage of portal_sfx.STAGES [stage id, its list of the
     portal sound's entries (long)], then $FF)."""
     from . import portal_sfx
     table, infos, lists, pinfo = bytearray(), [], {}, {}
     portal_songs = {name for stage, name, _ in STAGES if stage in portal_sfx.STAGES}
+    from . import voice_sfx
+    voice_songs = {name for stage, name, _ in STAGES if stage in voice_sfx.STAGES}
+    vinfo = {}
     for stage, name, sb1_dir in STAGES:
         if name not in lists:       # one list per song, shared by its stages
             image = open(os.path.join(sound_dir, f"sb1_stage_{IMAGES.get(name, name)}.bin"), "rb").read()
             lst, info = build(image, os.path.join(sound_dir, f"sb1_{name}_song.txt"), rb.d, sb1_dir,
                               SONG_UNITS.get(name, (24, 16, 12)),
                               sound_dir if name in crowd.SONGS else None, None if name in NO_PART_B else b_lo,
-                              portal=name in portal_songs)
+                              portal=name in portal_songs, voice_dir=sound_dir if name in voice_songs else None,
+                              voice_steps=voice_sfx.START_STEPS.get(stage, 0), slow=SLOW_RATE.get(name, ()),
+                              good_ring=GOOD_RING.get(name))
             pinfo[name] = info["portal"]
+            vinfo[name] = info["voice"]
             if name in LATE:        # a region freed later in the build (late_alloc puts it there)
                 a = LATE[name][1]
                 _late.append((name, lst, stage))
@@ -788,6 +879,15 @@ def apply(rb, sound_dir, b_lo, portal_table=None):
                  f"stage ${stage:02X} plays music id 6 at once (no boss jingle)")
     table.append(0xFF)
     t = rb.alloc("bulk", bytes(table), "SB1 music: stage -> upload list")
+    if corner_table is not None:      # stages whose song keeps B free, without voices: B sent with the song
+        cst = [stage for stage, name, _ in STAGES if name not in NO_PART_B
+               and (stage not in voice_sfx.STAGES or not vinfo[name][3])]
+        if len(cst) >= 16:
+            raise BuildError("SB1 music: CORNER_TAB too small")
+        rb.d[corner_table & 0x3FFFFF:(corner_table & 0x3FFFFF) + len(cst) + 1] = bytes(cst) + b"\xFF"
+    if voice_table is not None:
+        voice_sfx.fill(rb, voice_table, [(stage, vinfo[name]) for stage, name, _ in STAGES
+                                         if stage in voice_sfx.STAGES], sound_dir)
     if portal_table is not None:
         ptab = bytearray()
         for stage, name, _ in STAGES:

@@ -129,6 +129,10 @@ sequenced driver).
 | `$7F:FBFD-$7F:FBFE` | World 1's 1-6: the duel being fought (its old stage id `$67`/`$69`/`$6B`; all three are played in stage `$67`), 1 while next_rival makes the rival (`asm/world1.asm`). |
 | `$7F:FBFB` | World 1's 1-6: seats whose start pose was turned up (`asm/world1.asm` face_up_start), bit per seat. Set by `FF 1A F6 07`. |
 | `$7F:FBD7-$7F:FBD9` | World 1's 1-6 items (`asm/world1.asm` item_task): the stage, frames before the next item (word). Set by `FF 1A F6 07`. |
+| `$7F:FBB0-$7F:FBB2` | SB6 stage voices (`asm/game_sfx.asm`): `vs_delay` main-loop passes before "start" is asked for (set to `voice_sfx.START_DELAY` by the start jingle's request, cleared by `vs_reset`; 0 = none), `vs_bok` 1 = the cornered sound's part B is in ARAM (a stage whose ring is B's ARAM: 0 from the load / a voice's switch to the end of B's reload; the cornered sound is not sent meanwhile), `vs_lat` frames after a voice's SFX command not counted as played (Hudson keys on later). |
+| `$7F:FBB3-$7F:FBB4` | SB6 stage voices (`asm/game_sfx.asm`): `vs_key` stage byte of the record in use (a stage, or `voice_sfx.END_KEY` `$FE` = the boss stages' end), `vs_song` the `gs_song` it was found for (its entries are sent again only after uploads while that song is loaded). |
+| `$7F:FC80-$7F:FC91` | SB6 stage voices (`asm/game_sfx.asm` `vs_edge`): a ring's last two blocks with END + LOOP set, sent from here (the clips are stored as they are). |
+| `$7F:FBE8-$7F:FBF9` | SB6 stage voices (`asm/game_sfx.asm` `vs_*`, `features/voice_sfx.py`): `+$00` `$A5` = the stage was loaded with its voices (set by `vs_reset` at every song upload, else 0), `+$01` its `VOICE_TAB` record (offset / 2), `+$02` clip in the ring (0 start, 1-3 good, 4 the cornered sound's part B, `$FF` none), `+$03` its blocks sent (word), `+$05` ring block the next one goes to (word), `+$07` 1 playing / 2 nothing to do, `+$08` NMI count at the last pass, `+$09` blocks played x 256 (3 bytes), `+$0C` clip asked for (`$FF` none), `+$0D` passes it may wait, `+$0E` / `+$10` scratch words (blocks the ring may / must hold). Only read while `+$00` = `$A5`. |
 | `$7F:FBFA` | World 1's SB1 music (`asm/title_music.asm` `sb1m_song`, `SB1M_FLAG`): `$A5` = an SB1 song list overwrote set `$2C`'s sequence in ARAM (sent again before the next stage's ZONE1 samples). Any other value = no. |
 | `$0160-$0187` | Louie palettes (`asm/louies.asm`): `$0160` half of each actor (24 bytes, 0 = none), `$0178` users of the 3 halves, `$017B` palette id in each half, `$017E` OBJ slot of the main / spare palette (0 = none), `$0180-$0187` scratch. Zero after reset; forgotten when the slot table loses the `$FF` mark (new stage). |
 
@@ -176,6 +180,38 @@ priority `$4591`), instrument 30 (`$4548`), directory / tuning entry `$3B` = the
 in the SB1 song's list (`sb1_music.build` `portal`, from the ARAM the song leaves). Instrument 30 and entry `$3B`
 are also the SB6 menu SFX's: `asm/game_sfx.asm` sends the portal's entries (after every set / song upload)
 only while `gs_song` = `SB1M_SONG` on a stage of its table, when the menu SFX samples cannot be in ARAM.
+
+SB6 stage voices (`tools/sb6/features/voice_sfx.py`, 1-1 to 1-5, 1-6's first duel `$67`): Hudson SFX `$63` ("start") and `$64` (the good
+ones; pointers `$4494-$4497`, priorities `$4592-$4593`), instrument 29 (`$4544`), directory / tuning entry `$3E`, all sent with
+the stage's entries list after every set / song upload while `gs_song` = `SB1M_SONG` on a stage of `VOICE_TAB` (instrument
+29 / entry `$3E` are the SB6 menu SFX's elsewhere, entry `$3E` also 1-6's crowd); their 18-byte sequences in the SB1
+song's list. The ring (`sb1_music.build`): the free ARAM right below `$DD00` with the cornered sound's part B at its top
+(1-1 `$D2F2-$DCFF`, 286 blocks; 1-4 / 1-5 `$D7BA-$DCFF` = part B only, 150 blocks: B goes back there after
+each voice, `vs_bok`), or a free range of its own when that is bigger (1-3 `$E8E8-$F4FF`, 344 blocks; 1-6 `$3308-$3DE7`,
+312 blocks, in the sequence area World 5's short song leaves; B stays). 1-2 ("good" only, `sb1_music.GOOD_RING`: its
+song leaves 618 bytes): the ring is World 2's piano sample (`$8000-$A891`, 1154 blocks), written only after the
+clear jingle (the song is over then, the next stage uploads its own); its record has no "start" (count 0:
+`vs_ask` ignores the start jingle) and its head list is the two sequences again. 1-6's crowd owns instrument 29 / entry `$3E`
+there: its voices use instrument 30 and directory entry `$11` (a song entry its song leaves blank). `VOICE_TAB`
+holds up to 13 records (`vs_rec` = offset / 2).
+
+Boss stages' end (1-6 after the Golden, 1-7; `voice_sfx.END_*`): the boss's death uploads SB5's boss victory music
+(music id `$0F` = set `$35` + song `$0E`); its record (stage byte `$FE`, found by `vs_reset` when `gs_song` = `$0E`
+and `$1031` = `$67` / `$68`) puts the two voice sequences at `$39C1-$39F1` (after set `$35`'s sequences) and the ring
+at `$39F2-$43FF` (286 blocks, up to Hudson's SFX tables); a random "good" plays with the boss clear jingle (0/`$22`),
+streamed through the ring (no "start", part B where SB5's songs keep it). Filled at the
+stage load with "start"'s first blocks (a list of its own, `vs_reset`), then by `vs_tick` (Hudson's port-1 transfer,
+command `$31`) behind the voice. ROM: the clips as they are (one copy each, "start" also 7 / 9 / 12 semitones lower for
+1-3 / 1-5 / 1-4), part B, the head lists (~40 KB, `voice_sfx.late`, after the character selection music).
+
+Cornered sound in World 1 (`features/game_sfx.py` part B, 1-1, 1-3 to 1-6): the SB1 songs keep B's ARAM (`$D7BA-$DCFF`)
+free except 1-2's and 1-7's (`NO_PART_B`: their songs need it; the cornered sound stops after part A there). 1-2's
+song with its piano as it is leaves 618 bytes (`$F296-$F4FF`): no part B, no "start" (its "good" plays from the piano's
+ARAM after the clear jingle). Keeping World 2's piano (SB1
+sample `$00`) at a lower rate (`sb1_music.SLOW_RATE`) would make room (0.9: both fit), but the owner heard it even at
+0.9 (BRR noise -44 dB; -34 dB at half the rate). A stage of
+`CORNER_TAB` (1-3, 1-6's duels: B not in a voice ring) gets B with its song (`gs_song`); a voice stage gets it back
+into its ring after "start"; part A's directory entry loops into B (`L_DIR1`) in both.
 
 While the title music streams, the stream driver owns `$7000-$B8FF`
 (driver + SFX scripts `$7000-$72FF`, ring `$7300-$B89B`,

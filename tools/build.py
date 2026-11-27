@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sb6.rombuild import RomBuild, BuildError  # noqa: E402
-from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, hud, items, louie_abilities, louies, menu_bg, options, pause, picker, portal, magnet, sb1_enemies, sb1_music, sb1_stages, stage_items, title, title_music, world1, world_map  # noqa: E402
+from sb6.features import bomberman_sprites, bombers, bombs, boot_logo, coop, eggs, explosions, game_sfx, hud, items, louie_abilities, louies, menu_bg, options, pause, picker, portal, magnet, sb1_enemies, sb1_music, sb1_stages, stage_items, title, title_music, voice_sfx, world1, world_map  # noqa: E402
 from sb6.objsheets import ObjSheets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,7 +94,8 @@ def main():
     maps = world_map.sound(rb, os.path.join(ROOT, "assets", "sound"), [["sb1_f3", "sb1_f4"], ["stream_ef"],
                                                                          ["wmap_f5"]], os.path.join(args.out, "cache"))
     # World 1's 1-1: SB1's music as a Hudson song (uploaded by title_music's sound hook)
-    sb1m_defs, sb1m = sb1_music.apply(rb, os.path.join(ROOT, "assets", "sound"), gsfx["b1"], gsfx["portal_table"])
+    sb1m_defs, sb1m = sb1_music.apply(rb, os.path.join(ROOT, "assets", "sound"), gsfx["b1"], gsfx["portal_table"],
+                                       gsfx["voice_table"], gsfx["corner_table"])
     maps["defs"].update(sb1m_defs, SB1M_SONG=gsfx["sb1m_song"])
     for m in sb1m:
         print(f"stage ${m['stage']:02X} music (SB1 {m['name']}, Hudson song): {m['notes']} notes, sequence "
@@ -243,6 +244,12 @@ def main():
     print(f"character selection music: {music['char_seconds']:.1f} s at 12 kHz in {len(char_segs)} segments ("
           + ", ".join(f"${b:02X}:{lo:04X}-{hi:04X}" for b, lo, hi in char_segs)
           + f"); RMS gain x{music['char_gain']:.2f} -> VOL ${music['char_vol'][0]:02X}, MVOL ${music['char_vol'][1]:02X}")
+
+    # SB6's stage voices (start / good): their clips in what is left after the character selection music
+    vo = voice_sfx.late(rb, os.path.join(ROOT, "assets", "sound"), gsfx["part_b"])
+    print(f"stage voices: start / good1-3 ({', '.join(f'{s:.2f}' for s in vo['seconds'])} s) at {vo['rate']:.0f} Hz, "
+          f"{vo['bytes']} bytes of ROM; rings " + ", ".join(f"${r:04X} ({n} blocks{', with B' if sh else ''}{f', start {lw} semitones lower' if lw else ''})"
+                                                for r, n, sh, lw in vo["rings"]))
 
     rb.set_title("SUPER BOMBERMAN 6")
     rb.fix_checksum()

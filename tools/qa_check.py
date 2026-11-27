@@ -50,6 +50,10 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            enemy 2 cells and stops on it; Green / Black dashes leave afterimages (every frame shown, 6 / 12 frames
            behind, below OAM 104, gone after); Red stuns and Black pushes a boss rival (1-6) and, in Battle, any
            other bomber (with its Louie), never a Normal Game teammate
+  voice    SB6's stage voices (features/voice_sfx.py: 1-1 to 1-5, 1-6; 1-2 good only): "start" between the stage start jingle and
+           the music, a random "good" with the clear jingle: the SFX and its key-on, every block in the ring before it
+           plays and none written over an unplayed one, played to its END, no main-loop pass lost, the cornered
+           sound's part B back in the ring afterwards; the cornered sound plays through part B to its end
   (every scenario: SB5's static graphics queue never writes an OBJ page a bomber / Louie / egg owns)
   menus    tools/menu_check.py (one player, the Normal Game menus: every accept / back sound plays to its end, each
            screen's music (stream tracks switched in place), the character selection's last confirmation shows
@@ -126,6 +130,30 @@ def _jobs():
                      (S.FX_A, S.louie_egg_scenarios(), S.louie_egg_eval(), f"{S.FX_A.name}_louie_egg")]
     out["louies"].append((S.LR_FX, S.louie_rival_scenarios(), S.louie_rival_eval(None), "s67_louie_rival"))
     out["louies"].append((S.LA_FX, S.louie_battle_scenarios(), S.louie_rival_eval(None), "s0D_louie_battle"))
+    from sb6.features import voice_sfx, crowd
+    b_lo = crowd.HIGH_LO - len(S._part_b())
+    out["voice"] = []
+    for st in voice_sfx.STAGES:
+        plan = S.voice_plan(st)
+        ring = (plan["ring"], plan["ring"] + 9 * plan["nr"] - 1)
+        out["voice"].append((S.voice_fx(st), S.voice_start_scenarios(ring), S.voice_eval("start", st, f"s{st:02X}_voice_start"),
+                             f"s{st:02X}_voice_start"))
+        if st == 0x67:                   # 1-6: no clear jingle (the next duel / the boss victory music); the intro
+            # holds the seats until the rival is in
+            fx = S.Fixture(f"s{st:02X}_4p_r700", stage=st, ready=700)
+            out["voice"].append((fx, S.corner_scenarios(b_lo), S.corner_eval(st, f"s{st:02X}_voice_corner"),
+                                 f"s{st:02X}_voice_corner"))
+            continue
+        out["voice"].append((S.portal_fx(st), S.voice_clear_scenarios(st, ring),
+                             S.voice_eval("clear", st, f"s{st:02X}_voice_clear"), f"s{st:02X}_voice_clear"))
+        if not plan.get("good_only"):    # (1-2: its song takes B's ARAM, the cornered sound plays part A only)
+            out["voice"].append((S.portal_fx(st), S.corner_scenarios(b_lo), S.corner_eval(st, f"s{st:02X}_voice_corner"),
+                                 f"s{st:02X}_voice_corner"))
+    end = S.voice_plan(voice_sfx.END_KEY)
+    for st in voice_sfx.END_STAGES:      # the boss stages' end: "good" with the boss clear jingle
+        out["voice"].append((S.stage_fx(st),
+                             S.voice_end_scenarios(st, (end["ring"], end["ring"] + 9 * end["nr"] - 1)),
+                             S.voice_eval("end", st, f"s{st:02X}_voice_end"), f"s{st:02X}_voice_end"))
     norm = {}
     for name, js in out.items():
         norm[name] = [(j[0], j[1], j[2], j[3] if len(j) > 3 else f"{j[0].name}_{name}") for j in js]

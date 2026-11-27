@@ -21,7 +21,10 @@ sequences and samples stay in ARAM while a stage is up:
   * the rest of the recording (B) just below the song's echo buffer ($DD00),
     or below the menu SFX samples ($B900) for a song that keeps them; A's
     last block loops into B (directory entry), or into the silent block when
-    the song leaves no room for B (the sound is cut short then).
+    the song leaves no room for B (the sound is cut short then). B has an even
+    number of blocks (a pair-wise ring: voice_sfx). World 1's SB1 songs keep
+    B's ARAM free (but 1-7's): B comes with the song (CORNER_TAB) or
+    back into SB6's stage voice ring after a voice (voice_sfx).
 
 The CPU side (asm/game_sfx.asm) uploads R with the sets and songs that leave
 it alone, sends the new commands only while R is in ARAM, and streams R back
@@ -232,6 +235,8 @@ def build(rom, sound_dir, cache_dir):
     else:
         raise BuildError(f"cornered.wav: {len(corner)} bytes at the lowest rate, {a_max + b_max} fit")
     a_len = min(len(corner), a_max)
+    if (len(corner) - a_len) // 9 % 2:
+        corner = corner[:-9]            # B in pairs of blocks (SB6's stage voices share its ARAM: voice_sfx)
     part_a, part_b = corner[:a_len], corner[a_len:]
     ticks = int(np.ceil(seconds / TICK_S)) + 2
     if ticks > 255:
@@ -290,7 +295,7 @@ def build(rom, sound_dir, cache_dir):
     if missing:
         raise BuildError(f"game SFX: stage songs {missing} leave no room")
     info = dict(r_bytes=len(blob), corner_note=note, corner_rate=hudson_pitch(note) * 32000 / 4096,
-                corner_seconds=seconds, a=len(part_a), b=len(part_b), b1=b1, b2=b2,
+                corner_seconds=seconds, a=len(part_a), b=len(part_b), b1=b1, b2=b2, part_b=part_b,
                 short=[s for s in range(tm.N_SONGS) if songs[s] & 1 and part_b and not songs[s] & 6],
                 death=len(death), enemy=len(enemy))
     return lists, songs, _sets(rom), info
@@ -307,6 +312,17 @@ def apply(rb, sound_dir, cache_dir):
     psize = 1 + 4 * len(portal_sfx.STAGES)
     ptab = rb.alloc("bulk", bytes([0xFF]) * psize, "World 1 portal sound: stage -> entries list (filled by sb1_music)")
     defs.update(PORTAL_TAB=f"${ptab:06X}", CMD_PORTAL=f"${portal_sfx.CMD:02X}")
+    from . import voice_sfx
+    vsize = voice_sfx.table_size()
+    vtab = rb.alloc("bulk", bytes([0xFF]) * vsize, "SB6 stage voices: per stage record (filled by sb1_music / voice_sfx)")
+    ctab = rb.alloc("bulk", bytes([0xFF]) * 16, "cornered part B in SB1 stages without voices (filled by sb1_music)")
+    defs.update(CORNER_TAB=f"${ctab:06X}", VS_HEAD=voice_sfx.HEAD, VS_LAT=voice_sfx.LAT, VS_BEHIND_START=voice_sfx.BEHIND_START, VS_BCLIP=len(voice_sfx.CLIPS))
+    defs.update(VOICE_TAB=f"${vtab:06X}", VS_REC=voice_sfx.REC, VS_CMD=f"${voice_sfx.CMD:02X}", VS_CMD_GOOD=f"${voice_sfx.CMD_GOOD:02X}",
+                VS_DELAY=voice_sfx.START_DELAY, VS_K=voice_sfx.K,
+                VS_END_SONG=f"${voice_sfx.END_SONG:02X}", VS_END_KEY=f"${voice_sfx.END_KEY:02X}",
+                VS_END_ST1=f"${voice_sfx.END_STAGES[0]:02X}", VS_END_ST2=f"${voice_sfx.END_STAGES[1]:02X}",
+                VS_AHEAD=voice_sfx.AHEAD, VS_BEHIND=voice_sfx.BEHIND, VS_TAIL=voice_sfx.TAIL, VS_CH=voice_sfx.CH,
+                VS_VSTART=voice_sfx.VSTART, VS_VACK=voice_sfx.VACK, VS_VEND=voice_sfx.VEND, VS_WAIT=voice_sfx.WAIT)
     for name, data in lists.items():
         defs[name] = f"${rb.alloc('bulk', data, f'game SFX: upload list {name}'):06X}"
     defs["SONGS"] = f"${rb.alloc('bulk', songs, 'game SFX: per song (R ok, B1, B2)'):06X}"
@@ -337,6 +353,8 @@ def apply(rb, sound_dir, cache_dir):
     info["syms"] = syms
     info["sb1m_song"] = defs["SB1M_SONG"]
     info["portal_table"] = (ptab, psize)
+    info["voice_table"] = vtab
+    info["corner_table"] = ctab
     return info
 
 
