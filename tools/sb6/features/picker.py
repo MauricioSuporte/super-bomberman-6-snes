@@ -66,6 +66,9 @@ WALK, WIN = 0x02, 0x20
 # drops 2 per frame (8 -> 4 frames per pose, measured in 1-1); standing (the
 # victory at the portal) it drops 1 per frame.
 ROW_DIV = {WALK: 2, WIN: 1}
+# characters whose column of CharacterSelectPortrait.png is not drawn yet:
+# the grid shows their front stand pose (bombers.FRONT) in their own colors
+POSE_PORTRAITS = {7}
 
 
 def _bgr(rgb):
@@ -120,6 +123,80 @@ def _portraits(n_chars):
             pair.append(img)
         out.append(pair)
     return out
+
+
+def _pose_portrait(ch, pal_path):
+    """Stand-in portrait of a character without a column in
+    CharacterSelectPortrait.png: its front stand pose (animation $47) at 1x
+    in the middle of the 32x32 cell, in its in-game colors. Returns the two
+    RGBA pictures (at rest, under the cursor: the same one) and the color
+    table in the palette pictures' format: rows 1-15 = palette entries
+    (column 0 a key color nobody paints, column s + 1 = color s), row 0 =
+    the cursor tint (row 7 of char<n>_pallete.png: the suit, as Unity's
+    BomberPortraitSelectionCursor does for CossackBomber)."""
+    cell, pals = ch["front"], ch["palettes"]
+    ys, xs = np.nonzero(cell)
+    if not len(xs) or xs.max() - xs.min() >= 32 or ys.max() - ys.min() >= 32:
+        raise BuildError(f"picker: char{ch['char']}'s pose $47 does not fit a 32x32 portrait")
+    x0 = (int(xs.min()) + int(xs.max()) + 1) // 2 - 16
+    y0 = (int(ys.min()) + int(ys.max()) + 1) // 2 - 16
+    tab = np.zeros((16, len(pals) + 1, 4), dtype=np.int32)
+    tab[..., 3] = 255
+    for i in range(16):
+        tab[i, 0, :3] = (1, 2, 3 + i)
+    for s_, pal in enumerate(pals):
+        for i, rgb in enumerate(pal[:15]):
+            tab[i + 1, s_ + 1, :3] = rgb
+    tint = _rgba(pal_path)
+    for s_ in range(len(pals)):
+        tab[0, s_ + 1, :3] = tint[7, min(s_ + 1, tint.shape[1] - 1), :3]
+    img = np.zeros((32, 32, 4), dtype=np.int32)
+    for y in range(32):
+        for x in range(32):
+            sy, sx = y0 + y, x0 + x
+            v = int(cell[sy, sx]) if 0 <= sy < 64 and 0 <= sx < 64 else 0
+            if v:
+                img[y, x] = tab[v, 0]
+    frame = _rgba(os.path.join(ART, "SkinSelectCursor.png"))[24:56, 0:32]
+    on = frame[..., 3] >= 128
+    img[on] = frame[on]
+    keys = [tuple(int(v) for v in tab[r, 0, :3]) for r in range(16)]
+    return [img, img.copy()], (keys, tab)
+
+
+def _fit_rest(rest, loose):
+    """The portraits at rest share STATIC_PALS: while they do not fit, the
+    least used color of a stand-in portrait (`loose`) that no painted
+    portrait has takes its closest color. Returns (grids, [(char, text)])."""
+    rest = [[row[:] for row in g] for g in rest]
+    merged = []
+    while True:
+        sets = [s for grid in rest for s in _tile_sets(grid)]
+        try:
+            _partition(sets, len(STATIC_PALS), "the portraits at rest")
+            return rest, merged
+        except BuildError:
+            pass
+        fixed = {v for c, g in enumerate(rest) if c not in loose for row in g for v in row} - {None}
+        best = None
+        for c in loose:
+            count = {}
+            for row in rest[c]:
+                for v in row:
+                    if v is not None and v not in fixed:
+                        count[v] = count.get(v, 0) + 1
+            for v, n in count.items():
+                others = ({w for row in rest[c] for w in row} | fixed) - {None, v}
+                near = min(others, key=lambda w: sum((a - b) ** 2 for a, b in zip(v, w)))
+                cost = n * sum((a - b) ** 2 for a, b in zip(v, near))
+                if best is None or cost < best[0]:
+                    best = (cost, c, v, near)
+        if best is None:
+            raise BuildError("picker: the portraits at rest need more than "
+                             f"{len(STATIC_PALS)} palettes of 15 colors")
+        _, c, v, near = best
+        rest[c] = [[near if w == v else w for w in row] for row in rest[c]]
+        merged.append((c, "%02X%02X%02X -> %02X%02X%02X" % (v + near)))
 
 
 def _logical(img, keys):
@@ -422,9 +499,17 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
     for c, ch in chars.items():
         if 1 <= c <= 8:
             chpal[c], chcol[c] = own_id + ch["pal0"], ch["colors"]
+            if chpal[c] > 0xFF:
+                raise BuildError(f"picker: char{c}'s first palette id ${chpal[c]:X} is past $FF")
 
     # characters of the grid: the portrait picture's columns, each must be inserted
     portraits = _portraits(10)
+    # characters after the painted portraits: their front pose until the artist draws one
+    own_tab = {}
+    while len(portraits) < 10 and len(portraits) in chars and len(portraits) in POSE_PORTRAITS:
+        c = len(portraits)
+        pair, own_tab[c] = _pose_portrait(chars[c], os.path.join(ROOT, "assets", "bombers", f"char{c}_pallete.png"))
+        portraits.append(pair)
     n = len(portraits)
     missing = [c for c in range(n) if c not in chars]
     if missing:
@@ -435,6 +520,8 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
 
     def table_of(c):
         """The palette picture of character c's portraits (26 or 44 columns, as its color picture)."""
+        if c in own_tab:
+            return own_tab[c], own_tab[c][1].shape[1]
         cols = 44 if chcol[c] > 25 else 26
         return keytabs[cols], cols
 
@@ -447,6 +534,9 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
         g = _logical(portraits[c][0], tab[0])
         rgbgrid = [[None if v is None else _resolve(v, 1, tab) for v in row] for row in g]
         rest.append(rgbgrid)
+    rest, merged = _fit_rest(rest, sorted(own_tab))
+    for c, text in merged:
+        print(f"picker: char{c}'s stand-in portrait at rest: {text}")
     rest_sets = [s for grid in rest for s in _tile_sets(grid)]
     pick, pals = _partition(rest_sets, len(STATIC_PALS), "the portraits at rest")
     rest_tiles = bytearray()
@@ -567,7 +657,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
     blob.add("pk_jobs", bytes(8 * 64))
     data = blob.data
     sizes = dict(pk_rtiles=len(rest_tiles), pk_glyphs=len(GLYPHS) * 32, pk_btiles=len(btiles))
-    addr = rb.alloc(["obj_f9", "obj_f8", "stream_ef", "obj_f7"], bytes(data), "picker: portraits, palettes, cursor art, tables")
+    addr = rb.alloc(["obj_f9", "obj_f8", "stream_ef", "obj_f7", "obj_f6", "obj_f2", "obj_f1", "obj_f0", "title_fc"], bytes(data), "picker: portraits, palettes, cursor art, tables")
     lab = {k: addr + v for k, v in blob.labels.items()}
     recs = bytearray()
     for vram, label, start, size, last in jobs:
@@ -593,6 +683,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
     reg = rb.regions["bulk"]
     defines.update({
         "E4": f"${reg.cursor:06X}", "OFFSEAT": f"${OFF_SEAT:02X}", "OWNID": f"${own_id:02X}",
+        "SEATID": f"${bombers.SEAT_ID:02X}",
         "PALS": str(bombers.PAL_IDS), "PALTAB": f"${bomber['paltab']:06X}", "PALN": str(bomber["pal_total"]),
         "N": str(n), "GCOLS": str(GRID_COLS), "LASTROW": str((n - 1) // GRID_COLS * GRID_COLS), "PALSFX": f"${title_music.PALETTE_SFX:02X}",
         "NSTATIC": str(len(static_cg)), "BN": str(len(blayout)), "BTILE": str(BRACKET_TILE),

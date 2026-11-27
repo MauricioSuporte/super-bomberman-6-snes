@@ -79,14 +79,15 @@ def _titled(path, title):
     return im
 
 
-def relabel(rom):
+def relabel(rom, chars=None):
     """Rewrites the label column of bomber_sb6.png and char<n>_sb6.png with the
-    current sequences (bomber_anims.txt, char<n>_anims.txt); the art is kept."""
+    current sequences (bomber_anims.txt, char<n>_anims.txt); the art is kept.
+    chars: only those characters' sheets (Bomberman's and the others untouched)."""
     anims = os.path.join(DIR, "bomber_anims.txt")
     base = bomber.load_scripts(anims) if os.path.exists(anims) else {}
-    paths = [(os.path.join(DIR, "bomber_sb6.png"), {})]
+    paths = [] if chars else [(os.path.join(DIR, "bomber_sb6.png"), {})]
     paths += [(char_files(c)[1], bomber.load_scripts(char_files(c)[3]) if os.path.exists(char_files(c)[3]) else {})
-              for c in CHARS]
+              for c in (chars or CHARS)]
     for path, own in paths:
         if not os.path.exists(path):
             continue
@@ -148,7 +149,7 @@ def check_chars(rom, ref):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["export", "check", "template", "labels"])
-    ap.add_argument("chars", nargs="*", type=int, help="template: characters (1-9)")
+    ap.add_argument("chars", nargs="*", type=int, help="template / labels: characters (1-9)")
     ap.add_argument("--force", action="store_true", help="template: overwrite char<n>_sb6.png / char<n>_pallete.png")
     ap.add_argument("--base", default=os.path.join(ROOT, "Super Bomberman 5 (USA).sfc"))
     ap.add_argument("--edit", action="store_true", help="export: also create the editable files (never overwrites)")
@@ -159,7 +160,7 @@ def main():
     br = bomber.BomberRom(rom)
 
     if args.command == "labels":
-        relabel(rom)
+        relabel(rom, args.chars)
         return
 
     if args.command == "template":

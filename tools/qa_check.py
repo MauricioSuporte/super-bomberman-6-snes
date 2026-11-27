@@ -8,7 +8,7 @@
     python tools/qa_check.py -v ...          every check, not only the failures
 
 Suites (tools/qa/suites.py has the scenarios and the ids they look for):
-  picker   each seat's character and colors in the stage = what it picked (7 characters, 2 starts)
+  picker   each seat's character and colors in the stage = what it picked (8 characters, 3 starts; char7 also on color 31)
   anims    walk, idle $15, punch / kick / lift-carry-throw in 4 directions, cornered $21, death $16, time up $1F,
            victory $20 + next stage, Louies (get on, ride 4 ways, thrown off, their palettes, 2 colors at once),
            and every frame of each bomber = a pose of its character's sheet (tools/qa/poses.py)
@@ -34,8 +34,8 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
   hud      SB6's HUD (features/hud.py): every stage's HUD lines on screen = each seat's stats (fire, speed, bombs,
            bomb type, power-ups) and the lives, the clock stopped (no time up), >= 50 fps; 1-1: items picked up change
            the cells, P3/P4 out of the stage: empty blocks until they join; the heads of the characters / colors chosen
-           (2 sets), the HUD during and after the pause menu; every stage again with 4 other characters / colors
-           (all 7 characters over World 1) and every seat given items; every stage, on foot and on Louies: the
+           (3 sets), the HUD during and after the pause menu; every stage again with 4 other characters / colors
+           (all 8 characters over World 1) and every seat given items; every stage, on foot and on Louies: the
            seats walk into the top row (two under the lives tab) and pass under the HUD (no sprite pixel in it)
   wmap     every stage with a pause: RETURN TO WORLD MAP -> YES, the map's 7 stage markers drawn from the
            marker sheet (SB5 loaded it with the stage's last sprite width: 1-3 showed stage tiles)
@@ -86,7 +86,7 @@ EXTERNAL = {"perf": ["tools/coop4_check.py"], "flames": ["tools/flame_check.py"]
 def _jobs():
     """suite -> [(fixture, scenarios, evaluator, tag)] (one Mesen process each)."""
     out = {}
-    for fx in (S.FX_A, S.FX_B):
+    for fx in (S.FX_A, S.FX_B, S.FX_C):
         out.setdefault("picker", []).append((fx, S.picker_scenarios(), S.picker_eval(fx)))
         sc = S.anim_scenarios()
         ev = S.anim_eval(fx)
@@ -116,7 +116,7 @@ def _jobs():
     out["hud"].append((S.out_fx(0x0D), S.hud_out_scenarios(), S.hud_out_eval, "s0D_4p_hud_out"))
     out["hud"].append((S.stage_fx(0x0D), S.hud_dead_scenarios(), S.hud_dead_eval, "s0D_4p_hud_dead"))
     out["hud"] += [(S.hud_var_fx(st), S.hud_var_scenarios(st), S.hud_var_eval(st), f"s{st:02X}_4p_hudvar") for st in S.STAGES]
-    for fx in (S.FX_A, S.FX_B):
+    for fx in (S.FX_A, S.FX_B, S.FX_C):
         out["hud"].append((fx, S.hud_pause_scenarios(), S.hud_pause_eval, f"{fx.name}_hud_pause"))
     for st in S.STAGES:             # sprites pass under the HUD, on foot and on Louies
         for m in (False, True):

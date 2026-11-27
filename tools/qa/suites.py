@@ -39,9 +39,11 @@ EXPLOSION, PIERCE = 0x2A, 0x34
 LOUIE_CRY = 0x48
 B_REMOTE, B_KICK, B_GLOVE, B_BOXING, B_PIERCE = 0x01, 0x02, 0x04, 0x08, 0x10
 
-# fixtures: the 7 characters of the picker grid in two Normal Game starts, 4 players, 1-1
+# fixtures: the 8 characters of the picker grid in three Normal Game starts, 4 players, 1-1 (FX_C: char7 twice,
+# P1 on color 31 = palette id $FC + seat, past the direct ids; P3 on color 4)
 FX_A = Fixture("w1_0D_A", picks=((0, 0), (1, 1), (2, 2), (5, 3)))
 FX_B = Fixture("w1_0D_B", picks=((3, 1), (4, 2), (6, 1), (0, 4)))
+FX_C = Fixture("w1_0D_C", picks=((7, 30), (1, 0), (7, 3), (2, 5)))
 QUAD = ((3, 3), (11, 3), (3, 9), (11, 9))          # each seat's own 5 x 5 arena in 1-1 (no shared flames)
 STAGES = {0x0D: "1-1", 0x11: "1-2", 0x18: "1-3", 0x10: "1-4", 0x17: "1-5", 0x67: "1-6", 0x68: "1-7"}
 
@@ -1298,10 +1300,10 @@ def hud_scenarios(stage):
 
 def hud_var_fx(stage):
     """Every stage with other characters / colors than stage_fx's: each stage 4 different characters of the
-    character select's 7 (all 7 over World 1) and colors spread over their first 25."""
+    character select's 8 (all 8 over World 1) and colors spread over their first 25."""
     i = list(STAGES).index(stage)
     return Fixture(f"s{stage:02X}_4p_hudvar", stage=stage, ready=120,
-                   picks=tuple(((i + 2 * s) % 7, (5 * i + 7 * s + 3) % 25) for s in range(4)))
+                   picks=tuple(((i + 2 * s) % 8, (5 * i + 7 * s + 3) % 25) for s in range(4)))
 
 
 def hud_var_scenarios(stage):

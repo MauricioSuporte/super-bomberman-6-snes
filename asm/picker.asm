@@ -76,6 +76,7 @@ hirom
 !shown   = $FC34        ; 4: pose in VRAM ($FF none)
 !half    = $FC38        ; 4: VRAM half shown (0 / 1)
 !epal    = $FC3C        ; 4: palette id in OBJ palette 0-3 + seat
+!sidx    = $7FFC48      ; 4: palette entry of id !SEATID + seat (asm/bombers.asm pal_lookup)
 !edim    = $FC40        ; 4: 1 = dimmed
 !stop    = $FC44        ; 4: 1 = the victory reached its last pose
 !oi      = $FC50        ; word: OAM offset of the next sprite
@@ -406,8 +407,9 @@ unchosen:
     plb
     rts
 
-; A = character (0-8), !s1 = color: A = palette id of set 0 (chpal + color,
-; asm/bombers.asm; chpal 0 = the cartridge's).
+; A = character (0-8), !s1 = color, X = seat: A = palette id of set 0 (chpal
+; + color, asm/bombers.asm; chpal 0 = the cartridge's). Past id !SEATID-1 the
+; id is !SEATID + seat and the entry goes to !sidx + seat. M/X 8-bit.
 palid:
     phx
     tax
@@ -415,7 +417,28 @@ palid:
     beq +
     clc
     adc.l !s1
+    bcs .wrap
+    cmp.b #!SEATID
+    bcs .far
     plx
+    rts
+.wrap:                              ; entry = id - !OWNID, the id past $FF
+    clc
+    adc.b #$100-!OWNID
+    bra .seat
+.far:
+    sec
+    sbc.b #!OWNID
+.seat:                              ; past the direct ids: id !SEATID + seat, its entry in !sidx
+    plx
+    cmp.l !sidx,x
+    beq ++
+    sta.l !sidx,x
+    lda #$00
+    sta.l !SL+(!epal-$FC00),x       ; (the player row sends the palette again)
+++  txa
+    clc
+    adc.b #!SEATID
     rts
 +   lda.l $80BB4E,x
     clc
@@ -1639,9 +1662,16 @@ upload:
     lda #$0081
     bra .src
 .own:
-    sec
+    cmp.w #!SEATID
+    bcc +
+    sbc.w #!SEATID                  ; ids !SEATID + seat: the entry in !sidx
+    tax
+    lda.l !sidx,x
+    and #$00FF
+    bra ++
++   sec
     sbc.w #!OWNID
-    cmp.w #!PALN
+++  cmp.w #!PALN
     bcs .bad
     asl a
     tax

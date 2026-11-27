@@ -61,9 +61,18 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
   count). The grid has one cell per column of
   `assets/picker/CharacterSelectPortrait.png` (224x64: row 1 at rest, row 2
   under the cursor; chars 0-6 today): a new character needs a new column
-  there, or it stays out of the grid (chars 7-9). Portrait colors come from
+  there, or a stand-in in `picker.POSE_PORTRAITS` (char7: its front stand
+  pose `$47`, in-game colors), or it stays out of the grid (chars 8-9).
+  Palette ids past `$FB` (more than 162 colors in all) go through the
+  per-seat ids `$FC`+seat (docs/ROM_MAP.md "Bomber palette ids").
+  `bombers.WALK_AT_REST`: characters whose stand animations play the walk
+  (char7, Unity's CossackBomber); test with `TEST=rest`. Portrait colors come from
   `SkinSelectPallete_26.png` (26-column palettes) or `_44.png` (44 columns);
-  the cursor tint is row 0 of that picture at the skin's column. The row of
+  the cursor tint is row 0 of that picture at the skin's column (a stand-in of
+  `POSE_PORTRAITS`: row 7 of char<n>_pallete.png, the suit, as Unity's cursor
+  does for CossackBomber). HUD head: `assets/hud/portraits/<Unity name>/<skin>.png`
+  (Unity's `<Name><skin>_Portrait_0.png`) + `hud.PORTRAITS` (the bank `$C8`
+  holding them has ~1 KB left: 256 bytes + 21 per skin each). The row of
   chosen characters at the top uses the character's animations 02 (walk
   down, while choosing) and 20 (victory, once, holds its last pose): each
   pose must fit 8 sprites of 16x16 (the build says which pose does not).

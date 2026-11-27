@@ -42,6 +42,14 @@ VARIANTS = 6                 # color variants of each of them (palette ids $80:B
 XLAT_IDS = 0x50
 LIFT_TABLE = 0xC5242C        # height of the bomb lifted with the Power Glove, per character ($C5:2403)
 CARRY_ANIMS = range(0x2F, 0x3B)   # walking / standing with the bomb lifted
+SEAT_ID = 0xFC               # ids $FC-$FF: the palette entry chosen by seat 0-3 (picker, past the direct ids)
+SEAT_IDX = 0x7FFC48          # 4 bytes: those entries (docs/FREE_SPACE.md, picker block)
+WALKS, STANDS = 0x01, 0x46   # walk / stand animations, d = 0 right, 1 down, 2 left, 3 up
+FRONT = 0x47                 # standing, facing the screen (portrait of a character without one)
+# Characters that keep walking in place when they stop (SB6 Unity's
+# MovementController.AnimateFootstepsAtRest, set for CossackBomber): their
+# stand animations play the walk's poses; SB5's idle $15 still comes later.
+WALK_AT_REST = {7}
 
 
 def _carry_top(br, cells):
@@ -279,6 +287,7 @@ def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, r
         except ValueError as e:
             raise BuildError(f"char{c}: {e}")
         info["stand"] = cells[(STAND, dict(brc.poses())[STAND][0])]
+        info["front"] = cells[(FRONT, dict(brc.poses())[FRONT][0])]
         info["pick_anims"] = _pick_anims(brc, cells)
         info["palettes"] = palettes
         # the lifted bomb sits as far above the head as on Bomberman's
@@ -302,6 +311,22 @@ def _characters(rb, base_rom, sheets, bdir, charmap, charanim, all_pals, xlat, r
     return done
 
 
+def _rest_walk(script):
+    """A walk script played standing: a walking bomber runs 2 script steps
+    per frame (`$0800,obj`), a standing one 1, so every pose lasts half as
+    long (rounded alternately, the cycle keeps its length)."""
+    out, carry = bytearray(), 0
+    for i in range(0, len(script) - 2, 2):
+        m, f = script[i], script[i + 1]
+        if m == 0 and f == 255:          # (hide at the end: kept)
+            out += script[i:i + 2]
+            continue
+        half = (f + carry) // 2
+        carry = (f + carry) % 2
+        out += bytes([m, max(1, half)])
+    return bytes(out) + script[-2:]
+
+
 def _insert_char(rb, base_rom, sheets, brc, cells, edited, c, ref):
     """Tables of character c laid out like Bomberman: his `[sheet, row]` and
     pieces for the animations not in `edited`, new tiles for the others."""
@@ -317,6 +342,14 @@ def _insert_char(rb, base_rom, sheets, brc, cells, edited, c, ref):
     new = bytearray(ref["info"]["ct"])
     for a, s in anim_strip.items():
         new[2 * (a - 1):2 * a] = bytes([first_sheet + s // STRIPS_PER_SHEET, 2 * (s % STRIPS_PER_SHEET)])
+    at_rest = c in WALK_AT_REST
+    if at_rest:
+        # standing = the walk of the same facing: its strip (`$C4:4318` sends it when the bomber stops)
+        if set(streamed) & {WALKS + d for d in range(4)}:
+            raise BuildError(f"{name}: walks in place when standing, but its walk is streamed pose by pose")
+        for d in range(4):
+            w, st = WALKS + d, STANDS + d
+            new[2 * (st - 1):2 * st] = new[2 * (w - 1):2 * w]
     rb.patch(ct, old, bytes(new), f"{name}: sheet/row of each animation (Bomberman's layout)")
 
     ids0 = {(a, k): m for a, maps in ref["br"].poses() for k, m in enumerate(maps)}
@@ -337,8 +370,11 @@ def _insert_char(rb, base_rom, sheets, brc, cells, edited, c, ref):
     blobs = [blob_of.get(m, blobs0[m - 1] if m <= len(blobs0) else bomber.encode_mapping([], 0))
              for m in range(1, count + 1)]
     maptab = _table(rb, blobs, f"{name}: sprite mappings (Bomberman's layout)")
-    animtab = _table(rb, [brc.script_bytes(a) for a in range(1, bomber.ANIMS + 1)],
-                     f"{name}: animation scripts (Bomberman's sequences)")
+    scripts = [brc.script_bytes(a) for a in range(1, bomber.ANIMS + 1)]
+    if at_rest:
+        for d in range(4):
+            scripts[STANDS + d - 1] = _rest_walk(scripts[WALKS + d - 1])
+    animtab = _table(rb, scripts, f"{name}: animation scripts (Bomberman's sequences)")
     return dict(maptab=maptab, animtab=animtab, strips=len(strips), mappings=mappings, stream=stream,
                 streamed=sorted(streamed), count=count)
 
@@ -385,9 +421,15 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
 
     # every palette: word table + data in one bank (ids OWN_ID + n; the characters' through xlat)
     paltab = 0
-    if OWN_ID + len(all_pals) > 0x100:
-        raise BuildError(f"{len(all_pals)} bomber palettes; the ids ${OWN_ID:02X}-$FF hold {0x100 - OWN_ID} "
+    # ids OWN_ID..SEAT_ID-1 name the table's entries; the entries past them
+    # are only reached through the per-seat ids SEAT_ID + seat (the picker
+    # keeps the seat's entry at SEAT_IDX, asm/bombers.asm pal_lookup)
+    if len(all_pals) > 0x100:
+        raise BuildError(f"{len(all_pals)} bomber palettes; the table holds 256 "
                          f"(characters with the same palette picture share them when their colors fit together)")
+    far = [c["char"] for c in chars if OWN_ID + c["pal0"] + min(c["colors"], VARIANTS) > SEAT_ID]
+    if far:
+        raise BuildError(f"bomber palettes: the stock colors of characters {far} (Battle) need ids past ${SEAT_ID - 1:02X}")
     if all_pals:
         start = rb.regions["bulk"].cursor
         data, pos = bytearray(), (start & 0xFFFF) + 2 * len(all_pals)
@@ -422,6 +464,7 @@ def apply(rb, base_rom, sheets, sheet_path, palette_path=None, scripts_path=None
                                                 "XLAT": f"${xtab:06X}", "CHARSTREAM": f"${cstab:06X}",
                                                 "PALS": str(PAL_IDS if palettes else 0),
                                                 "OWNID": f"${OWN_ID:02X}",
+                                                "SEATID": f"${SEAT_ID:02X}", "SEATIDX": f"${SEAT_IDX:06X}",
                                                 "BGTAB": f"${menu_bg['table']:06X}" if menu_bg else "0",
                                                 "CYCSET": str(menu_bg["cycle_set"] if menu_bg else 0),
                                                 "CYCID": str(menu_bg["cycle_id"] if menu_bg else 0),

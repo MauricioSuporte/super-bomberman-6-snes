@@ -160,8 +160,15 @@ o build manda cada pose separada para a VRAM na hora em que ela aparece; aí o
 limite passa a ser por pose: 16 tiles (até 32x32 px). O `check` lista essas
 animações. Para aparecer na grade
 da seleção o personagem precisa de uma coluna em
-`assets/picker/CharacterSelectPortrait.png` (hoje 7: personagens 0-6; os 7-9
-ficam de fora da grade). Na fileira de cima da seleção cada pose das
+`assets/picker/CharacterSelectPortrait.png` (hoje 7: personagens 0-6) ou
+estar em `POSE_PORTRAITS` (`tools/sb6/features/picker.py`, hoje o 7): aí a
+grade mostra a pose parado de frente (animação 47) até o retrato ficar pronto,
+com o cursor na cor da 8ª linha do `charN_pallete.png` (a roupa, como o
+cursor do Cossack no Unity); os 8-9 ficam de fora da grade. A cabeça na HUD
+das fases vem de `assets/hud/portraits/<Nome>/<cor>.png` (o `Portrait_0` de
+cada skin do Unity; o Cossack usa as skins 1-51, as da forma pequena). O personagem 7 (Cossack Bomber) continua
+andando no lugar quando para (`WALK_AT_REST` em `tools/sb6/features/bombers.py`,
+como no Unity) e depois de um tempo faz a festa 15 como os outros. Na fileira de cima da seleção cada pose das
 animações 02 e 20 tem que caber em 8 sprites de 16x16.
 A altura da bomba erguida com a luva azul (Power Glove) segue a cabeça de
 cada personagem: o build compara o topo das poses com a bomba (animações
@@ -171,6 +178,7 @@ cada personagem: o build compara o topo das poses com a bomba (animações
 python tools/bomber_sheet.py export --edit   # recria as referências *_sb5.png e os editáveis que não existirem
 python tools/bomber_sheet.py template 3 --force   # volta o personagem 3 para a cópia do Bomberman
 python tools/bomber_sheet.py labels         # reescreve a coluna de rótulos com as sequências atuais
+python tools/bomber_sheet.py labels 1 7     # só nas folhas dos personagens 1 e 7
 python tools/bomber_sheet.py check           # confere as folhas sem gerar a ROM
 python tools/build.py                        # insere as folhas no jogo
 ```

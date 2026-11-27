@@ -129,8 +129,9 @@ HEAD_TILES = ((0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3), (0xF4, 0xF5, 0xF6, 0xF7, 0xF
 HEAD_BG = 4
 HEAD_RECOLOR = {2: {3: 15, 11: 14, 2: 13}, 3: {3: 11, 11: 10, 2: 9}}
 # characters of the character select (asm/picker.asm choice 1-7) -> SB6's portrait folders
-PORTRAITS = ["Bomberman", "LadyBomber", "TinyBomber", "Bookworm", "KamikazeBomber", "MechaBomber", "MinerBomber"]
-HEAD_SHIFTS = 2                         # templates per character: P1's, seats 2-4's (the same window now)
+PORTRAITS = ["Bomberman", "LadyBomber", "TinyBomber", "Bookworm", "KamikazeBomber", "MechaBomber", "MinerBomber",
+             "CossackBomber"]
+HEAD_SHIFTS = 1                         # templates per character (every seat draws the same window)
 HEAD_GAP = 1                            # see-through columns at a head's right (blue up to the grid's line)
 HEAD_MAP = 20                           # entries of a skin's class map (class 0 = see-through)
 HEAD_REC = 1 + HEAD_MAP                 # tile palettes (bit per tile), map: (palette 1 entry << 4) | palette 0 entry
@@ -263,11 +264,11 @@ def default_heads(base_rom):
 
 
 def portrait_heads():
-    """[((template, template of seats 2-4), [per skin: [class -> (r, g, b)]])] per character of the character
+    """[((template,), [per skin: [class -> (r, g, b)]])] per character of the character
     select: 16 x 16 classes of SB6's HUD portrait (from the head's top), the head in columns 0-14 (centered there,
     a wider one cut evenly on both sides) and column 15 see-through: at least 1 pixel of blue between the head
     and the grid's left line (HEAD_GAP) in every seat; classes = pixels with the same color in every skin (0 =
-    see-through). Both templates are the same window (seats 2-4 used to be one pixel left of P1's)."""
+    see-through). One template for every seat (seats 2-4 used to have their own, one pixel left of P1's)."""
     out = []
     for name in PORTRAITS:
         d = os.path.join(ASSETS, "portraits", name)
@@ -318,8 +319,7 @@ def _lab_err(rgb, c):
 
 
 def head_record(tpls, cols, p1, shift=0):
-    """A skin's record (HEAD_REC bytes: tile palettes of template 0 in bits 0-3, of template 1 in bits 4-7, the
-    class map) and the 4 tiles [(palette, 8 x 8 entries)] of template `shift` as asm/hud.asm draws them."""
+    """A skin's record (HEAD_REC bytes: tile palettes of the template in bits 0-3, the class map) and the 4 tiles [(palette, 8 x 8 entries)] of template `shift` as asm/hud.asm draws them."""
     pals = ((HUD_P0, P0_USE), (p1, P1_USE))
 
     def near(c, pal, use):
@@ -653,7 +653,7 @@ def seat_head(t, seat, picks=None):
         c, s = picks[2 + seat] - 1, picks[8 + seat]
         if 0 <= c < len(t["heads"]) and s < t["head_counts"][c]:
             tpls, cols = t["heads"][c]
-            _, tiles = head_record(tpls, cols[s], t["p1"], 1 if seat else 0)
+            _, tiles = head_record(tpls, cols[s], t["p1"])
             return sum(p << i for i, (p, _) in enumerate(tiles)), [e for _, e in tiles]
     return 0, [t["bg2_pics"][T_HEAD + 4 * seat + i] for i in range(4)]
 

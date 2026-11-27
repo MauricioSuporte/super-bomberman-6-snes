@@ -78,7 +78,7 @@ REC = 38                    # VOICE_TAB record: stage, entries list, head list, 
 FPS = 60.0988
 CACHE = os.path.join(tm.ROOT, "build", "cache")
 REGIONS = ["free_db_b", "free_dc_zone1", "free_e3_options", "free_d3", "free_d4_options", "free_db_a", "free_d6",
-           "obj_f6", "obj_f2", "free_e1_options2", "c2"]
+           "obj_f6", "obj_f2", "free_e1_options2", "c2", "objmap3"]
 
 
 def _mult():

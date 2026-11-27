@@ -8,6 +8,8 @@
 --   (A = animation), so any animation can be watched standing (300 frames).
 -- TEST=lift: gives the Power Glove ($7E4ED5 bit 2), drops a bomb, lifts it (A held), walks down with it
 --   and stands (300 frames); screenshots WALK_OUT_lift<n>.png every 50 frames.
+-- TEST=rest: walks right 24 frames, then stands (400 frames from T0 = 900): a character that walks in place
+--   (bombers.WALK_AT_REST) shows its walk poses in the stand animation $46, then the idle $15.
 -- env: SB6_LUA (this folder, default D:/super-bomberman-6-snes/tools/mesen), WALK_OUT, T0 (default 900),
 -- PLAN, STAGE_WAIT (> T0 + 800, e.g. 5000).
 local DIR = os.getenv("SB6_LUA") or "D:/super-bomberman-6-snes/tools/mesen"
@@ -20,8 +22,9 @@ local DIRS = {"right", "down", "left", "up", "right", "down", "left", "up"}
 local TRAP = os.getenv("TEST") == "trap"
 local FORCE = os.getenv("TEST") == "anim" and tonumber(os.getenv("ANIM") or "20", 16)
 local LIFT = os.getenv("TEST") == "lift"
+local REST = os.getenv("TEST") == "rest"
 if TRAP or FORCE or LIFT then T0 = 420 end
-local LEN = (TRAP or FORCE or LIFT) and 300 or 8*100
+local LEN = (TRAP or FORCE or LIFT) and 300 or REST and 400 or 8*100
 if FORCE then
   emu.addMemoryCallback(function()
     local s = emu.getState()
@@ -40,6 +43,8 @@ emu.addEventCallback(function()
   elseif TRAP then
     if st and n-st >= T0 and n-st < T0+6 then emu.setInput({a = true}, 0) end
   elseif FORCE then
+  elseif REST then
+    if st and n-st >= T0 and n-st < T0+24 then emu.setInput({right = true}, 0) end
   elseif st and n-st >= T0 and n-st < T0+LEN then
     local t = {} t[DIRS[math.floor((n-st-T0)/100)+1]] = true emu.setInput(t, 0)
   end
@@ -49,6 +54,12 @@ emu.addEventCallback(function() n = n+1
   if not st and m >= 0x0D and m < 0x74 then st = n end
   if TRAP and st and n-st == T0-10 then
     emu.write(0x1052+0x12, 0x30, emu.memType.snesWorkRam) emu.write(0x1052+0x21, 0x30, emu.memType.snesWorkRam)
+  end
+  if REST and st and n-st >= T0-10 then     -- enemies held by the stop watch (they would walk into him)
+    emu.write(0x0E20, 0xFF, emu.memType.snesWorkRam) emu.write(0x0E21, 0xFF, emu.memType.snesWorkRam)
+  end
+  if REST and st and n-st == T0+60 and os.getenv("IDLE_AT") then   -- frames standing: the idle comes sooner
+    emu.write(0x17E2, tonumber(os.getenv("IDLE_AT")), emu.memType.snesWorkRam)
   end
   if LIFT and st and n-st == T0-10 then
     emu.write(0x4ED5, emu.read(0x4ED5, emu.memType.snesWorkRam) | 4, emu.memType.snesWorkRam)

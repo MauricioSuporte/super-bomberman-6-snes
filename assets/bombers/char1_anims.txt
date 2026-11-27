@@ -1,0 +1,4 @@
+# Sequencias do char1 diferentes das do bomber_anims.txt (mesmo formato).
+#   animacao : quadros por pose : sequencia
+
+20 : 8 : 1 3 2 3                      # vitoria

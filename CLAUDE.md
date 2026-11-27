@@ -56,7 +56,10 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   BombermanPallete.png's format, `char<n>_anims.txt` overrides
   bomber_anims.txt per animation. Every character with a sheet is inserted
   (in game and in the picker grid), even one still equal to Bomberman's
-  (then it costs only its tables); animations equal to his reuse his `[sheet, row]` and pieces,
+  (then it costs only its tables; the grid needs a portrait column or, like char7 for now, a stand-in
+  of its pose `$47` in `picker.POSE_PORTRAITS`); char7 = Cossack Bomber (small only), whose stand
+  animations play its walk (`bombers.WALK_AT_REST`, Unity's AnimateFootstepsAtRest) until the idle `$15`;
+  palette ids past `$FB` are per seat (`$FC`+seat, docs/ROM_MAP.md); animations equal to his reuse his `[sheet, row]` and pieces,
   edited ones get new tiles. Palettes equal to his share his ids `$5A + n`.
   Animations over 32 tiles are streamed pose by pose (<= 16 tiles each,
   double-buffered page, `bomber_stream` / `stream_nmi` in asm/bombers.asm).

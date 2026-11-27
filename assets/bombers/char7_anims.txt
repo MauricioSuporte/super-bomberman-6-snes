@@ -1,0 +1,9 @@
+# Sequencias do char7 diferentes das do bomber_anims.txt (mesmo formato).
+#   animacao : quadros por pose : sequencia
+#
+# Parado, ele continua andando no lugar (Unity: CossackBomber,
+# AnimateFootstepsAtRest): o build faz as animacoes 46-49 tocarem as
+# caminhadas 01-04 (WALK_AT_REST em tools/sb6/features/bombers.py).
+
+15 : 8 : 1 2 3 4 5 4 3 2              # festa baixo (ping pong de 1 a 5)
+20 : 8 : 1 2 3 4 4                    # vitoria (loop 1 2 3 4 4)

@@ -132,8 +132,14 @@ script accumulator (`61` = add).
   `$0B` (gone, below), the Normal menu 3, the attract demos `$0D`/`$74`; the mode byte changes
   when the fade-out starts.
 * Bomber palette ids: the cartridge's set 0 ends at `$59`; the SB6
-  palettes are ids `$5A`+ (`OWN_ID`, `pal_lookup` / picker `upload`), room
-  for 166 palettes. Characters with their own key colors
+  palettes are ids `$5A`+ (`OWN_ID`, `pal_lookup` / picker `upload`): ids
+  `$5A-$FB` name table entries 0-161 directly; the table holds up to 256
+  (char7 has 51 colors) and an entry past them is reached through the
+  per-seat ids `$FC` + seat, whose entry the picker's `palid` keeps in
+  `$7F:FC48` + seat (`SEAT_ID` / `SEAT_IDX` in features/bombers.py; set at
+  every stage spawn by `pick_apply`, the player row resends its palette when
+  the entry changes). Battle's stock ids (xlat, first 6 colors) must stay
+  direct. Characters with their own key colors
   (`char<n>_pallete.png` column 0 differs from Bomberman's) get their own
   15-color layout; characters with the same picture share it (and its
   palette entries) when their colors fit together.
@@ -554,8 +560,11 @@ script accumulator (`61` = add).
   once it is ready (state 2). The close op hides all 128 OAM entries (the
   builder only hides its own).
 * Grid: one cell per character with a column in
-  `CharacterSelectPortrait.png` (7, chars 0-6; chars 7-9 are left out), 5
-  per row. Resting portraits use the default color (BG palettes 3/4/7,
+  `CharacterSelectPortrait.png` (7, chars 0-6), then the characters of
+  `picker.POSE_PORTRAITS` (char7) with a stand-in: their front stand pose
+  (animation `$47`) at 1x in their in-game colors; at rest its colors that
+  do not fit the 3 shared palettes take their closest (the build lists
+  them); chars 8-9 are left out. 5 per row. Resting portraits use the default color (BG palettes 3/4/7,
   shared); the cell under the cursor is swapped by the NMI to its cursor
   face (16 tiles + 16 map words per cell) in BG palettes 5/6, whose 30
   colors are chosen per character and color (`pk_hcol`). Cursor: OBJ
@@ -2091,8 +2100,9 @@ The full list with sizes is generated in `build/sb6.map`.
   blue before the grid in every seat, checked by the build); head colors are the Lab
   nearest of palettes 0 / 1 (an RGB distance turned greys into the items' greens). Code and tables: bank `$C8`.
 * Character select choices (`$7F:FF02+seat` = character + 1, `$7F:FF08+seat` = color) -> heads: SB6's HUD
-  portraits (`assets/hud/portraits/<character>/<skin>.png`, skin = color + 1), a 16 x 16 window per character
-  with one color class per pixel and a 21-byte record per skin.
+  portraits (`assets/hud/portraits/<character>/<skin>.png`, skin = color + 1; char7 = CossackBomber's skins
+  1-51, the small form), a 16 x 16 window per character (one 256-byte template for every seat: seats 2-4 had a
+  second one, equal since the seats share the window) with one color class per pixel and a 21-byte record per skin.
 * 1-7's darkness (`asm/sb1_enemies.asm` `hdma_build`): window 1 = whole lines 0-23 (`!CHUDL`), then x 116-139
   on lines 24-31 (`!CTABL`, the tab). Note: `!CTAB` is the clown's picture table (passed by the build): a define
   with that name in the asm replaced it and froze 1-7.
@@ -2108,6 +2118,11 @@ The full list with sizes is generated in `build/sb6.map`.
 * Idle: `$17E2+seat` counts frames standing (input resets it); SB5 sets `$15` when it runs out (~210
   frames). 1-7's `start_up` (asm/world1.asm) zeroes it while the intro holds the pads: seat 2 comes out
   ~40 frames before the others and showed `$15` for 4 frames at stage frame ~412.
+* Walking in place (char7, Cossack Bomber; Unity `AnimateFootstepsAtRest`): `bombers.WALK_AT_REST` makes its
+  stand animations `$46-$49` the walk `$01-$04` (same `[sheet, row]`, the walk's mappings, every pose half as
+  long: a standing bomber runs 1 script step per frame, a walking one 2), so it keeps its feet moving at the
+  walk's pace until SB5's idle `$15` (its own 1 2 3 4 5 4 3 2). The stage start pose `$46-$49` walks in place
+  too. Test: `walk_capture.lua` `TEST=rest` (`IDLE_AT=200` brings the idle sooner).
 * Sounds (command sent by `$C0:0E7F`): bomb `$26`, kick `$27`, punch `$28`, bounce `$29` (once per
   landing, again on each taken cell it hops over), explosion `$2A` + fire range (request group 2 id `$0A`
   + range), pierce bomb's explosion `$34` + range (id `$14` + range), item `$3F`, lift = group 3 id 2

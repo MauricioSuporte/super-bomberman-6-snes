@@ -612,7 +612,8 @@ bomber_palcount:
 ; Ids !OWNID + n of set 0 (the cartridge's end at $59) are the bomber palettes of BombermanPallete.png
 ; (column n + 1), table !PALTAB (words, data in the table's bank). The other
 ; characters' palettes follow them in the table: !XLAT (byte per id 1-$50,
-; 0 = stock) is the table entry + 1 that replaces a stock id. Replaces
+; 0 = stock) is the table entry + 1 that replaces a stock id. Ids !SEATID +
+; seat (0-3) are the entry in !SEATIDX + seat (picker: colors past $FB). Replaces
 ; `LDA #$81 / STA $AA / REP #$30` at $C0:01FA; Y = id - 1, X free.
 ;
 ; Set 3 ids 14 (Normal menu, in mode 3) and 70 (Battle's picker, while the
@@ -693,6 +694,8 @@ endif
     DEC A
     BRA .tab
 .own
+    CPY.b #!SEATID-1
+    BCS .seat
     TYA
     SEC
     SBC.b #!OWNID-1
@@ -706,6 +709,13 @@ endif
     STA $AA
 +   REP #$30
     RTL
+.seat                               ; ids !SEATID + seat: the entry the picker chose for that seat
+    TYA
+    SEC
+    SBC.b #!SEATID-1
+    TAX
+    LDA.l !SEATIDX,X
+    BRA .tab
 
 print "SYM end_e4 ", hex(pc())
 print "SYM bomber_palcount ", hex(bomber_palcount)

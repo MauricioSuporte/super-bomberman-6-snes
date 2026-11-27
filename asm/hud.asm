@@ -697,31 +697,15 @@ build_heads:
     adc.l hchr,x
     sta.l !hr
     tax
-    lda.l !t1                   ; template = HTPL + (2c + (seat > 0)) * 256: seats 2-4 1 pixel left
+    lda.l !t1                   ; template = HTPL + c * 256 (every seat the same)
     and.w #$00FF
-    asl a
-    sta.l !t2
-    lda.l !hs
-    and.w #$00FF
-    beq +
-    lda.w #1
-+   clc
-    adc.l !t2
     xba
     clc
     adc.w #!HTPL&$FFFF
     sta.l !bs
     sep #$20
-    lda.l !hs                   ; tile palettes: bits 0-3 (P1's template), 4-7 (seats 2-4)
-    beq +
-    lda.l !DATABANK,x
-    lsr a
-    lsr a
-    lsr a
-    lsr a
-    bra ++
-+   lda.l !DATABANK,x
-++  sta.l !hb
+    lda.l !DATABANK,x           ; tile palettes: bits 0-3
+    sta.l !hb
     pha
     rep #$20
     lda.l !hs
