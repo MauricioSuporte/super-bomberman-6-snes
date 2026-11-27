@@ -37,6 +37,8 @@ Suites (tools/qa/suites.py has the scenarios and the ids they look for):
            (2 sets), the HUD during and after the pause menu; every stage again with 4 other characters / colors
            (all 7 characters over World 1) and every seat given items; every stage, on foot and on Louies: the
            seats walk into the top row (two under the lives tab) and pass under the HUD (no sprite pixel in it)
+  wmap     every stage with a pause: RETURN TO WORLD MAP -> YES, the map's 7 stage markers drawn from the
+           marker sheet (SB5 loaded it with the stage's last sprite width: 1-3 showed stage tiles)
   portal   World 1's exit portal (1-1 to 1-5): none while the middle cell holds a soft block, then SB1's portal
            there once every enemy is dead: appears (off / blank 3 frames x5, off 30), blinks on 3 / off 3, SB5's
            portal sound once, the cell becomes a portal, a player on it leads to the next stage
@@ -121,6 +123,8 @@ def _jobs():
             fx = S.top_fx(st, m)
             out["hud"].append((fx, S.hud_top_scenarios(st), S.hud_top_eval(st, m), f"{fx.name}_hud_top"))
     out["chameleons"] = [(fx, S.cham_scenarios(), S.cham_eval(fx)) for fx in S.CHAM_FX]
+    out["wmap"] = [(S.stage_fx(st), S.wmap_scenarios(st), S.wmap_eval(st), f"s{st:02X}_4p_wmap")
+                   for st in S.PAUSE_STAGES]
     out["portal"] = [(S.portal_fx(st), S.portal_scenarios(st), S.portal_eval(st), f"s{st:02X}_portal")
                      for st in S.PORTAL_NEXT]
     out["items"] = [(S.stage_fx(st), S.items_scenarios(), S.items_eval(st), f"s{st:02X}_4p_items")

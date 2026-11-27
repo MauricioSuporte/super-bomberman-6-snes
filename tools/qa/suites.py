@@ -2827,3 +2827,52 @@ def corner_eval(stage, tag):
         res.ok(f"{sn} cornered: nothing written into B meanwhile", not writes, f"{writes[:3]}")
         return res
     return ev
+
+
+# ---------------------------------------------------------------- pause -> RETURN TO WORLD MAP: the stage markers
+# SB5's marker op ($C2:0EBD) loaded the marker sheet with the width of the stage's last sprite load ($0AE4): after
+# 1-3 (6 columns) the open stages' flags (OBJ tile 12) showed stage tiles (features/world1.py markers: $C0:1F03).
+# Each stage: pause, RETURN TO WORLD MAP, YES; on the map every marker sprite (OAM palette 1, 8x8) must use OBJ
+# columns the map's allocator gave out ($7E:2FAA: 16 columns per 1 KB page, $FF free).
+WMAP_MAP = 270                      # frames from Start to a world map with its markers up (~235 measured)
+
+
+def wmap_scenarios(stage):
+    p = 910 if stage == 0x68 else PAUSE_FROM            # (1-7's intro holds the players: as pierce_scenarios)
+    n = p + WMAP_MAP
+    st = [[p, "pad", 0, "start", 3], [p + 40, "pad", 0, "down", 3], [p + 60, "pad", 0, "start", 3],
+          [p + 80, "pad", 0, "down", 3], [p + 100, "pad", 0, "start", 3]]
+    st += [[k, "read", "m", 0x1031, 1] for k in range(p, n, 10)]
+    st += [[n - 2, "read7e", "omap", 0x2FAA, 256], [n - 2, "readoam", "oam"]]
+    return [Scenario("wmap", n, steps=st)]
+
+
+def wmap_eval(stage):
+    name = STAGES[stage]
+
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs["wmap"]
+        modes = [v[0] for _, v in l.values.get("m", [])]
+        res.ok(f"{name}: pause -> RETURN TO WORLD MAP -> YES leads to the map (mode 3)", 3 in modes,
+               f"modes {sorted(set(modes))}")
+        omap, o = l.value("omap"), l.value("oam")
+        if omap is None or o is None:
+            res.ok(f"{name}: world map dumped", False, "")
+            return res
+        marks, bad = 0, []
+        for s in range(128):
+            y, attr = o[4 * s + 1], o[4 * s + 3]
+            big = (o[512 + s // 4] >> (2 * (s % 4) + 1)) & 1
+            if y >= 0xE0 or (attr >> 1) & 7 != 1 or big:
+                continue
+            t = o[4 * s + 2] | (attr & 1) << 8
+            marks += 1
+            col = 16 * (t >> 5) + (t & 15)
+            if omap[col] == 0xFF:
+                bad.append(f"sprite {s} tile ${t:02X} (column {col} free)")
+        res.ok(f"{name}: the world map shows its 7 stage markers", marks >= 7, f"{marks} marker sprites")
+        res.ok(f"{name}: every marker drawn from the marker sheet's columns (not the stage's leftovers)", not bad,
+               "; ".join(bad[:4]))
+        return res
+    return ev

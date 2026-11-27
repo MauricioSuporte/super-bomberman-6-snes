@@ -265,6 +265,7 @@ end
 --   blast seat cell            the seat drops a bomb in line with `cell` (nearest free cell; soft blocks between cleared)
 --   door seat                  the seat stands on World 1's exit door
 --   burn_clown n               n frames of flames around 1-7's clown
+--   read7e name addr n         V line, n bytes of $7E:addr (WRAM above $1FFF)
 --   shot name                  screenshot QA_OUT_<scenario>_<name>.png
 --   dump name                  VRAM / CGRAM / OAM / WRAM $0000-$1FFF to QA_OUT_<scenario>_<name>.dump (tools/qa/dump.py)
 --   show_item cell item        a visible item on the cell (SB5's $C5:4557)
@@ -333,6 +334,7 @@ function OPS.lit(st)          -- lit name: V line, 1 byte = screen brightness (0
   local c = emu.getState()
   W(string.format("V %d %s %02X", k, st[3], c["ppu.forcedBlank"] and 0 or (c["ppu.screenBrightness"] or 0)))
 end
+function OPS.read7e(st) W(string.format("V %d %s %s", k, st[3], hexs(0x7E0000 + st[4], st[5], emu.memType.snesMemory))) end
 function OPS.readoam(st) W(string.format("V %d %s %s", k, st[3], hexs(0, 544, emu.memType.snesSpriteRam))) end
 function OPS.spcpc(st)        -- spcpc name: V line, the SPC700 PC (2 bytes, big endian) and its ports 0-3 as the CPU sees them
   local c = emu.getState()

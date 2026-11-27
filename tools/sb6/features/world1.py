@@ -286,6 +286,12 @@ def markers(rb):
             n += 1
         return a, [bytes(rb.d[o + 4 * k:o + 4 * k + 4]) for k in range(n)]
 
+    # SB5's marker op ($C2:0EBD) loads the marker sheet (archive $16) through $C0:1F09, the entry that keeps a
+    # width preset in $0AE4/$0AE5, but sets none: it took the last sprite load's (in 1-3, 6 columns from the
+    # stage start), so the pause's RETURN TO WORLD MAP drew the open stages' flags (column 12) with stage tiles.
+    # $C0:1F03 clears them first: the width is the archive's, as the script ops' loads ($C2:2721).
+    rb.patch(0xC20F54, bytes.fromhex("22 09 1F C0"), bytes.fromhex("22 03 1F C0"),
+             "world map markers: sheet width from the archive, not the last load's")
     at, old = table(0)
     new = b"".join(bytes([cx - 4, cy + 6, s, n]) for n, ((cx, cy), s) in enumerate(zip(MARKERS, stages), 1))
     size = 4 * len(old) + 4

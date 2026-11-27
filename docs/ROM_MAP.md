@@ -668,6 +668,18 @@ script accumulator (`61` = add).
   script (`$C7:128B`) plays the marker under the cursor on START when it is
   the zone's first stage (`$1046`), `$4DB2`, or cleared (op `08`: bit
   stage + 3 of `$7E:2900`); the cursor moves freely.
+* Sprite sheet loads: `$C0:18F6` (= `JSL $C0:1F03`) clears `$0AE4`/`$0AE5`
+  and takes the width (`$0AE4` tiles; `$C0:1A3C` reserves (`$0AE4`-1)/2+1
+  columns of `$7E:2FAA`, the upload sends that many) from the archive's size
+  `$AB`; `$C0:18FC` (= `JSL $C0:1F09`) keeps a width the caller preset (the
+  script op `$C2:2721` clears or sets it first). Op `$18` called `$C0:1F09`
+  for the marker sheet (set 3 archive `$16`) without presetting it: the
+  width was the stage's last sprite load's (1-1, 1-2, 1-4, 1-5, 1-7: wide
+  enough); through the pause's RETURN TO WORLD MAP from 1-3 it was
+  `$0C` (6 columns, set at the stage start): the open stages' flags (OBJ
+  tile `$0C`, column 12) showed leftover stage tiles. Hack: `$C2:0F54` calls
+  `$C0:1F03` (16 columns, the whole sheet); `qa_check.py wmap` checks it on
+  every stage with a pause.
 * Hack (`features/world1.py` `markers`): zone 1 = 7 markers 1-1..1-7
   (`$0D $11 $18 $10 $17 $67 $68`, n = 1-7) where
   `assets/world_map/zone1_stages.png` has its digits; ZONE2 loses `$68`/`$69`
