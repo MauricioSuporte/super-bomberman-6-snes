@@ -1682,7 +1682,13 @@ player has P1 (and P2's spawn) in SB5's middle cell (7,9), 5 cells below
   `$36+s`, new dirs `$3B+s`; bits A `$80` X `$40` L `$20` R `$10` B `$08`
   Y `$04` Select `$02` Start `$01`.
 * Title players menu: `$1036` menu (1 = players), `$1032` cursor, `$1037`
-  limit, confirm script at `$C7:18ED` (patched at `$C7:18F4`).
+  limit, confirm script at `$C7:18ED` (patched at `$C7:18F4`). Pad types
+  `$23+seat` (1 = pad plugged in, rewritten every frame by the multitap
+  BIOS; the reader zeroes a seat's input otherwise). Down / up in that menu
+  ran a 44-byte block (`$C7:1A02` / `$C7:1A52`) keeping the cursor on 1
+  PLAYER while pad 2 was missing; now `FF 1A F7` (`pick_op`) sets `$1037` to
+  the pads plugged in a row - 1 (N PLAYER GAME needs pads 1-N), then the
+  stock move wraps there. QA scripts write `$25/$26` = 1 on the title.
 * Stage: `$1031` mode/stage (bosses `$67-$6E`), `$1D1A` bit 0 Battle,
   `$1D25` participant mask, `$1D24` 1/3, `$1D23` shared lives, `$1CBF`
   bomber slots + mount offset. Per seat: `$17FA` object (`$FF` none),

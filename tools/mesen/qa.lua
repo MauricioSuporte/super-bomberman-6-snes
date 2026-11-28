@@ -64,6 +64,7 @@ emu.addMemoryCallback(function()
       prev[seat] = nil
     end
   end
+  if r(0x1031) == 2 then wr(0x25, 1) wr(0x26, 1) end   -- title: pads 3/4 plugged in (no multitap here; the players menu needs them)
 end, emu.callbackType.exec, 0xC00AF9, 0xC00AF9)
 
 -- ---------------------------------------------------------------- state

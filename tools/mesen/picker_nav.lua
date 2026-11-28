@@ -14,6 +14,8 @@ local function shot(name) local h=io.open(OUT.."_"..name..".png","wb") h:write(e
 local function pc9() return r(0xC90)|(r(0xCB8)<<8)|(r(0xCE0)<<16) end
 local function cg(i0,n) local t={} for i=i0,i0+n-1 do t[#t+1]=string.format("%02X%02X",emu.read(i*2+1,emu.memType.snesCgRam),emu.read(i*2,emu.memType.snesCgRam)) end return table.concat(t," ") end
 local function fin() local h=io.open(OUT..".txt","w") h:write(table.concat(log,"\n")) h:close() emu.stop(0) end
+-- title: pads 3/4 plugged in (the testrunner has no multitap; the players menu stops at the pads plugged in)
+emu.addMemoryCallback(function() if r(0x1031)==2 then emu.write(0x25,1,emu.memType.snesWorkRam) emu.write(0x26,1,emu.memType.snesWorkRam) end end, emu.callbackType.exec, 0xC00AF9, 0xC00AF9)
 emu.addEventCallback(function() if hold>0 and btn then local t={} t[btn]=true emu.setInput(t,0) end end, emu.eventType.inputPolled)
 -- P2_PROBE=1: in the picker, pad 2 presses every button in turn (20 frames apart), logging BG1 map rows 5-10 of
 -- the top row's right half after each (research: SB5's stock picker drawing over ours)

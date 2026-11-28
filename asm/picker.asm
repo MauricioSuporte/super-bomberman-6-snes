@@ -158,7 +158,10 @@ if !W1_OP
     jml !W1_OP
 +
 endif
-    cmp #$F4
+    cmp #$F7
+    bne +
+    brl .players
++   cmp #$F4
     bne +
     brl .wait
 +   phb
@@ -276,8 +279,29 @@ endif
     plb
     rtl
 
+.players:
+    ; ---- F7: title players menu, before a cursor move (features/coop.py): N PLAYER GAME only with
+    ; pads 1-N plugged in ($23+seat = 1, the BIOS's pad type; SB5 only checked pad 2): last item $1037
+    ; = plugged pads in a row - 1, the cursor kept there
+    ldx #$00
+.plugged:
+    lda.l $7E0024,x
+    cmp #$01
+    bne .counted
+    inx
+    cpx #$03
+    bcc .plugged
+.counted:
+    txa
+    sta.l $7E1037
+    cmp.l $7E1032
+    bcs .in
+    sta.l $7E1032
+.in:
+    rtl
+
 .wait:
-    lda.l !SLst                     ; ---- F4: the picker runs; leave when it says so
+    lda.l !SLst                    ; ---- F4: the picker runs; leave when it says so
     cmp #$04
     bne .again
     lda #$C4                        ; $C6:8EC4: the stock end of the picker

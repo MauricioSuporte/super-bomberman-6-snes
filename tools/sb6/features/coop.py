@@ -195,6 +195,12 @@ def _title_menu(rb):
         rb.patch(a, bytes.fromhex("FF 91 09 0B 10 06 03"), bytes.fromhex("FF 91 09 0B 10 08 03"),
                  "title: menu clear block 8 rows")
     rb.patch(0xC719E6, bytes.fromhex("5B 01"), bytes.fromhex("5B 03"), "title: players menu has 4 entries")
+    # Down / up in the players menu: SB5 kept the cursor on 1 PLAYER while pad 2 was unplugged (a
+    # 44-byte block); FF 1A F7 (asm/picker.asm) sets the last item to the pads plugged in a row - 1,
+    # then the stock move (wraps at that item) runs.
+    for blk, move in ((0xC71A02, 0xC71A2E), (0xC71A52, 0xC71A7E)):
+        rb.patch(blk, bytes.fromhex("4F 00 59 FF 51"), bytes([0xFF, 0x1A, 0xF7, 0x45, move - (blk + 5)]),
+                 "title: players menu cursor limited to the pads plugged in")
 
     # Confirm: the original one-player block (controller choice from $1040),
     # then 2/3/4 players; all of them end like the original ones.

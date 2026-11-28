@@ -32,7 +32,11 @@ PICK_DARK = (35, 70)    # ... and until the screen is dark
 LIST_X, MENU_X = 0x30, 0x48     # hand cursor X ($1038) in a file list / the menu
 ITEMS = ("New Game", "Continue", "Erase File")
 
-PLAN = ["title", "start", "players", "w10", "mark:title_accept", "start", "pick", "w20",
+# Players menu with pads 1-2 plugged in (the testrunner's ports, no multitap): down, down, up, down -> 2, 1, 2, 1
+# PLAYER GAME (the cursor stops at the pads plugged in, asm/picker.asm FF 1A F7)
+PADS = [("down", 1), ("down", 0), ("up", 1), ("down", 0)]
+PLAN = ["title", "start", "players", "w10"] + [x for i, (b, _) in enumerate(PADS) for x in (b, "w10", f"mark:pads{i}")]
+PLAN += ["w10", "mark:title_accept", "start", "pick", "w20",
         "mark:pick_accept", "a", "ready", "oam:menu", "w10", "mark:menu_back", "b", "pick", "w20",
         "mark:pick_back", "b", "players", "w20", "start", "pick", "w20", "a", "ready"]
 for i in range(3):
@@ -177,6 +181,11 @@ def main():
         check(f"{label}: track {track} plays (stream voice on) once the screen is lit",
               on is not None and on <= until, f"switch at +{sw - p if sw is not None else '-'}, music at "
               f"+{on - p if on is not None else '-'}, lit at +{until - p}")
+
+    # 0. players menu: only the pads plugged in
+    got = [tl.at(marks[f"pads{i}"])["item"] if f"pads{i}" in marks else None for i in range(len(PADS))]
+    check("players menu with pads 1-2 plugged in: the cursor stays on 1-2 PLAYER GAME",
+          got == [n for _, n in PADS], f"{' '.join(b for b, _ in PADS)} -> {got}")
 
     # 1. title -> character selection
     p = press_after("title_accept")
