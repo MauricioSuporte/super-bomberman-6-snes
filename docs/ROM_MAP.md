@@ -559,12 +559,14 @@ script accumulator (`61` = add).
   picker opens dark and `lightup` brings the screen in (3 steps per tick)
   once it is ready (state 2). The close op hides all 128 OAM entries (the
   builder only hides its own).
-* Grid: one cell per character with a column in
-  `CharacterSelectPortrait.png` (7, chars 0-6), then the characters of
-  `picker.POSE_PORTRAITS` (char7) with a stand-in: their front stand pose
-  (animation `$47`) at 1x in their in-game colors; at rest its colors that
+* Grid: one cell per character, in order: a column of
+  `CharacterSelectPortrait.png` (8: chars 0-6 and 8), or for a character of
+  `picker.POSE_PORTRAITS` (char7, the picture has no column for it) a stand-in: its front stand pose
+  (animation `$47`) at 1x in its in-game colors; at rest its colors that
   do not fit the 3 shared palettes take their closest (the build lists
-  them); chars 8-9 are left out. 5 per row. Resting portraits use the default color (BG palettes 3/4/7,
+  them). When that is not enough (char8, 2026-11-27) one color of one 8x8 tile of a portrait at rest takes the
+  closest color that makes them fit (`_tile_merge`, exact search `_exact`; char8 tile 11: `B8D0F8 -> D8E0E8`; the
+  portrait under the cursor keeps it). char9 is left out (no column). 5 per row. Resting portraits use the default color (BG palettes 3/4/7,
   shared); the cell under the cursor is swapped by the NMI to its cursor
   face (16 tiles + 16 map words per cell) in BG palettes 5/6, whose 30
   colors are chosen per character and color (`pk_hcol`). Cursor: OBJ
@@ -2101,7 +2103,7 @@ The full list with sizes is generated in `build/sb6.map`.
   nearest of palettes 0 / 1 (an RGB distance turned greys into the items' greens). Code and tables: bank `$C8`.
 * Character select choices (`$7F:FF02+seat` = character + 1, `$7F:FF08+seat` = color) -> heads: SB6's HUD
   portraits (`assets/hud/portraits/<character>/<skin>.png`, skin = color + 1; char7 = CossackBomber's skins
-  1-51, the small form), a 16 x 16 window per character (one 256-byte template for every seat: seats 2-4 had a
+  1-51, the small form; char8 = BigBomber 1-25, made by `tools/hud_head.py` from its pose `$47`), a 16 x 16 window per character (one 256-byte template for every seat: seats 2-4 had a
   second one, equal since the seats share the window) with one color class per pixel and a 21-byte record per skin.
 * 1-7's darkness (`asm/sb1_enemies.asm` `hdma_build`): window 1 = whole lines 0-23 (`!CHUDL`), then x 116-139
   on lines 24-31 (`!CTABL`, the tab). Note: `!CTAB` is the clown's picture table (passed by the build): a define

@@ -57,7 +57,9 @@ Super Bomberman 6: SNES ROM hack of *Super Bomberman 5 (USA)*. See README.md
   bomber_anims.txt per animation. Every character with a sheet is inserted
   (in game and in the picker grid), even one still equal to Bomberman's
   (then it costs only its tables; the grid needs a portrait column or, like char7 for now, a stand-in
-  of its pose `$47` in `picker.POSE_PORTRAITS`); char7 = Cossack Bomber (small only), whose stand
+  of its pose `$47` in `picker.POSE_PORTRAITS`: the picture's columns skip it); char8 = Big Bomber (Bomberman's
+  colors, every walk / carry / idle / victory streamed; HUD heads made by `tools/hud_head.py` from its pose `$47`,
+  Unity has none; QA fixture `FX_D` plays it twice); char7 = Cossack Bomber (small only), whose stand
   animations play its walk (`bombers.WALK_AT_REST`, Unity's AnimateFootstepsAtRest) until the idle `$15`;
   palette ids past `$FB` are per seat (`$FC`+seat, docs/ROM_MAP.md); animations equal to his reuse his `[sheet, row]` and pieces,
   edited ones get new tiles. Palettes equal to his share his ids `$5A + n`.

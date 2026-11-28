@@ -243,7 +243,7 @@ def apply(rb, asset_dir, out_dir, starts, version_text, boot=None, cache_dir=Non
     glyphs = rb.le16(BG3_CHR + VERSION_TILE * 8) + rb.le16(len(ver_tiles)) + rb.le24(ver_addr) + bytes([0x83])
     arc_entry = glyphs + glyphs
     if boot:
-        boot_addr = rb.alloc("bulk", boot["tiles"], "boot logo: BG1 4bpp tiles (raw)")
+        boot_addr = rb.alloc(["music_ff", "bulk"], boot["tiles"], "boot logo: BG1 4bpp tiles (raw)")
         arc_entry += rb.le16(0x0000) + rb.le16(len(boot["tiles"])) + rb.le24(boot_addr) + bytes([0x82])
     arc_table = rb.alloc("e3_tables", arc_entry,
                          "set 5 archive table (1, 2 = version glyphs, 3 = boot logo)")

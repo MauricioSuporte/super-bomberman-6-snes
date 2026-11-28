@@ -880,8 +880,12 @@ def convert(br, cells, only=None, stream=False):
     verify(cells, br, data, anim_strip, mappings)
     for a, poses in streamed.items():     # the first pose shown, for the start of the animation
         first = next(m for m, _ in br.anim(a) if m)
-        anim_strip[a] = len(data)
-        data.append(poses[first][2])
+        strip = poses[first][2]
+        if strip in data:                 # (another streamed animation starting on the same pose)
+            anim_strip[a] = data.index(strip)
+        else:
+            anim_strip[a] = len(data)
+            data.append(strip)
         streamed[a] = {m: (block, w) for m, (block, w, _) in poses.items()}
     mappings.update(mappings_s)
     return data, anim_strip, mappings, streamed

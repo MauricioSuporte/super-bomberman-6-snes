@@ -92,6 +92,15 @@ streaming is for menus only;
 in-game music should be converted to sequences for Hudson's driver (or a new
 sequenced driver).
 
+2026-11-27, char8 (Big Bomber, +63 KB: 35 KB of strips, ~23 KB of streamed poses, 7 KB of mappings): the ROM is
+practically full. To fit it the boot logo's 8 KB of tiles moved from `bulk` to `music_ff`, identical streamed pose
+blocks (any character) and identical first-pose strips are stored once (`bombers._stream_blocks`,
+`bomber.convert`), the character selection music may also take the leftovers of `c4`, `objmap3` and `c2`
+(`title_music.CHAR_REGIONS`, 29 segments) and the stage voices (placed after it) those of `bulk`, `d0`, `c0` and
+`e3_tables` (`voice_sfx.REGIONS`). Both are placed last, so a feature that needs those regions still gets them
+first, but then the voices / music no longer fit: a new character (char9) or feature needs room made first
+(e.g. the character selection music at a lower rate: ~6.75 KB per second at 12 kHz).
+
 ## WRAM
 
 | Address | Owner |

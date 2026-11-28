@@ -77,8 +77,10 @@ REC = 38                    # VOICE_TAB record: stage, entries list, head list, 
 #                             start (word; the good ones: K)
 FPS = 60.0988
 CACHE = os.path.join(tm.ROOT, "build", "cache")
+# (after "c2"/"objmap3": what the character selection music leaves in code / table banks; the ROM is nearly
+# full since char8: 2026-11-27)
 REGIONS = ["free_db_b", "free_dc_zone1", "free_e3_options", "free_d3", "free_d4_options", "free_db_a", "free_d6",
-           "obj_f6", "obj_f2", "free_e1_options2", "c2", "objmap3"]
+           "obj_f6", "obj_f2", "free_e1_options2", "c2", "objmap3", "bulk", "d0", "c0", "e3_tables"]
 
 
 def _mult():

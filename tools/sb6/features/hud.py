@@ -128,9 +128,9 @@ DYN = ["MaxExplosionRange", "MaxSpeed", "MaxBombs"]
 HEAD_TILES = ((0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3), (0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9))
 HEAD_BG = 4
 HEAD_RECOLOR = {2: {3: 15, 11: 14, 2: 13}, 3: {3: 11, 11: 10, 2: 9}}
-# characters of the character select (asm/picker.asm choice 1-7) -> SB6's portrait folders
+# characters of the character select (asm/picker.asm choice 1-9) -> SB6's portrait folders
 PORTRAITS = ["Bomberman", "LadyBomber", "TinyBomber", "Bookworm", "KamikazeBomber", "MechaBomber", "MinerBomber",
-             "CossackBomber"]
+             "CossackBomber", "BigBomber"]
 HEAD_SHIFTS = 1                         # templates per character (every seat draws the same window)
 HEAD_GAP = 1                            # see-through columns at a head's right (blue up to the grid's line)
 HEAD_MAP = 20                           # entries of a skin's class map (class 0 = see-through)

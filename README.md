@@ -160,13 +160,24 @@ o build manda cada pose separada para a VRAM na hora em que ela aparece; aí o
 limite passa a ser por pose: 16 tiles (até 32x32 px). O `check` lista essas
 animações. Para aparecer na grade
 da seleção o personagem precisa de uma coluna em
-`assets/picker/CharacterSelectPortrait.png` (hoje 7: personagens 0-6) ou
+`assets/picker/CharacterSelectPortrait.png` (hoje 8: personagens 0-6 e 8; a
+imagem pula os de `POSE_PORTRAITS`) ou
 estar em `POSE_PORTRAITS` (`tools/sb6/features/picker.py`, hoje o 7): aí a
 grade mostra a pose parado de frente (animação 47) até o retrato ficar pronto,
 com o cursor na cor da 8ª linha do `charN_pallete.png` (a roupa, como o
-cursor do Cossack no Unity); os 8-9 ficam de fora da grade. A cabeça na HUD
+cursor do Cossack no Unity); o 9 fica de fora da grade. Os retratos parados
+dividem 3 paletas de 15 cores: se não couberem, o build troca uma cor de um
+bloco 8x8 pela mais parecida só no retrato parado e avisa (no Big Bomber, um
+azul claro da mão direita). A cabeça na HUD
 das fases vem de `assets/hud/portraits/<Nome>/<cor>.png` (o `Portrait_0` de
-cada skin do Unity; o Cossack usa as skins 1-51, as da forma pequena). O personagem 7 (Cossack Bomber) continua
+cada skin do Unity; o Cossack usa as skins 1-51, as da forma pequena). Para
+um personagem que não tem retratos no Unity, `python tools/hud_head.py 8
+BigBomber` recorta a cabeça da pose 47 da folha em cada cor do
+`charN_pallete.png` (dá para retocar os PNGs depois; rodar de novo
+sobrescreve). O personagem 8 (Big Bomber) é grande: quase todas as animações
+dele vão pose por pose para a VRAM. Com ele a ROM ficou praticamente cheia
+(docs/FREE_SPACE.md): o próximo personagem vai precisar que se libere espaço
+antes. O personagem 7 (Cossack Bomber) continua
 andando no lugar quando para (`WALK_AT_REST` em `tools/sb6/features/bombers.py`,
 como no Unity) e depois de um tempo faz a festa 15 como os outros. Na fileira de cima da seleção cada pose das
 animações 02 e 20 tem que caber em 8 sprites de 16x16.

@@ -59,10 +59,11 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
 * Picker (Normal Game CHARACTER SELECT, SB6 layout: tools/sb6/features/picker.py,
   asm/picker.asm): `chpal`/`chcol` per character (first color id, color
   count). The grid has one cell per column of
-  `assets/picker/CharacterSelectPortrait.png` (224x64: row 1 at rest, row 2
-  under the cursor; chars 0-6 today): a new character needs a new column
+  `assets/picker/CharacterSelectPortrait.png` (256x64: row 1 at rest, row 2
+  under the cursor; chars 0-6 and 8 today, the picture skips the characters of
+  `picker.POSE_PORTRAITS`): a new character needs a new column
   there, or a stand-in in `picker.POSE_PORTRAITS` (char7: its front stand
-  pose `$47`, in-game colors), or it stays out of the grid (chars 8-9).
+  pose `$47`, in-game colors), or it stays out of the grid (char9).
   Palette ids past `$FB` (more than 162 colors in all) go through the
   per-seat ids `$FC`+seat (docs/ROM_MAP.md "Bomber palette ids").
   `bombers.WALK_AT_REST`: characters whose stand animations play the walk
@@ -71,13 +72,14 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
   the cursor tint is row 0 of that picture at the skin's column (a stand-in of
   `POSE_PORTRAITS`: row 7 of char<n>_pallete.png, the suit, as Unity's cursor
   does for CossackBomber). HUD head: `assets/hud/portraits/<Unity name>/<skin>.png`
-  (Unity's `<Name><skin>_Portrait_0.png`) + `hud.PORTRAITS` (the bank `$C8`
+  (Unity's `<Name><skin>_Portrait_0.png`; a character Unity has no portraits for: `python tools/hud_head.py <n>
+  <Name>` cuts them from its pose `$47` in each color of char<n>_pallete.png, char8 = BigBomber) + `hud.PORTRAITS` (the bank `$C8`
   holding them has ~1 KB left: 256 bytes + 21 per skin each). The row of
   chosen characters at the top uses the character's animations 02 (walk
   down, while choosing) and 20 (victory, once, holds its last pose): each
   pose must fit 8 sprites of 16x16 (the build says which pose does not).
   Picker PLAN: row 1 = chars 0-4 (`right` x c, then `a`), row 2 = chars
-  5-6 (`down`, then `right` x (c-5), then `a`); left/right wrap inside the
+  5-8 (`down`, then `right` x (c-5), then `a`; char8 = `right,right,right,down,a`); left/right wrap inside the
   row, up/down by column. With more players every seat confirms in turn.
   Palette uploads (`upload` -> `palpend`) are flushed by `palflush` only
   when the VRAM queue is empty.
@@ -121,8 +123,10 @@ neighbour. Object type of char n in game = `$10 + n` (`$16C2` = n).
   garbage after its first loop.)
 * If a single pose needs more than 16 tiles the build names it; options:
   redraw smaller, or widen POSE_TILES (loses the double buffer / DMA time).
-* Not tested yet: 2-4 players with streamed characters at once, Battle mode,
-  real hardware. Say so when reporting.
+* Two seats streaming at once (char8 twice, with char7 and Bomberman) is the QA fixture `FX_D`
+  (`qa_check.py picker anims hud`). Not tested yet: Battle mode, real hardware. Say so when reporting.
+* ROM space: since char8 the ROM is practically full (docs/FREE_SPACE.md, 2026-11-27): a new big character
+  needs room made first.
 
 ## Mesen test (headless) - run it for EVERY new character
 

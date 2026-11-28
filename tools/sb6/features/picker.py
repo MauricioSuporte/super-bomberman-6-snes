@@ -192,11 +192,79 @@ def _fit_rest(rest, loose):
                 if best is None or cost < best[0]:
                     best = (cost, c, v, near)
         if best is None:
-            raise BuildError("picker: the portraits at rest need more than "
-                             f"{len(STATIC_PALS)} palettes of 15 colors")
+            # no stand-in color left: one color of one tile of a portrait takes the
+            # closest color that makes them fit (the portrait under the cursor keeps it)
+            c, t, v, near = _tile_merge(rest)
+            ty, tx = divmod(t, 4)
+            for y in range(ty * 8, ty * 8 + 8):
+                for x in range(tx * 8, tx * 8 + 8):
+                    if rest[c][y][x] == v:
+                        rest[c][y][x] = near
+            merged.append((c, "tile %d: %02X%02X%02X -> %02X%02X%02X" % ((t,) + v + near)))
+            continue
         _, c, v, near = best
         rest[c] = [[near if w == v else w for w in row] for row in rest[c]]
         merged.append((c, "%02X%02X%02X -> %02X%02X%02X" % (v + near)))
+
+
+def _tile_merge(rest):
+    """The cheapest (pixels x distance) single color change inside one 8x8
+    tile of a portrait at rest after which they fit STATIC_PALS:
+    (char, tile, color, new color)."""
+    grids_sets = [_tile_sets(g) for g in rest]
+    colors = {v for sets in grids_sets for s in sets for v in s}
+    best = None
+    for c, sets in enumerate(grids_sets):
+        for t, s in enumerate(sets):
+            ty, tx = divmod(t, 4)
+            for v in s:
+                n = sum(rest[c][y][x] == v for y in range(ty * 8, ty * 8 + 8) for x in range(tx * 8, tx * 8 + 8))
+                for w in colors - {v}:
+                    cost = n * sum((a - b) ** 2 for a, b in zip(v, w))
+                    if best is not None and cost >= best[0]:
+                        continue
+                    trial = [x for sets2 in grids_sets for x in sets2]
+                    trial[16 * c + t] = (s - {v}) | {w}
+                    if _exact(trial, len(STATIC_PALS)) is not None:
+                        best = (cost, c, t, v, w)
+    if best is None:
+        raise BuildError(f"picker: the portraits at rest need more than {len(STATIC_PALS)} palettes of 15 colors")
+    return best[1:]
+
+
+def _exact(sets, slots, cap=15, budget=200000):
+    """Palettes (sets of colors) holding every set, by backtracking over the
+    sets that are not inside another one; None when there is none (or the
+    search ran out of `budget` steps)."""
+    colors = sorted({v for s in sets for v in s}, key=repr)
+    bit = {v: 1 << i for i, v in enumerate(colors)}
+    masks = sorted({sum(bit[v] for v in s) for s in sets if s}, key=lambda m: -bin(m).count("1"))
+    masks = [m for m in masks if not any(m != o and m & o == m for o in masks)]
+    pals, steps = [0] * slots, [0]
+
+    def bt(i):
+        if i == len(masks):
+            return True
+        steps[0] += 1
+        if steps[0] > budget:
+            return False
+        empty = False
+        for k in range(slots):
+            if not pals[k]:
+                if empty:
+                    continue
+                empty = True
+            u = pals[k] | masks[i]
+            if bin(u).count("1") <= cap:
+                old, pals[k] = pals[k], u
+                if bt(i + 1):
+                    return True
+                pals[k] = old
+        return False
+
+    if not bt(0):
+        return None
+    return [{v for v in colors if p & bit[v]} for p in pals]
 
 
 def _logical(img, keys):
@@ -244,6 +312,10 @@ def _partition(sets, slots, what):
             return pick, [sorted(p, key=repr) for p in pals]
         order = order[:]
         rnd.shuffle(order)
+    found = _exact(sets, slots)
+    if found is not None:
+        pick = [next(k for k, p in enumerate(found) if s <= p) for s in sets]
+        return pick, [sorted(p, key=repr) for p in found]
     raise BuildError(f"picker: {what} need more than {slots} palettes of 15 colors")
 
 
@@ -502,13 +574,19 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
             if chpal[c] > 0xFF:
                 raise BuildError(f"picker: char{c}'s first palette id ${chpal[c]:X} is past $FF")
 
-    # characters of the grid: the portrait picture's columns, each must be inserted
-    portraits = _portraits(10)
-    # characters after the painted portraits: their front pose until the artist draws one
-    own_tab = {}
-    while len(portraits) < 10 and len(portraits) in chars and len(portraits) in POSE_PORTRAITS:
+    # characters of the grid, in order: the portrait picture's columns, each must be inserted;
+    # a character of POSE_PORTRAITS has no column (the next column is the next character's)
+    # and shows its front pose until the artist draws one
+    painted = _portraits(10)
+    portraits, own_tab = [], {}
+    while len(portraits) < 10:
         c = len(portraits)
-        pair, own_tab[c] = _pose_portrait(chars[c], os.path.join(ROOT, "assets", "bombers", f"char{c}_pallete.png"))
+        if c in POSE_PORTRAITS and c in chars:
+            pair, own_tab[c] = _pose_portrait(chars[c], os.path.join(ROOT, "assets", "bombers", f"char{c}_pallete.png"))
+        elif painted:
+            pair = painted.pop(0)
+        else:
+            break
         portraits.append(pair)
     n = len(portraits)
     missing = [c for c in range(n) if c not in chars]
@@ -536,7 +614,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
         rest.append(rgbgrid)
     rest, merged = _fit_rest(rest, sorted(own_tab))
     for c, text in merged:
-        print(f"picker: char{c}'s stand-in portrait at rest: {text}")
+        print(f"picker: char{c}'s portrait at rest: {text}")
     rest_sets = [s for grid in rest for s in _tile_sets(grid)]
     pick, pals = _partition(rest_sets, len(STATIC_PALS), "the portraits at rest")
     rest_tiles = bytearray()
@@ -618,7 +696,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
     pose_addr = []
     for i, (nb, offs, top, bottom) in enumerate(poses):
         rec = bytes([nb]) + b"".join(struct.pack("<bb", dx, dy) for dx, dy in offs) + top + bottom
-        pose_addr.append(rb.alloc(["obj_f8", "obj_f9", "stream_ef"], rec, f"picker: pose {i} of the player row"))
+        pose_addr.append(rb.alloc(["obj_f8", "obj_f9", "stream_ef", "obj_f1", "obj_f2", "obj_f6", "obj_f7"], rec, f"picker: pose {i} of the player row"))
 
     # tables (one blob, one bank)
     blob.add("pk_bgmap", bgmap)
@@ -657,7 +735,7 @@ def apply(rb, base_rom, bomber, title=None, wmap_nmi=0, wmap_op=0, w1_op=0, paus
     blob.add("pk_jobs", bytes(8 * 64))
     data = blob.data
     sizes = dict(pk_rtiles=len(rest_tiles), pk_glyphs=len(GLYPHS) * 32, pk_btiles=len(btiles))
-    addr = rb.alloc(["obj_f9", "obj_f8", "stream_ef", "obj_f7", "obj_f6", "obj_f2", "obj_f1", "obj_f0", "title_fc"], bytes(data), "picker: portraits, palettes, cursor art, tables")
+    addr = rb.alloc(["obj_f9", "obj_f8", "stream_ef", "obj_f7", "obj_f6", "obj_f2", "obj_f1", "obj_f0", "title_fc", "music_ff"], bytes(data), "picker: portraits, palettes, cursor art, tables")
     lab = {k: addr + v for k, v in blob.labels.items()}
     recs = bytearray()
     for vram, label, start, size, last in jobs:

@@ -39,11 +39,14 @@ EXPLOSION, PIERCE = 0x2A, 0x34
 LOUIE_CRY = 0x48
 B_REMOTE, B_KICK, B_GLOVE, B_BOXING, B_PIERCE = 0x01, 0x02, 0x04, 0x08, 0x10
 
-# fixtures: the 8 characters of the picker grid in three Normal Game starts, 4 players, 1-1 (FX_C: char7 twice,
-# P1 on color 31 = palette id $FC + seat, past the direct ids; P3 on color 4)
+# fixtures: the 9 characters of the picker grid in four Normal Game starts, 4 players, 1-1 (FX_C: char7 twice,
+# P1 on color 31 = palette id $FC + seat, past the direct ids; P3 on color 4; FX_D: char8 (Big Bomber, every
+# walk / carry / idle / victory streamed pose by pose) twice, so two seats stream at once, with char7 and Bomberman)
 FX_A = Fixture("w1_0D_A", picks=((0, 0), (1, 1), (2, 2), (5, 3)))
 FX_B = Fixture("w1_0D_B", picks=((3, 1), (4, 2), (6, 1), (0, 4)))
 FX_C = Fixture("w1_0D_C", picks=((7, 30), (1, 0), (7, 3), (2, 5)))
+FX_D = Fixture("w1_0D_D", picks=((8, 0), (7, 1), (8, 6), (0, 2)))
+CHAR_FX = (FX_A, FX_B, FX_C, FX_D)
 QUAD = ((3, 3), (11, 3), (3, 9), (11, 9))          # each seat's own 5 x 5 arena in 1-1 (no shared flames)
 STAGES = {0x0D: "1-1", 0x11: "1-2", 0x18: "1-3", 0x10: "1-4", 0x17: "1-5", 0x67: "1-6", 0x68: "1-7"}
 
@@ -793,7 +796,7 @@ def hold_eval_for(stage, fx):
 # sprites on its spot ($182A/$1872 + (0-24, 0-32) in OAM) every frame while alive, as a frog, a copy of a player or
 # changing (SB5's stand routine blanked the id $049F every few frames: copies walked unseen until they turned).
 CHAM_FX = (Fixture("s18_4p_chamA", stage=0x18, ready=120, picks=((0, 0), (7, 1), (1, 2), (0, 3))),
-           Fixture("s18_4p_chamB", stage=0x18, ready=120, picks=((3, 1), (4, 2), (6, 1), (5, 4))))
+           Fixture("s18_4p_chamB", stage=0x18, ready=120, picks=((3, 1), (4, 2), (6, 1), (8, 4))))
 
 
 def cham_scenarios():
@@ -1300,10 +1303,10 @@ def hud_scenarios(stage):
 
 def hud_var_fx(stage):
     """Every stage with other characters / colors than stage_fx's: each stage 4 different characters of the
-    character select's 8 (all 8 over World 1) and colors spread over their first 25."""
+    character select's 9 (all 9 over World 1) and colors spread over their first 25."""
     i = list(STAGES).index(stage)
     return Fixture(f"s{stage:02X}_4p_hudvar", stage=stage, ready=120,
-                   picks=tuple(((i + 2 * s) % 8, (5 * i + 7 * s + 3) % 25) for s in range(4)))
+                   picks=tuple(((i + 2 * s) % 9, (5 * i + 7 * s + 3) % 25) for s in range(4)))
 
 
 def hud_var_scenarios(stage):

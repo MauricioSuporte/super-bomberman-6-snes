@@ -131,14 +131,17 @@ def _insert(rb, base_rom, sheets, br, cells, name, only=None):
 def _stream_blocks(rb, streamed, name):
     """Pose blocks of the streamed animations -> {mapping: (address, columns, animation)}."""
     out = {}
+    placed = rb.__dict__.setdefault("stream_blocks", {})     # the same block (any character) is stored once
     for a, poses in sorted(streamed.items()):
         for m, (block, w) in sorted(poses.items()):
             if m in out:    # bomber_stream tells a pose of the current animation by its entry
                 raise BuildError(f"{name}: pose {m:02X} is streamed in animations {out[m][2]:02X} and {a:02X}")
-            region = next((r for r in STREAM if rb.regions[r].free() >= len(block)), None)
-            if region is None:
-                raise BuildError(f"{name}: no room for the streamed poses ({STREAM})")
-            out[m] = (rb.alloc(region, block, f"{name}: animation {a:02X}, pose {m:02X} ({w} columns, streamed)"), w, a)
+            if block not in placed:
+                region = next((r for r in STREAM if rb.regions[r].free() >= len(block)), None)
+                if region is None:
+                    raise BuildError(f"{name}: no room for the streamed poses ({STREAM})")
+                placed[block] = rb.alloc(region, block, f"{name}: animation {a:02X}, pose {m:02X} ({w} columns, streamed)")
+            out[m] = (placed[block], w, a)
     return out
 
 

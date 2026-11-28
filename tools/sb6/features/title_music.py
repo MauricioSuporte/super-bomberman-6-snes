@@ -51,11 +51,12 @@ PICKREQ = 0x0197          # WRAM: 1 = the Normal Game menu opens the character s
 LAST_AUDIO_BANK = 0xEB    # banks first_bank..$EB are streamed audio (the title, then the menus' music)
 CHAR_SEGS = 40            # segment slots reserved for the character selection music (placed at the build's end)
 # where the character selection music goes once everything else is placed: the audio banks' tails, then
-# leftovers of data regions (not the bank-bound tables, code banks or sprite mapping banks)
+# leftovers of data regions (not the bank-bound tables); last, the leftovers of the third sprite mapping bank
+# and of two code banks (char8's 35 KB of tiles left the others short: 2026-11-27)
 CHAR_REGIONS = ["title_fc", "stream_ee", "sb1_f4", "free_c9_sheets", "obj_f9", "wmap_f5", "free_c7_sheets",
                 "obj_f8", "stream_ef", "obj_f1", "free_db_b", "free_dc_zone1", "free_e3_options", "free_d3",
                 "free_d4_options", "free_db_a", "free_d6", "obj_f6", "obj_f2", "free_e1_options2", "free_d5",
-                "obj_f7", "free_ca_bombs", "free_c5_sheets", "free_d9"]
+                "obj_f7", "free_ca_bombs", "free_c5_sheets", "free_d9", "c4", "objmap3", "c2"]
 CHUNK = 162               # bytes: 18 BRR blocks
 CHUNK_SAMPLES = 18 * 16
 ARAM_BASE = 0x7000        # driver page; ring right after it
