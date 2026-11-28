@@ -4,7 +4,7 @@
 ; SB5's pause task ($C5:0000): Start sets $1D1D = 1 at $C5:0058 (the stage
 ; freezes), draws PAUSE! / WORLD n - nn on BG3, then every frame from
 ; $C5:009E tests Start (JSR $00B7) and unpauses at $C5:000C ($1D1D = 0,
-; BG3 rows 3-31 cleared, music back). The hack:
+; BG3 rows 3-31 cleared, music back; features/pause.py skips the music pause / resume). The hack:
 ; * pm_open (JSL at $C5:0058): $1D1D = 1 as before; in the Normal Game also
 ;   sets up the menu (state below) and the panel: inside color window 1
 ;   BG1/BG2/OBJ leave the main screen for the subscreen, the main screen is

@@ -8,7 +8,7 @@
 ;
 ; A magnet bomb at rest (SB5's bomb update, $C5:1FEA) looks along its row and column (Unity MagnetBomb.cs: 4
 ; directions, 12 cells, the view stops at a wall, a soft block, a bomb or a bomber) for the nearest enemy (actors
-; 5 and up, alive). One 2 or more cells away: the bomb is kicked that way (SB5's kick: rolling, speed 2, its sound)
+; 5 up to the mounts' $012D, alive). One 2 or more cells away: the bomb is kicked that way (SB5's kick: rolling, speed 2, its sound)
 ; and rolls until something stops it, next to the enemy. Then it waits 60 frames at rest before looking again
 ; (Unity: reattractDelaySeconds = 1); nothing in view: it looks again 4 frames later (Unity: every 0.08 s).
 
@@ -111,6 +111,8 @@ mg_find:
 .actor:
     cpx #$05                    ; (0-4: the bombers)
     bcc .ways
+    cpx $012D                   ; mounts (Louies, ridden or not: !mbase, asm/coop.asm) are no enemies
+    bcs .next
     lda $17FA,x
     bmi .next
     lda $15A2,x

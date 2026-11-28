@@ -97,6 +97,8 @@ def _jobs():
             out.setdefault("anims", []).append((fx, part, ev, f"{fx.name}_anims{i}"))
     out["sfx"] = [(S.FX_A, S.sfx_scenarios(), S.sfx_eval(S.FX_A))]
     out["music"] = [(S.stage_fx(st), S.music_scenarios(), S.music_eval(st)) for st in S.STAGES]
+    out["music"] += [(S.stage_fx(st), S.music_pause_scenarios(st), S.music_pause_eval(st), f"s{st:02X}_mpause")
+                     for st in S.PAUSE_STAGES]
     out["spawn"] = [(S.stage_fx(st), S.spawn_scenarios(), S.spawn_eval(st)) for st in S.STAGES]
     out["spawn"] += [(S.out_fx(st), S.spawn_out_scenarios(st), S.spawn_out_eval(st)) for st in S.STAGES]
     out["spawn"].append((S.FX_A, S.gameover_scenarios(), S.gameover_eval(S.FX_A), "gameover_spawn"))
@@ -109,7 +111,7 @@ def _jobs():
     for st in (0x67, 0x68):
         name = "boss16" if st == 0x67 else "boss17"
         sc = S.hold16_scenarios() if st == 0x67 else S.hold17_scenarios()
-        for fx in (S.Fixture(f"s{st:02X}_4p_hold", stage=st, ready=30), S.mount_fx(st)):
+        for fx in (S.Fixture(f"s{st:02X}_4p_hold", stage=st, ready=30), S.mount_fx(st), S.black_fx(st)):
             out[name].append((fx, sc, S.hold_eval_for(st, fx), f"{fx.name}_{name}"))
     out["fx"] = [(S.FX_A, S.fx_scenarios(), S.fx_eval(S.FX_A))]
     out["fx"] += [(S.stage_fx(st), S.pierce_scenarios(st), S.pierce_eval(st), f"s{st:02X}_4p_pierce") for st in S.STAGES]
@@ -131,6 +133,7 @@ def _jobs():
     out["items"] = [(S.stage_fx(st), S.items_scenarios(), S.items_eval(st), f"s{st:02X}_4p_items")
                     for st in S.PORTAL_NEXT]
     out["items"].append((S.FX_A, S.magnet_scenarios(), S.magnet_eval(S.FX_A), f"{S.FX_A.name}_magnet"))
+    out["items"].append((S.LA_FX, S.magnet_louie_scenarios(), S.magnet_louie_eval, "s0D_la_magnet"))
     out["louies"] = [(S.LA_FX, S.louie_scenarios_a(), S.louie_eval("a")), (S.LB_FX, S.louie_scenarios_b(), S.louie_eval("b")),
                      (S.FX_A, S.louie_egg_scenarios(), S.louie_egg_eval(), f"{S.FX_A.name}_louie_egg")]
     out["louies"].append((S.LR_FX, S.louie_rival_scenarios(), S.louie_rival_eval(None), "s67_louie_rival"))

@@ -982,6 +982,7 @@ hold_up:
     lda $1782,x
     and #$08
     bne .next
+    jsr mount_stand
     ldy $17FA,x
     lda $079F,y                 ; the animation shown (SB5's stage start pose $47 is set with $1632 = 4 already),
     sec                         ; counted from the character's first ($1692)
@@ -1018,6 +1019,35 @@ hold_up:
 .next:
     dex
     bpl .seat
+    rts
+
+; Seat X on a Louie: its Louie stands (SB5's $C4:4318 'just stopped': $1A + the Louie's base + facing - 1, through
+; $C4:547F) instead of walking in place. hold_up keeps $17E2 at 1, so that routine never runs while held, and
+; the stage start leaves every Louie on its walk (+0-3), 1-6 between duels on its idle (+4, facing front). Only those are replaced (one request per change, as
+; hold_up's own). Keeps X.
+mount_stand:
+    lda $1782,x
+    bpl .rts
+    phx
+    txa
+    clc
+    adc $0128                   ; (co-op: !mofs, asm/coop.asm)
+    tax
+    ldy $17FA,x
+    bmi .out
+    lda $079F,y
+    sec
+    sbc $1692,x                 ; (+ facing - 1: $C4:5427 adds it)
+    cmp #$05
+    bcs .out                    ; (not its walk 0-3 or SB5's Louie idle 4, $C4:43D8: its stand already, or else)
+    phk                         ; JSR $C4:547F from this bank: it returns (RTS) to $C4:3C31, an RTL
+    per .out-1                  ; (the end of $C4:3C24) that comes back to .out
+    pea $3C31-1
+    lda #$1A
+    jml $C4547F
+.out:
+    plx
+.rts:
     rts
 
 ; A = the stand animation of seat X's state, counted from its first ($1692): on a Louie ($1782 bit 7) its
@@ -1507,6 +1537,7 @@ endif
 print "SYM rival_pal ", hex(rival_pal)
 print "SYM rival_stats ", hex(rival_stats)
 print "SYM intro_pads ", hex(intro_pads)
+print "SYM mount_stand ", hex(mount_stand)
 print "SYM w1_op ", hex(w1_op)
 print "SYM knight_hit ", hex(knight_hit)
 print "SYM rival_item ", hex(rival_item)

@@ -285,5 +285,10 @@ def apply(rb):
                     0x80, 0xC50D48 - 0xC50CF1 & 0xFF]), "STAGE: stage intro text (JSL intro_label, BRA $0D48)")
     rb.patch(0xC5009E, bytes.fromhex("20 B7 00 F0"), b"\x5C" + le24(syms["pm_tick"]),
              "pause: each paused frame runs the menu instead of the Start test (asm/pause.asm pm_tick)")
+    # the music keeps playing through the pause (as in SB6): skip SB5's driver commands group $10 id 6 (pause the
+    # music, $C5:0088) and id 7 (resume it, $C5:0029); the pause / resume SFX (group 2 id 5) stay. Battle too.
+    for a, cmd in ((0xC50088, 0x06), (0xC50029, 0x07)):
+        rb.patch(a, bytes([0xA9, 0x10, 0xEB, 0xA9, cmd]), bytes([0x80, 0x07, 0xEB, 0xA9, cmd]),
+                 f"pause: no music {'pause' if cmd == 6 else 'resume'} command ($10/{cmd}: BRA over its JSL $C00CED)")
     syms["tiles"] = ntiles
     return syms

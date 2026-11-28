@@ -424,6 +424,7 @@ script accumulator (`61` = add).
 | `$C2:069B` | `7C 46 C1` | script op `FF 1A nn`: nn >= `$F0` runs `pick_op` |
 | `$C0:F421` | `22 E0 04 C0` | NMI: the SB6 picker's VRAM loads, portrait swaps and poses (`pick_nmi`), which first calls `title_nmi`; its screen load starts only with SB5's VRAM queue empty (SB5's setup queues full BG1 rows with the 2P panel: sent after ours they stayed over the top row, seen in Snes9x) |
 | `$C5:0058` | `A9 01 8D 1D 1D` | pause entry: also opens the SB6 pause menu in the Normal Game (`pm_open`, `asm/pause.asm`) |
+| `$C5:0088`, `$C5:0029` | `A9 10` | `BRA +7`: the music keeps playing through the pause (SB5's driver commands `$10`/6 pause, `$10`/7 resume skipped; `features/pause.py`) |
 | `$C5:009E` | `20 B7 00 F0` | each paused frame: the pause menu (`pm_tick`) instead of SB5's Start test (Battle keeps it) |
 | `$C0:01FA` | `A9 81 85 AA C2 30` | palette lookup: ids `$80+` of set 0 = bomber palettes (`pal_lookup`, `asm/bombers.asm`) |
 | `$C7:1481` | zone setup script (19 bytes) | calls a copy that runs `FF 1A F5` first (`wmap_op`: map animation, `$0314`, `$0321`, map music driver) |
@@ -712,9 +713,9 @@ script accumulator (`61` = add).
   (the stage freezes), BG3 arrangement `$DF` (PAUSE!, rows 14-15) at
   `$1D28`/`$1D2A`, WORLD n - nn (rows 11-12, `$C5:00CD`, stages
   `$0D-$66`; digits `$1CB7` world, `$1CB9`/`$1CBA` stage, from
-  `$80:8A8A` + 2 * `$102F` through `JSL $C04672`), sound group `$10` id 6 + group 2 id 5; then every frame
+  `$80:8A8A` + 2 * `$102F` through `JSL $C04672`), sound group `$10` id 6 (pauses the music; skipped by the hack, the music plays on) + group 2 id 5; then every frame
   `$C5:009E` tests Start -> `$C5:000C`: `$1D1D` = 0, `$C0:09CC` fills BG3
-  rows 3-31 (queue fill entries), group `$10` id 7 + group 2 id 5. Task
+  rows 3-31 (queue fill entries), group `$10` id 7 (resumes the music; skipped by the hack) + group 2 id 5. Task
   yield = `JSL $C02160` (the return address becomes the task's resume
   point); a plain `RTL` keeps the old one.
 * Flags 5 / 6 of `$7E:2900` (`$C2:0372`): set by the title script (frame
@@ -1952,7 +1953,8 @@ player has P1 (and P2's spawn) in SB5's middle cell (7,9), 5 cells below
   is a magnet bomb, the others are normal; it shows animation 4 (OBJ `$12E` / `$100` /
   `$102`, `assets/bombs/MagnetBomb.png`), a byte per slot at `$7F:FB2C`. At
   rest (`$C5:1FEA`, the bomb update's no-motion path) it looks along its row
-  and column (enemies = actors 5 to `$198C` alive, cell `$16AA`; the view
+  and column (enemies = actors 5 to `$198C` alive and below the mounts' `$012D`: a Louie, ridden or not, is no
+  enemy; cell `$16AA`; the view
   stops at `$1052 & $E8` or a bomber) and the nearest enemy 2-12 cells away
   gets it kicked that way (SB5's kick fields, `$C5:22E6`: `$0E90` |= `$10` +
   way, `$0F38` = `$10`, `$0F4C` = 2, `$0EE0` bit 0 clear, sound 2/`$07`); it
@@ -2040,6 +2042,10 @@ The full list with sizes is generated in `build/sb6.map`.
   sets the walk (base + 0) again when it ends; while `!DASH` / `!IMP` last, `la_lanim` (at `$C4:5427`, SB5's mount
   animation setter) drops every other animation request, so Y alone also shows the charge. After a push the dash
   holds `IMP_T` = 15 frames on the charge's last pose (pair 7, `$07A0` = `$FF`, `shoulder_hold`) where it hit. Pose sheet: `tools/louie_sheet.py 6` -> `assets/louies/louie6_sb5.png`.
+  Mount animations: `$1692` of a Louie is its kind's first animation (not the facing); `$C4:5427` adds `$1632` - 1,
+  so walk = base + 0-3, SB5's Louie idle (front) base + 4, stand base + `$1A`-`$1D` (`$C4:4318`). While an intro
+  holds the seats (1-6, 1-7: `hold_up`, `$17E2` = 1 so SB5's stop never runs) `mount_stand` (`asm/world1.asm`) turns
+  a walk / idle into the stand (`$C4:547F` called from bank `$E4` through the RTL at `$C4:3C31`).
 * Opponent bombers: SB5's Red punch already stuns any bomber of `$1CBF` (5 in boss stages and Battle: the 1-6
   rivals, Battle's opponents). The Black dash, with no enemy ahead, takes the first opponent bomber in its lane
   (`bomber_hit`; Battle: every other seat, Normal Game: a seat >= `!roster` `$012A`, i.e. a boss rival; never a

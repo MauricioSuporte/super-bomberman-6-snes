@@ -467,7 +467,16 @@ function OPS.blast(st)      -- blast seat cell: the seat stands next to `cell` (
 end
 function OPS.door_blast(st) OPS.blast({st[1], "blast", st[3], (rm(0x7FFB11) << 4) | rm(0x7FFB10)}) end
 local music = nil           -- step "music": {frames, frames with a voice sounding, SPC PC pages seen}
-function OPS.music(st) music = {0, 0, {}} end
+function OPS.music(st) music = {0, 0, {}, 0} end
+local function music_flush()   -- "V k music_stats": frames, frames with a voice sounding, SPC PC pages / 4, key-ons
+  if not music then return end
+  local pages = {}
+  for pg = 0, 255 do pages[#pages + 1] = string.format("%02X", math.min(255, (music[3][pg] or 0) // 4)) end
+  W(string.format("V %d music_stats %02X%02X%02X%02X%s%02X%02X", k, music[1] & 0xFF, music[1] >> 8, music[2] & 0xFF,
+    music[2] >> 8, table.concat(pages), music[4] & 0xFF, music[4] >> 8))
+  music = nil
+end
+function OPS.music_end(st) music_flush() end     -- step "music_end": the stats of the frames since "music"
 function OPS.door(st)       -- door seat: the seat stands on World 1's exit door ($7F:FB10 x, y; asm/world1.asm)
   place(st[3], rm(0x7FFB10), rm(0x7FFB11))
 end
@@ -682,13 +691,7 @@ local function finish()
     for a, n in pairs(prof) do W(string.format("J %05X %d", a, n)) end
     prof = nil
   end
-  if music then
-    local pages = {}
-    for pg = 0, 255 do pages[#pages + 1] = string.format("%02X", math.min(255, (music[3][pg] or 0) // 4)) end
-    W(string.format("V %d music_stats %02X%02X%02X%02X%s", k, music[1] & 0xFF, music[1] >> 8, music[2] & 0xFF, music[2] >> 8,
-      table.concat(pages)))
-    music = nil
-  end
+  music_flush()
   W("E " .. sc.name)
   if posef then posef:close() posef = nil end
   out:flush()
@@ -846,9 +849,15 @@ emu.addEventCallback(function()
   if posef then pose_dump(sc.rec.pose) end
   if music then
     music[1] = music[1] + 1
+    local any = false
+    music[5] = music[5] or {}
     for v = 0, 7 do
-      if emu.read(v * 16 + 8, emu.memType.spcDspRegisters) > 0 then music[2] = music[2] + 1 break end
+      local e = emu.read(v * 16 + 8, emu.memType.spcDspRegisters)
+      if e > 0 then any = true end
+      if e >= (music[5][v] or 0) + 0x10 then music[4] = music[4] + 1 end     -- an attack: a note started
+      music[5][v] = e
     end
+    if any then music[2] = music[2] + 1 end
     local pg = (emu.getState()["spc.pc"] >> 8) & 0xFF
     music[3][pg] = (music[3][pg] or 0) + 1
   end

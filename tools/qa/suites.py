@@ -343,7 +343,7 @@ def music_eval(stage):
         u = l.values.get("music_stats")
         if u:
             b = u[-1][1]
-            frames, busy, pages = b[0] | b[1] << 8, b[2] | b[3] << 8, b[4:]
+            frames, busy, pages = b[0] | b[1] << 8, b[2] | b[3] << 8, b[4:260]
             top = sorted(range(256), key=lambda p: -pages[p])[:3]
             res.ok(f"{STAGES[stage]}: music plays (voices sounding)", busy >= frames // 2,
                    f"{busy} of {frames} frames with a voice sounding")
@@ -364,6 +364,46 @@ def music_eval(stage):
             m = boot.get("menu_music")
             res.ok("Normal Game menu after the picker: save menu music ($010A = 2)", m and m[0] == 2,
                    f"$010A = {m[0] if m else '?'}")
+        return res
+    return ev
+
+
+# ---------------------------------------------------------------- music through the pause menu
+# The pause keeps the stage music going (features/pause.py skips SB5's driver commands $10/6 and $10/7): P1 pauses,
+# the music is measured for MPAUSE_LEN frames with the menu up ($1D1D = 1) and again after Start resumes.
+MPAUSE_IN, MPAUSE_LEN = 30, 300
+
+
+def music_pause_scenarios(stage):
+    p = 910 if stage == 0x68 else PAUSE_FROM            # (1-7's intro holds the players: as pierce_scenarios)
+    a, b = p + MPAUSE_IN, p + MPAUSE_IN + MPAUSE_LEN
+    st = [[p - 200, "music"], [p - 1, "music_end"],
+          [p, "pad", 0, "start", 3], [a, "music"], [a + 5, "read", "paused", 0x1D1D, 1], [b, "music_end"],
+          [b - 5, "read", "paused", 0x1D1D, 1], [b + 2, "pad", 0, "start", 3], [b + 30, "read", "paused", 0x1D1D, 1],
+          [b + 31, "music"], [b + 231, "music_end"]]
+    return [Scenario("m_pause", b + 240, steps=st)]
+
+
+def music_pause_eval(stage):
+    name = STAGES[stage]
+
+    def stats(b):
+        return b[0] | b[1] << 8, b[2] | b[3] << 8, b[260] | b[261] << 8
+
+    def ev(logs, boot, tag):
+        res = Result()
+        l = logs["m_pause"]
+        u = [v for _, v in l.values.get("music_stats", [])]
+        paused = [v[0] for _, v in l.values.get("paused", [])]
+        res.ok(f"{name}: Start pauses and Start again resumes ($1D1D 1, 1, 0)", paused == [1, 1, 0], f"{paused}")
+        if len(u) != 3:
+            res.ok(f"{name}: music measured before / during / after the pause", False, f"{len(u)} stats")
+            return res
+        for what, b in zip(("before the pause", "during the pause", "after the resume"), u):
+            frames, busy, notes = stats(b)
+            res.ok(f"{name}: music plays {what} (voices sounding, notes starting)",
+                   busy >= frames // 2 and notes >= frames // 30,
+                   f"{busy} of {frames} frames sounding, {notes} notes")
         return res
     return ev
 
@@ -720,8 +760,15 @@ def mount_fx(stage):
     return Fixture(f"s{stage:02X}_4p_louies", stage=stage, ready=30, mounts=LOUIE_KINDS)
 
 
+def black_fx(stage):
+    """Black Louies (kind 6) under char8 (Big Bomber, streamed) and Bomberman, with Red Louies."""
+    return Fixture(f"s{stage:02X}_4p_black", stage=stage, ready=30, picks=((8, 0), (0, 1), (8, 2), (0, 3)),
+                   mounts=(6, 0, 6, 0))
+
+
 def hold_steps(stage, n):
     st = [[k, "read", "face", 0x1632, MOUNT0 + 4] for k in range(n)]
+    st += [[k, "read", "mbase", 0x1692 + MOUNT0, 4] for k in range(0, n, 8)]
     st += [[k, "read", "ride", 0x1782, 4] for k in range(n)] + [[k, "lit", "lit"] for k in range(n)]
     if stage == 0x67:
         st += [[k, "read", "iph", 0x1FBD4, 1] for k in range(n)]
@@ -770,16 +817,27 @@ def hold_eval(res, l, stage, fx, label):
         if fx.mounts:
             res.ok(f"{label}: P{s + 1}'s Louie faces up while held", not louie_bad,
                    f"{len(louie_bad)} frames wrong (frame:facing) {' '.join(louie_bad[:8])}")
+            # and stands ($1A + base + facing - 1 = $1D + base: SB5's stop, world1.asm mount_stand), no walk in place
+            ma = anim_at(MOUNT0 + s)
+            mbase = l.values.get("mbase", [])
+            base = mbase[-1][1][s] if mbase else None
+            wrong = {k for k in held if ride.get(k, b"\0" * 4)[s] & 0x80 and k + fx.ready >= LOUIE_FROM + HOLD_GRACE
+                     and ma.get(k) is not None and base is not None and ma[k] != base + 0x1D}
+            walk = [f"{k}:{ma[k]:02X}" for k in sorted(wrong) if k + 2 in wrong]    # (the request lands a frame later)
+            res.ok(f"{label}: P{s + 1}'s Louie stands while held (not walking in place)", base is not None and not walk,
+                   f"base {base}; {len(walk)} frames wrong (frame:anim) {' '.join(walk[:8])}")
 
 
 def hold16_scenarios():
     sc = b16_scenarios()[0]
-    return [Scenario("hold16", 2200, steps=[s for s in sc.steps if s[0] < 2200 and s[1] != "read"] + hold_steps(0x67, 2200))]
+    return [Scenario("hold16", 2200, steps=[s for s in sc.steps if s[0] < 2200 and s[1] != "read"] + hold_steps(0x67, 2200),
+                     watch=tuple(MOUNT0 + s for s in range(4)))]
 
 
 def hold17_scenarios():
     return [Scenario("hold17", 620, steps=hold_steps(0x68, 620) +
-                     [[k, "pad", s, ("left", "right", "up", "down")[s], 20] for k in range(5, 400, 40) for s in range(4)])]
+                     [[k, "pad", s, ("left", "right", "up", "down")[s], 20] for k in range(5, 400, 40) for s in range(4)],
+                     watch=tuple(MOUNT0 + s for s in range(4)))]
 
 
 def hold_eval_for(stage, fx):
@@ -1884,6 +1942,32 @@ def magnet_scenarios():
     return sc
 
 
+# A magnet bomb next to its owner riding a Louie (LA_FX, P1 on the Red Louie): the Louies (mount actors from $012D)
+# are no enemies, so the bomb stays where it was dropped while P1 rides away along the row (it was kicked after P1's
+# Louie). P2's Louie in the same row, on foot nobody: still no pull.
+def magnet_louie_scenarios():
+    st = [[1, "burn", 20]] + _row(k=40) + [[41, "place", 0, 1, ROW], [41, "place", 1, 9, ROW], [42, "poke", 0x4ED5, B_MAGNET],
+                                           [46, "pad", 0, "a", 2], [52, "pad", 0, "right", 30]]
+    st += [[48, "read", "mag", MAG, 20]] + _bomb_reads(48, 140)
+    return _at([Scenario("m_louie", 140, steps=st)])
+
+
+def magnet_louie_eval(logs, boot, tag):
+    res = Result()
+    l = _back(logs).get("m_louie")
+    if not l:
+        res.ok("magnet + Louie: scenario ran", False, "no log")
+        return res
+    mag = l.value("mag")
+    mine = [(k, i, c, mo) for k, live in _bombs(l) for i, owner, c, mo, obj in live if owner == 0]
+    res.ok("magnet + Louie: P1 (riding) drops a magnet bomb", bool(mine) and bool(mag) and mag[mine[0][1]] & 0x80,
+           f"{mine[:1]} {mag.hex() if mag else ''}")
+    cells = sorted({c for k, i, c, mo in mine})
+    res.ok("magnet + Louie: the bomb stays on its cell (Louies are no enemies to pull it to)",
+           cells == [cell(1, ROW)] and not any(mo & 0x10 for k, i, c, mo in mine), f"cells {[f'{c:02X}' for c in cells]}")
+    return res
+
+
 def _oam_flip(o):
     """[(tile, palette, big, h flip)] of the visible OAM entries."""
     out = []
@@ -2068,6 +2152,8 @@ def louie_scenarios_a():
         st += [[k, "poke", 0x170A + s, 0] for k in (44, 50, 56) for s in range(4)]       # (no shield blink)
         st += _acts(56, 150) + [[k, "readoam", "oam"] for k in range(50, 150)]
         st += [[k, "read", "ride", 0x1782 + seat, 1] for k in range(56, 150)]
+        st += [[k, "read", "mobj", 0x17FA + MOUNT0 + seat, 1] for k in range(56, 100)]
+        st += [[k, "read", "maps", 0x049F, 0x60] for k in range(56, 100)]
         sc.append(Scenario(f"l_{name}_dash", 150, steps=st, watch=(MOUNT0 + seat,)))
     # Black: a flame on the rider while it dashes (not invincible otherwise): it keeps its Louie; without a dash: lost
     for dash in (True, False):
@@ -2376,6 +2462,12 @@ def _eval_dash(res, logs):
             res.ok("Black Louie (Y alone): the whole dash on the shoulder charge ($1F, facing right), then not any more",
                    bool(during) and all(a == 0x1F for a in during) and bool(after) and not 0x1F <= after[-1] <= 0x22,
                    f"during {[hex(a) for a in during]}, after {[hex(a) for a in after]}")
+            # its 6 poses play (P4: shoulder_keep's PLX before its CMP set Z by the seat, so seats 2-4 restarted the
+            # charge every frame, stuck on its first pose)
+            mobj = dict(l.values.get("mobj", []))
+            maps = [m[mobj[k][0]] for k, m in l.values.get("maps", []) if k in mobj and 62 <= k < end and mobj[k][0] < 0x60]
+            res.ok("Black Louie (P4): the shoulder charge plays its poses (>= 5 mappings), not its first one again",
+                   len(set(maps)) >= 5, " ".join(f"{m:02X}" for m in maps))
         else:
             ride = [k for k, v in l.values.get("ride", []) if v[0] & 1]
             res.ok("Green Louie: SB5's dash ($1782 bit 0), moves right", bool(ride) and xe - x0 >= 32,

@@ -465,8 +465,8 @@ shoulder_keep:
     lda $1692,x
     clc
     adc #$1E
-    cmp $079F,y
-    plx
+    plx                         ; (before the CMP: PLX sets Z by the seat, which made seats 2-4 restart the
+    cmp $079F,y                 ; charge every frame: stuck on its first pose)
     beq +
     lda #$1E
     jsr louie_anim
@@ -483,8 +483,8 @@ shoulder_stay:
     lda $1692,x
     clc
     adc #$1E
+    plx                         ; (before the CMP, as in shoulder_keep)
     cmp $079F,y
-    plx
     bne shoulder_hold
     rts
 
